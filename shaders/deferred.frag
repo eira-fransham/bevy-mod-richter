@@ -37,18 +37,17 @@ vec3 reconstruct_position(float depth) {
 }
 
 void main() {
-  vec2 texcoord = gl_FragCoord.xy;
-  vec4 in_color = texture(sampler2D(u_diffuse, u_sampler), texcoord);
+  vec4 in_color = texture(sampler2D(u_diffuse, u_sampler), a_texcoord);
 
   // scale from [0, 1] to [-1, 1]
   vec3 in_normal = 2.0
-    * texture(sampler2D(u_normal, u_sampler), texcoord).xyz
+    * texture(sampler2D(u_normal, u_sampler), a_texcoord).xyz
     - 1.0;
 
   // Double to restore overbright values.
-  vec4 in_light = 2.0 * texture(sampler2D(u_light, u_sampler), texcoord);
+  vec4 in_light = 2.0 * texture(sampler2D(u_light, u_sampler), a_texcoord);
 
-  float in_depth = texture(sampler2D(u_depth, u_sampler), texcoord).x;
+  float in_depth = texture(sampler2D(u_depth, u_sampler), a_texcoord).x;
   vec3 position = reconstruct_position(in_depth);
 
   vec4 out_color = in_color;

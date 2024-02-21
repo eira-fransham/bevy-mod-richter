@@ -11,9 +11,7 @@ layout(set = 0, binding = 2) uniform PostProcessUniforms {
 } postprocess_uniforms;
 
 void main() {
-  vec2 texcoord = gl_FragCoord.xy;
-
-  vec4 in_color = texture(sampler2D(u_color, u_sampler), texcoord);
+  vec4 in_color = texture(sampler2D(u_color, u_sampler), a_texcoord);
 
   float src_factor = postprocess_uniforms.color_shift.a;
   float dst_factor = 1.0 - src_factor;

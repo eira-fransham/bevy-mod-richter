@@ -183,7 +183,7 @@ impl Game {
                 &mut encoder,
                 wgpu::ImageCopyTexture {
                     // TODO: Switch to final pass target
-                    texture: gfx_state.deferred_pass_target().diffuse_attachment(),
+                    texture: gfx_state.deferred_pass_target().color_attachment(),
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: Default::default(),
