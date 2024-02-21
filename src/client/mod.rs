@@ -30,6 +30,7 @@ pub mod trace;
 pub mod view;
 
 pub use self::cvars::register_cvars;
+use self::render::RenderTarget;
 
 use std::{
     cell::RefCell,
@@ -1014,6 +1015,7 @@ impl Client {
         height: u32,
         menu: &Menu,
         focus: InputFocus,
+        target: impl RenderTarget,
     ) -> Result<(), ClientError> {
         let fov = Deg(self.cvar_value("fov")?);
         let cvars = self.cvars.borrow();
@@ -1030,6 +1032,7 @@ impl Client {
             &console,
             menu,
             focus,
+            target,
         );
 
         Ok(())

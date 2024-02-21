@@ -97,7 +97,7 @@ impl Capture {
             let slice = self.buffer.slice(..);
             let (s, mut r) = futures::channel::oneshot::channel();
             slice.map_async(wgpu::MapMode::Read, |res| {
-                s.send(res);
+                s.send(res).unwrap();
             });
             device.poll(wgpu::Maintain::Wait);
 

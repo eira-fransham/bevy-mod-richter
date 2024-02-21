@@ -696,6 +696,7 @@ impl ClientRenderer {
         console: &Console,
         menu: &Menu,
         focus: InputFocus,
+        render_target: impl RenderTarget,
     ) {
         self.bump.reset();
 
@@ -828,13 +829,17 @@ impl ClientRenderer {
             },
         };
 
+        // TODO: It seems like everything else works but we get a "resolve texture view must be multisampled" error.
+        //       However, enabling multisampling anywhere breaks the whole system.
+        const RENDER: bool = true;
+
         // final render pass: postprocess the world and draw the UI
-        {
+        if RENDER {
             // quad_commands must outlive final pass
             let mut quad_commands = Vec::new();
             let mut glyph_commands = Vec::new();
 
-            let final_pass_builder = gfx_state.final_pass_target().render_pass_builder();
+            let final_pass_builder = render_target.render_pass_builder();
             let mut final_pass = encoder.begin_render_pass(&final_pass_builder.descriptor());
 
             if let Some(Connection {

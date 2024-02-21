@@ -22,5 +22,5 @@ use crate::common::console::CvarRegistry;
 
 pub fn register_cvars(cvars: &CvarRegistry) {
     cvars.register("r_lightmap", "0").unwrap();
-    cvars.register("r_msaa_samples", "4").unwrap();
+    cvars.register("r_msaa_samples", "1").unwrap();
 }

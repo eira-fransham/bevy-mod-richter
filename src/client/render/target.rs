@@ -41,7 +41,7 @@ pub fn create_color_attachment(
         sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: DIFFUSE_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | usage,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | usage,
         view_formats: Default::default(),
     })
 }

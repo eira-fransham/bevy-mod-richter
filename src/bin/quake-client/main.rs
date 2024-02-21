@@ -287,6 +287,7 @@ impl Program for ClientProgram<'_> {
         if !&[2, 4].contains(&sample_count) {
             sample_count = 2;
         }
+        sample_count = 1;
 
         // recreate attachments and rebuild pipelines if necessary
         self.gfx_state.borrow_mut().update(size, sample_count);

@@ -18,7 +18,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{borrow::BorrowMut, cell::RefCell, path::PathBuf, rc::Rc, sync::{Arc, Mutex}};
+
+use lazy_static::lazy_static;
 
 use crate::{
     capture::{cmd_screenshot, Capture},
@@ -63,20 +65,20 @@ impl Game {
         client: Client,
     ) -> Result<Game, Error> {
         // set up input commands
-        input.borrow().register_cmds(&mut cmds.borrow_mut());
+        input.borrow().register_cmds(&mut (*cmds).borrow_mut());
 
         // set up screenshots
         let screenshot_path = Rc::new(RefCell::new(None));
-        cmds.borrow_mut()
+        (*cmds).borrow_mut()
             .insert("screenshot", cmd_screenshot(screenshot_path.clone()))
             .unwrap();
 
         // set up frame tracing
         let trace = Rc::new(RefCell::new(None));
-        cmds.borrow_mut()
+        (*cmds).borrow_mut()
             .insert("trace_begin", cmd_trace_begin(trace.clone()))
             .unwrap();
-        cmds.borrow_mut()
+        (*cmds).borrow_mut()
             .insert("trace_end", cmd_trace_end(cvars.clone(), trace.clone()))
             .unwrap();
 
@@ -119,14 +121,14 @@ impl Game {
             },
         };
 
-        if let Some(ref mut game_input) = self.input.borrow_mut().game_input_mut() {
+        if let Some(ref mut game_input) = (*self.input).borrow_mut().game_input_mut() {
             self.client
                 .handle_input(game_input, frame_duration)
                 .unwrap();
         }
 
         // if there's an active trace, record this frame
-        if let Some(ref mut trace_frames) = *self.trace.borrow_mut() {
+        if let Some(ref mut trace_frames) = *(*self.trace).borrow_mut() {
             trace_frames.push(
                 self.client
                     .trace(&[self.client.view_entity_id().unwrap()])
@@ -147,7 +149,7 @@ impl Game {
         info!("Beginning render pass");
         let mut encoder = gfx_state
             .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Main render") });
 
         // render world, hud, console, menus
         self.client
@@ -158,8 +160,21 @@ impl Game {
                 height,
                 menu,
                 self.input.borrow().focus(),
+                SwapChainTarget::with_swap_chain_view(color_attachment_view),
             )
             .unwrap();
+
+        lazy_static! {
+            static ref I: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+        }
+
+        let mut i = I.lock().unwrap();
+
+        if *i % 120 == 0 {
+            *(*self.screenshot_path).borrow_mut() = Some(format!("./test{}.png", *i).into());
+        }
+
+        *i += 1;
 
         // screenshot setup
         let capture = self.screenshot_path.borrow().as_ref().map(|_| {
@@ -167,7 +182,8 @@ impl Game {
             cap.copy_from_texture(
                 &mut encoder,
                 wgpu::ImageCopyTexture {
-                    texture: gfx_state.final_pass_target().resolve_attachment(),
+                    // TODO: Switch to final pass target
+                    texture: gfx_state.deferred_pass_target().diffuse_attachment(),
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: Default::default(),
@@ -177,12 +193,12 @@ impl Game {
         });
 
         // blit to swap chain
-        {
-            let swap_chain_target = SwapChainTarget::with_swap_chain_view(color_attachment_view);
-            let blit_pass_builder = swap_chain_target.render_pass_builder();
-            let mut blit_pass = encoder.begin_render_pass(&blit_pass_builder.descriptor());
-            gfx_state.blit_pipeline().blit(gfx_state, &mut blit_pass);
-        }
+        // {
+        //     let swap_chain_target = SwapChainTarget::with_swap_chain_view(color_attachment_view);
+        //     let blit_pass_builder = swap_chain_target.render_pass_builder();
+        //     let mut blit_pass = encoder.begin_render_pass(&blit_pass_builder.descriptor());
+        //     gfx_state.blit_pipeline().blit(gfx_state, &mut blit_pass);
+        // }
 
         let command_buffer = encoder.finish();
         {
@@ -202,7 +218,7 @@ impl Game {
 
 impl std::ops::Drop for Game {
     fn drop(&mut self) {
-        let _ = self.cmds.borrow_mut().remove("trace_begin");
-        let _ = self.cmds.borrow_mut().remove("trace_end");
+        let _ = (*self.cmds).borrow_mut().remove("trace_begin");
+        let _ = (*self.cmds).borrow_mut().remove("trace_end");
     }
 }
