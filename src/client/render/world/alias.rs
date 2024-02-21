@@ -67,12 +67,12 @@ pub struct VertexPushConstants {
 }
 
 lazy_static! {
-    static ref VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+    static ref VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
         wgpu::vertex_attr_array![
             // frame 0 position
             0 => Float32x3,
             // frame 1 position
-            // 1 => Float32x3,
+            1 => Float32x3,
             // normal
             2 => Float32x3,
             // texcoord
@@ -106,7 +106,7 @@ impl Pipeline for AliasPipeline {
                     // diffuse texture, updated once per face
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             view_dimension: wgpu::TextureViewDimension::D2,
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -123,7 +123,7 @@ impl Pipeline for AliasPipeline {
         WorldPipelineBase::primitive_state()
     }
 
-    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
         WorldPipelineBase::color_target_states()
     }
 
@@ -135,7 +135,7 @@ impl Pipeline for AliasPipeline {
     fn vertex_buffer_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> {
         vec![wgpu::VertexBufferLayout {
             array_stride: size_of::<AliasVertex>() as u64,
-            step_mode: wgpu::InputStepMode::Vertex,
+            step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &VERTEX_ATTRIBUTES[..],
         }]
     }
@@ -334,7 +334,7 @@ impl AliasRenderer {
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
                 contents: unsafe { any_slice_as_bytes(vertices.as_slice()) },
-                usage: wgpu::BufferUsage::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX,
             });
 
         let mut textures = Vec::new();

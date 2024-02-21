@@ -49,12 +49,14 @@ impl MusicPlayer {
         // TODO: there's probably a better way to do this extension check
         let mut file = if !name.contains('.') {
             // try all supported formats
-            self.vfs
+            let Ok(file) = self.vfs
                 .open(format!("music/{}.flac", name))
                 .or_else(|_| self.vfs.open(format!("music/{}.wav", name)))
                 .or_else(|_| self.vfs.open(format!("music/{}.mp3", name)))
                 .or_else(|_| self.vfs.open(format!("music/{}.ogg", name)))
-                .or(Err(SoundError::NoSuchTrack(name.to_owned())))?
+                .or(Err(SoundError::NoSuchTrack(name.to_owned()))) else { return Ok(()); };
+
+            file
         } else {
             self.vfs.open(name)?
         };

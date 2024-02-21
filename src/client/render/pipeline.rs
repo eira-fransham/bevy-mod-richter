@@ -38,10 +38,9 @@ where
     let spirv = compiler
         .compile_into_spirv(source.as_ref(), kind, name.as_ref(), "main", None)
         .unwrap();
-    device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(name.as_ref()),
         source: wgpu::ShaderSource::SpirV(spirv.as_binary().into()),
-        flags: wgpu::ShaderFlags::empty(),
     })
 }
 
@@ -84,7 +83,7 @@ pub trait Pipeline {
     fn primitive_state() -> wgpu::PrimitiveState;
 
     /// The color state used for the pipeline.
-    fn color_target_states() -> Vec<wgpu::ColorTargetState>;
+    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>>;
 
     /// The depth-stencil state used for the pipeline, if any.
     fn depth_stencil_state() -> Option<wgpu::DepthStencilState>;
@@ -94,7 +93,7 @@ pub trait Pipeline {
 
     fn vertex_push_constant_range() -> wgpu::PushConstantRange {
         let range = wgpu::PushConstantRange {
-            stages: wgpu::ShaderStage::VERTEX,
+            stages: wgpu::ShaderStages::VERTEX,
             range: 0..size_of::<Self::VertexPushConstants>() as u32
                 + size_of::<Self::SharedPushConstants>() as u32,
         };
@@ -104,7 +103,7 @@ pub trait Pipeline {
 
     fn fragment_push_constant_range() -> wgpu::PushConstantRange {
         let range = wgpu::PushConstantRange {
-            stages: wgpu::ShaderStage::FRAGMENT,
+            stages: wgpu::ShaderStages::FRAGMENT,
             range: size_of::<Self::VertexPushConstants>() as u32
                 ..size_of::<Self::VertexPushConstants>() as u32
                     + size_of::<Self::SharedPushConstants>() as u32
@@ -240,6 +239,7 @@ pub trait Pipeline {
                 alpha_to_coverage_enabled: false,
             },
             depth_stencil: Self::depth_stencil_state(),
+            multiview: Default::default(),
         });
 
         (pipeline, bind_group_layouts)
@@ -298,6 +298,7 @@ pub trait Pipeline {
                 alpha_to_coverage_enabled: false,
             },
             depth_stencil: Self::depth_stencil_state(),
+            multiview: Default::default(),
         });
 
         pipeline
@@ -337,7 +338,7 @@ pub trait Pipeline {
                     data
                 );
 
-                pass.set_push_constants(wgpu::ShaderStage::VERTEX, vpc_offset, d);
+                pass.set_push_constants(wgpu::ShaderStages::VERTEX, vpc_offset, d);
             }
         }
 
@@ -356,7 +357,7 @@ pub trait Pipeline {
                 );
 
                 pass.set_push_constants(
-                    wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                    wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     spc_offset,
                     d,
                 );
@@ -377,7 +378,7 @@ pub trait Pipeline {
                     data
                 );
 
-                pass.set_push_constants(wgpu::ShaderStage::FRAGMENT, fpc_offset, d);
+                pass.set_push_constants(wgpu::ShaderStages::FRAGMENT, fpc_offset, d);
             }
         }
     }

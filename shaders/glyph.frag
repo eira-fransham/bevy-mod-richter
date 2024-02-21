@@ -7,7 +7,7 @@ layout(location = 1) flat in uint f_layer;
 layout(location = 0) out vec4 output_attachment;
 
 layout(set = 0, binding = 0) uniform sampler u_sampler;
-layout(set = 0, binding = 1) uniform texture2D u_texture[256];
+layout(set = 0, binding = 1) uniform texture2D u_texture[128];
 
 void main() {
   vec4 color = texture(sampler2D(u_texture[f_layer], u_sampler), f_texcoord);

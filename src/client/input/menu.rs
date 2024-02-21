@@ -20,7 +20,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{client::menu::Menu, common::console::Console};
 
 use failure::Error;
-use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode as Key, WindowEvent};
+use winit::{keyboard::{Key, NamedKey}, event::{ElementState, Event, KeyEvent, WindowEvent}};
 
 pub struct MenuInput {
     menu: Rc<RefCell<Menu>>,
@@ -35,18 +35,16 @@ impl MenuInput {
     pub fn handle_event<T>(&self, event: Event<T>) -> Result<(), Error> {
         match event {
             Event::WindowEvent { event, .. } => match event {
-                WindowEvent::ReceivedCharacter(_) => (),
-
                 WindowEvent::KeyboardInput {
-                    input:
-                        KeyboardInput {
-                            virtual_keycode: Some(key),
+                    event:
+                        KeyEvent {
+                            logical_key: Key::Named(key),
                             state: ElementState::Pressed,
                             ..
                         },
                     ..
                 } => match key {
-                    Key::Escape => {
+                    NamedKey::Escape => {
                         if self.menu.borrow().at_root() {
                             self.console.borrow().stuff_text("togglemenu\n");
                         } else {
@@ -54,11 +52,11 @@ impl MenuInput {
                         }
                     }
 
-                    Key::Up => self.menu.borrow().prev()?,
-                    Key::Down => self.menu.borrow().next()?,
-                    Key::Return => self.menu.borrow().activate()?,
-                    Key::Left => self.menu.borrow().left()?,
-                    Key::Right => self.menu.borrow().right()?,
+                    NamedKey::ArrowUp => self.menu.borrow().prev()?,
+                    NamedKey::ArrowDown => self.menu.borrow().next()?,
+                    NamedKey::Enter => self.menu.borrow().activate()?,
+                    NamedKey::ArrowLeft => self.menu.borrow().left()?,
+                    NamedKey::ArrowRight => self.menu.borrow().right()?,
 
                     _ => (),
                 },

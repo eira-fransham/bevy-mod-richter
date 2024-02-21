@@ -84,12 +84,12 @@ where
                 ..
             } => {
                 self.program.shutdown();
-                *control_flow = ControlFlow::Exit;
+                // *control_flow = ControlFlow::Exit;
             }
 
-            Event::MainEventsCleared => self.frame(),
-            Event::Suspended | Event::Resumed => unimplemented!(),
-            Event::LoopDestroyed => {
+            Event::AboutToWait => self.frame(),
+            Event::Suspended | Event::Resumed => {},
+            Event::LoopExiting => {
                 // TODO:
                 // - host_writeconfig
                 // - others...

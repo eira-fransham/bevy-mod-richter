@@ -20,7 +20,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::common::console::Console;
 
 use failure::Error;
-use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode as Key, WindowEvent};
+use winit::{keyboard::{NamedKey, Key}, event::{ElementState, Event, KeyEvent, WindowEvent}};
 
 pub struct ConsoleInput {
     console: Rc<RefCell<Console>>,
@@ -34,22 +34,23 @@ impl ConsoleInput {
     pub fn handle_event<T>(&self, event: Event<T>) -> Result<(), Error> {
         match event {
             Event::WindowEvent { event, .. } => match event {
-                WindowEvent::ReceivedCharacter(c) => self.console.borrow_mut().send_char(c),
-
                 WindowEvent::KeyboardInput {
-                    input:
-                        KeyboardInput {
-                            virtual_keycode: Some(key),
+                    event:
+                        KeyEvent {
+                            logical_key: key,
                             state: ElementState::Pressed,
                             ..
                         },
                     ..
-                } => match key {
-                    Key::Up => self.console.borrow_mut().history_up(),
-                    Key::Down => self.console.borrow_mut().history_down(),
-                    Key::Left => self.console.borrow_mut().cursor_left(),
-                    Key::Right => self.console.borrow_mut().cursor_right(),
-                    Key::Grave => self.console.borrow_mut().stuff_text("toggleconsole\n"),
+                } => match key.as_ref() {
+                    Key::Named(NamedKey::ArrowUp) => self.console.borrow_mut().history_up(),
+                    Key::Named(NamedKey::ArrowDown) => self.console.borrow_mut().history_down(),
+                    Key::Named(NamedKey::ArrowLeft) => self.console.borrow_mut().cursor_left(),
+                    Key::Named(NamedKey::ArrowRight) => self.console.borrow_mut().cursor_right(),
+                    Key::Character("`") => self.console.borrow_mut().stuff_text("toggleconsole\n"),
+                    Key::Character(c) => for c in c.chars() {
+                        self.console.borrow_mut().send_char(c);
+                    },
                     _ => (),
                 },
 

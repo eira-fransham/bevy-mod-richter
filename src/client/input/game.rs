@@ -16,11 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    rc::Rc,
-    str::FromStr,
-    string::ToString,
+    borrow::Cow, cell::{Cell, RefCell}, collections::HashMap, rc::Rc, str::FromStr, string::ToString
 };
 
 use crate::common::{
@@ -31,12 +27,12 @@ use crate::common::{
 use failure::Error;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
+use smol_str::SmolStr;
 use winit::{
-    dpi::LogicalPosition,
-    event::{
-        DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta,
-        VirtualKeyCode as Key, WindowEvent,
-    },
+    dpi::{LogicalPosition, PhysicalPosition}, event::{
+        DeviceEvent, ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta,
+        WindowEvent,
+    }, keyboard::{Key, NamedKey}
 };
 
 const ACTION_COUNT: usize = 19;
@@ -123,86 +119,86 @@ static INPUT_NAMES: [&'static str; 79] = [
     "`",
 ];
 
-static INPUT_VALUES: [BindInput; 79] = [
-    BindInput::Key(Key::Comma),
-    BindInput::Key(Key::Period),
-    BindInput::Key(Key::Slash),
-    BindInput::Key(Key::Key0),
-    BindInput::Key(Key::Key1),
-    BindInput::Key(Key::Key2),
-    BindInput::Key(Key::Key3),
-    BindInput::Key(Key::Key4),
-    BindInput::Key(Key::Key5),
-    BindInput::Key(Key::Key6),
-    BindInput::Key(Key::Key7),
-    BindInput::Key(Key::Key8),
-    BindInput::Key(Key::Key9),
-    BindInput::Key(Key::A),
-    BindInput::Key(Key::LAlt),
-    BindInput::Key(Key::B),
-    BindInput::Key(Key::Back),
-    BindInput::Key(Key::C),
-    BindInput::Key(Key::LControl),
-    BindInput::Key(Key::D),
-    BindInput::Key(Key::Delete),
-    BindInput::Key(Key::Down),
-    BindInput::Key(Key::E),
-    BindInput::Key(Key::End),
-    BindInput::Key(Key::Return),
-    BindInput::Key(Key::Escape),
-    BindInput::Key(Key::F),
-    BindInput::Key(Key::F1),
-    BindInput::Key(Key::F10),
-    BindInput::Key(Key::F11),
-    BindInput::Key(Key::F12),
-    BindInput::Key(Key::F2),
-    BindInput::Key(Key::F3),
-    BindInput::Key(Key::F4),
-    BindInput::Key(Key::F5),
-    BindInput::Key(Key::F6),
-    BindInput::Key(Key::F7),
-    BindInput::Key(Key::F8),
-    BindInput::Key(Key::F9),
-    BindInput::Key(Key::G),
-    BindInput::Key(Key::H),
-    BindInput::Key(Key::Home),
-    BindInput::Key(Key::I),
-    BindInput::Key(Key::Insert),
-    BindInput::Key(Key::J),
-    BindInput::Key(Key::K),
-    BindInput::Key(Key::L),
-    BindInput::Key(Key::Left),
-    BindInput::Key(Key::M),
+static INPUT_VALUES: [BindInput<&'static str>; 79] = [
+    BindInput::Key(Key::Character(",")),
+    BindInput::Key(Key::Character(".")),
+    BindInput::Key(Key::Character("/")),
+    BindInput::Key(Key::Character("0")),
+    BindInput::Key(Key::Character("1")),
+    BindInput::Key(Key::Character("2")),
+    BindInput::Key(Key::Character("3")),
+    BindInput::Key(Key::Character("4")),
+    BindInput::Key(Key::Character("5")),
+    BindInput::Key(Key::Character("6")),
+    BindInput::Key(Key::Character("7")),
+    BindInput::Key(Key::Character("8")),
+    BindInput::Key(Key::Character("9")),
+    BindInput::Key(Key::Character("a")),
+    BindInput::Key(Key::Named(NamedKey::Alt)),
+    BindInput::Key(Key::Character("b")),
+    BindInput::Key(Key::Named(NamedKey::Backspace)),
+    BindInput::Key(Key::Character("c")),
+    BindInput::Key(Key::Named(NamedKey::Control)),
+    BindInput::Key(Key::Character("d")),
+    BindInput::Key(Key::Named(NamedKey::Delete)),
+    BindInput::Key(Key::Named(NamedKey::ArrowDown)),
+    BindInput::Key(Key::Character("e")),
+    BindInput::Key(Key::Named(NamedKey::End)),
+    BindInput::Key(Key::Named(NamedKey::Enter)),
+    BindInput::Key(Key::Named(NamedKey::Escape)),
+    BindInput::Key(Key::Character("f")),
+    BindInput::Key(Key::Named(NamedKey::F1)),
+    BindInput::Key(Key::Named(NamedKey::F10)),
+    BindInput::Key(Key::Named(NamedKey::F11)),
+    BindInput::Key(Key::Named(NamedKey::F12)),
+    BindInput::Key(Key::Named(NamedKey::F2)),
+    BindInput::Key(Key::Named(NamedKey::F3)),
+    BindInput::Key(Key::Named(NamedKey::F4)),
+    BindInput::Key(Key::Named(NamedKey::F5)),
+    BindInput::Key(Key::Named(NamedKey::F6)),
+    BindInput::Key(Key::Named(NamedKey::F7)),
+    BindInput::Key(Key::Named(NamedKey::F8)),
+    BindInput::Key(Key::Named(NamedKey::F9)),
+    BindInput::Key(Key::Character("g")),
+    BindInput::Key(Key::Character("h")),
+    BindInput::Key(Key::Named(NamedKey::Home)),
+    BindInput::Key(Key::Character("i")),
+    BindInput::Key(Key::Named(NamedKey::Insert)),
+    BindInput::Key(Key::Character("j")),
+    BindInput::Key(Key::Character("k")),
+    BindInput::Key(Key::Character("l")),
+    BindInput::Key(Key::Named(NamedKey::ArrowLeft)),
+    BindInput::Key(Key::Character("m")),
     BindInput::MouseButton(MouseButton::Left),
     BindInput::MouseButton(MouseButton::Right),
     BindInput::MouseButton(MouseButton::Middle),
     BindInput::MouseWheel(MouseWheel::Down),
     BindInput::MouseWheel(MouseWheel::Up),
-    BindInput::Key(Key::N),
-    BindInput::Key(Key::O),
-    BindInput::Key(Key::P),
-    BindInput::Key(Key::PageDown),
-    BindInput::Key(Key::PageUp),
-    BindInput::Key(Key::Q),
-    BindInput::Key(Key::R),
-    BindInput::Key(Key::Right),
-    BindInput::Key(Key::S),
-    BindInput::Key(Key::Semicolon),
-    BindInput::Key(Key::LShift),
-    BindInput::Key(Key::Space),
-    BindInput::Key(Key::T),
-    BindInput::Key(Key::Tab),
-    BindInput::Key(Key::U),
-    BindInput::Key(Key::Up),
-    BindInput::Key(Key::V),
-    BindInput::Key(Key::W),
-    BindInput::Key(Key::X),
-    BindInput::Key(Key::Y),
-    BindInput::Key(Key::Z),
-    BindInput::Key(Key::LBracket),
-    BindInput::Key(Key::Backslash),
-    BindInput::Key(Key::RBracket),
-    BindInput::Key(Key::Grave),
+    BindInput::Key(Key::Character("n")),
+    BindInput::Key(Key::Character("o")),
+    BindInput::Key(Key::Character("p")),
+    BindInput::Key(Key::Named(NamedKey::PageDown)),
+    BindInput::Key(Key::Named(NamedKey::PageUp)),
+    BindInput::Key(Key::Character("q")),
+    BindInput::Key(Key::Character("r")),
+    BindInput::Key(Key::Named(NamedKey::ArrowRight)),
+    BindInput::Key(Key::Character("s")),
+    BindInput::Key(Key::Character(";")),
+    BindInput::Key(Key::Named(NamedKey::Shift)),
+    BindInput::Key(Key::Named(NamedKey::Space)),
+    BindInput::Key(Key::Character("t")),
+    BindInput::Key(Key::Named(NamedKey::Tab)),
+    BindInput::Key(Key::Character("u")),
+    BindInput::Key(Key::Named(NamedKey::ArrowUp)),
+    BindInput::Key(Key::Character("v")),
+    BindInput::Key(Key::Character("w")),
+    BindInput::Key(Key::Character("x")),
+    BindInput::Key(Key::Character("y")),
+    BindInput::Key(Key::Character("z")),
+    BindInput::Key(Key::Character("[")),
+    BindInput::Key(Key::Character("\\")),
+    BindInput::Key(Key::Character("]")),
+    BindInput::Key(Key::Character("`")),
 ];
 
 /// A unique identifier for an in-game action.
@@ -344,7 +340,7 @@ impl ::std::convert::From<MouseScrollDelta> for MouseWheel {
                 }
             }
 
-            MouseScrollDelta::PixelDelta(LogicalPosition { y, .. }) => {
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y, .. }) => {
                 if y > 0.0 {
                     MouseWheel::Up
                 } else {
@@ -356,16 +352,26 @@ impl ::std::convert::From<MouseScrollDelta> for MouseWheel {
 }
 
 /// A physical input that can be bound to a command.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum BindInput {
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum BindInput<S = SmolStr> {
     /// A key pressed on the keyboard.
-    Key(Key),
+    Key(Key<S>),
 
     /// A button pressed on the mouse.
     MouseButton(MouseButton),
 
     /// A direction scrolled on the mouse wheel.
     MouseWheel(MouseWheel),
+}
+
+impl BindInput {
+    fn as_ref(&self) -> BindInput<&str> {
+        match self {
+            BindInput::Key(k) => BindInput::Key(k.as_ref()),
+            BindInput::MouseButton(b) => BindInput::MouseButton(*b),
+            BindInput::MouseWheel(w) => BindInput::MouseWheel(*w),
+        }
+    }
 }
 
 impl ::std::convert::From<Key> for BindInput {
@@ -392,6 +398,19 @@ impl ::std::convert::From<MouseScrollDelta> for BindInput {
     }
 }
 
+impl From<BindInput<&'static str>> for BindInput {
+    fn from(value: BindInput<&'static str>) -> Self {
+        match value {
+            BindInput::Key(Key::Character(s)) => Self::Key(Key::Character(s.into())),
+            BindInput::Key(Key::Named(n)) => Self::Key(Key::Named(n)),
+            BindInput::Key(Key::Unidentified(k)) => Self::Key(Key::Unidentified(k)),
+            BindInput::Key(Key::Dead(k)) => Self::Key(Key::Dead(k)),
+            BindInput::MouseButton(b) => Self::MouseButton(b),
+            BindInput::MouseWheel(w) => Self::MouseWheel(w),
+        }
+    }
+}
+
 impl FromStr for BindInput {
     type Err = Error;
 
@@ -400,7 +419,7 @@ impl FromStr for BindInput {
 
         for (i, name) in INPUT_NAMES.iter().enumerate() {
             if upper == *name {
-                return Ok(INPUT_VALUES[i].clone());
+                return Ok(INPUT_VALUES[i].clone().into());
             }
         }
 
@@ -412,7 +431,7 @@ impl ToString for BindInput {
     fn to_string(&self) -> String {
         // this could be a binary search but it's unlikely to affect performance much
         for (i, input) in INPUT_VALUES.iter().enumerate() {
-            if self == input {
+            if self.as_ref() == *input {
                 return INPUT_NAMES[i].to_owned();
             }
         }
@@ -504,27 +523,27 @@ impl GameInput {
 
     /// Bind the default controls.
     pub fn bind_defaults(&mut self) {
-        self.bind(Key::W, BindTarget::from_str("+forward").unwrap());
-        self.bind(Key::A, BindTarget::from_str("+moveleft").unwrap());
-        self.bind(Key::S, BindTarget::from_str("+back").unwrap());
-        self.bind(Key::D, BindTarget::from_str("+moveright").unwrap());
-        self.bind(Key::Space, BindTarget::from_str("+jump").unwrap());
-        self.bind(Key::Up, BindTarget::from_str("+lookup").unwrap());
-        self.bind(Key::Left, BindTarget::from_str("+left").unwrap());
-        self.bind(Key::Down, BindTarget::from_str("+lookdown").unwrap());
-        self.bind(Key::Right, BindTarget::from_str("+right").unwrap());
-        self.bind(Key::LControl, BindTarget::from_str("+attack").unwrap());
-        self.bind(Key::E, BindTarget::from_str("+use").unwrap());
-        self.bind(Key::Grave, BindTarget::from_str("toggleconsole").unwrap());
-        self.bind(Key::Key1, BindTarget::from_str("impulse 1").unwrap());
-        self.bind(Key::Key2, BindTarget::from_str("impulse 2").unwrap());
-        self.bind(Key::Key3, BindTarget::from_str("impulse 3").unwrap());
-        self.bind(Key::Key4, BindTarget::from_str("impulse 4").unwrap());
-        self.bind(Key::Key5, BindTarget::from_str("impulse 5").unwrap());
-        self.bind(Key::Key6, BindTarget::from_str("impulse 6").unwrap());
-        self.bind(Key::Key7, BindTarget::from_str("impulse 7").unwrap());
-        self.bind(Key::Key8, BindTarget::from_str("impulse 8").unwrap());
-        self.bind(Key::Key9, BindTarget::from_str("impulse 9").unwrap());
+        self.bind(Key::Character("w".into()), BindTarget::from_str("+forward").unwrap());
+        self.bind(Key::Character("a".into()), BindTarget::from_str("+moveleft").unwrap());
+        self.bind(Key::Character("s".into()), BindTarget::from_str("+back").unwrap());
+        self.bind(Key::Character("d".into()), BindTarget::from_str("+moveright").unwrap());
+        self.bind(Key::Named(NamedKey::Space), BindTarget::from_str("+jump").unwrap());
+        self.bind(Key::Named(NamedKey::ArrowUp), BindTarget::from_str("+lookup").unwrap());
+        self.bind(Key::Named(NamedKey::ArrowLeft), BindTarget::from_str("+left").unwrap());
+        self.bind(Key::Named(NamedKey::ArrowDown), BindTarget::from_str("+lookdown").unwrap());
+        self.bind(Key::Named(NamedKey::ArrowRight), BindTarget::from_str("+right").unwrap());
+        self.bind(Key::Named(NamedKey::Control), BindTarget::from_str("+attack").unwrap());
+        self.bind(Key::Character("e".into()), BindTarget::from_str("+use").unwrap());
+        self.bind(Key::Character("`".into()), BindTarget::from_str("toggleconsole").unwrap());
+        self.bind(Key::Character("1".into()), BindTarget::from_str("impulse 1").unwrap());
+        self.bind(Key::Character("2".into()), BindTarget::from_str("impulse 2").unwrap());
+        self.bind(Key::Character("3".into()), BindTarget::from_str("impulse 3").unwrap());
+        self.bind(Key::Character("4".into()), BindTarget::from_str("impulse 4").unwrap());
+        self.bind(Key::Character("5".into()), BindTarget::from_str("impulse 5").unwrap());
+        self.bind(Key::Character("6".into()), BindTarget::from_str("impulse 6").unwrap());
+        self.bind(Key::Character("7".into()), BindTarget::from_str("impulse 7").unwrap());
+        self.bind(Key::Character("8".into()), BindTarget::from_str("impulse 8").unwrap());
+        self.bind(Key::Character("9".into()), BindTarget::from_str("impulse 9").unwrap());
     }
 
     /// Bind a `BindInput` to a `BindTarget`.
@@ -550,10 +569,10 @@ impl GameInput {
         let (input, state): (BindInput, _) = match outer_event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::KeyboardInput {
-                    input:
-                        KeyboardInput {
+                    event:
+                        KeyEvent {
                             state,
-                            virtual_keycode: Some(key),
+                            logical_key: key,
                             ..
                         },
                     ..
@@ -650,7 +669,7 @@ impl GameInput {
                     2 => match BindInput::from_str(args[0]) {
                         Ok(input) => match BindTarget::from_str(args[1]) {
                             Ok(target) => {
-                                bindings.borrow_mut().insert(input, target);
+                                bindings.borrow_mut().insert(input.clone(), target);
                                 debug!("Bound {:?} to {:?}", input, args[1]);
                                 String::new()
                             }

@@ -3,6 +3,7 @@ name = "richter"
 version = "0.1.0"
 authors = ["Cormac O'Brien <cormac@c-obrien.org>"]
 edition = "2018"
+resolver = "2"
 
 [dependencies]
 arrayvec = "0.7"
@@ -31,10 +32,11 @@ slab = "0.4"
 structopt = "0.3.12"
 strum = "0.18.0"
 strum_macros = "0.18.0"
+smol_str = "0.2"
 thiserror = "1.0"
 uluru = "2"
-wgpu = "0.8"
+wgpu = { version = "0.19", features = ["spirv"] }
 
 # "winit" = "0.22.2"
 # necessary until winit/#1524 is merged
-winit = { git = "https://github.com/chemicstry/winit", branch = "optional_drag_and_drop" }
+winit = "0.29"

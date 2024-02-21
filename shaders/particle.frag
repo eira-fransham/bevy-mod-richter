@@ -7,7 +7,7 @@ layout(push_constant) uniform PushConstants {
 } push_constants;
 
 layout(set = 0, binding = 0) uniform sampler u_sampler;
-layout(set = 0, binding = 1) uniform texture2D u_texture[256];
+layout(set = 0, binding = 1) uniform texture2D u_texture[128];
 
 layout(location = 0) out vec4 diffuse_attachment;
 // layout(location = 1) out vec4 normal_attachment;

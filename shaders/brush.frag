@@ -45,8 +45,12 @@ layout(location = 1) out vec4 normal_attachment;
 layout(location = 2) out vec4 light_attachment;
 
 vec4 calc_light() {
+    return vec4(0.0);
     vec4 light = vec4(0.0, 0.0, 0.0, 0.0);
-    for (int i = 0; i < 4 && f_lightmap_anim[i] != LIGHTMAP_ANIM_END; i++) {
+    for (int i = 0; i < 4; i++) {
+        if (f_lightmap_anim[i] == LIGHTMAP_ANIM_END)
+            break;
+
         float map = texture(
             sampler2D(u_lightmap_texture[i], u_lightmap_sampler),
             f_lightmap

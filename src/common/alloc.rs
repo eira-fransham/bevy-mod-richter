@@ -83,7 +83,7 @@ impl<T> LinkedSlab<T> {
     ///
     /// Note that this operation is O(n) in the number of allocated values.
     pub fn remove(&mut self, key: usize) -> T {
-        self.allocated.drain_filter(|k| *k == key);
+        for _ in self.allocated.extract_if(|k| *k == key) {}
         self.slab.remove(key)
     }
 
@@ -107,7 +107,7 @@ impl<T> LinkedSlab<T> {
         let mut allocated = mem::replace(&mut self.allocated, LinkedList::new());
         let mut slab = mem::replace(&mut self.slab, Slab::new());
 
-        allocated.drain_filter(|k| {
+        for _ in allocated.extract_if(|k| {
             let retain = match slab.get_mut(*k) {
                 Some(ref mut v) => f(*k, v),
                 None => true,
@@ -118,7 +118,8 @@ impl<T> LinkedSlab<T> {
             }
 
             !retain
-        });
+        }) {
+        }
 
         // put them back
         self.slab = slab;

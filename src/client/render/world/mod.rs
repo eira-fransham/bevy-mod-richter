@@ -42,7 +42,7 @@ lazy_static! {
         vec![
             wgpu::BindGroupLayoutEntry {
                 binding:0,
-                visibility:wgpu::ShaderStage::all(),
+                visibility:wgpu::ShaderStages::all(),
                 ty:wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -57,7 +57,7 @@ lazy_static! {
             // TODO: move this to push constants once they're exposed in wgpu
             wgpu::BindGroupLayoutEntry {
                 binding:0,
-                visibility:wgpu::ShaderStage::VERTEX,
+                visibility:wgpu::ShaderStages::VERTEX,
                 ty:wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
@@ -69,15 +69,15 @@ lazy_static! {
             // diffuse and fullbright sampler
             wgpu::BindGroupLayoutEntry {
                 binding:1,
-                visibility:wgpu::ShaderStage::FRAGMENT,
-                ty:wgpu::BindingType::Sampler { filtering: true, comparison: false },
+                visibility:wgpu::ShaderStages::FRAGMENT,
+                ty:wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                 count:None,
             },
             // lightmap sampler
             wgpu::BindGroupLayoutEntry {
                 binding:2,
-                visibility:wgpu::ShaderStage::FRAGMENT,
-                ty:wgpu::BindingType::Sampler { filtering: true, comparison: false },
+                visibility:wgpu::ShaderStages::FRAGMENT,
+                ty:wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                 count:None,
             },
         ],
@@ -127,32 +127,32 @@ impl Pipeline for WorldPipelineBase {
             strip_index_format: None,
             front_face: wgpu::FrontFace::Cw,
             cull_mode: None,
-            clamp_depth: false,
             polygon_mode: wgpu::PolygonMode::Fill,
             conservative: false,
+            .. Default::default()
         }
     }
 
-    fn color_target_states() -> Vec<wgpu::ColorTargetState> {
+    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
         vec![
             // diffuse attachment
-            wgpu::ColorTargetState {
+            Some(wgpu::ColorTargetState {
                 format: DIFFUSE_ATTACHMENT_FORMAT,
                 blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrite::ALL,
-            },
+                write_mask: wgpu::ColorWrites::ALL,
+            }),
             // normal attachment
-            wgpu::ColorTargetState {
+            Some(wgpu::ColorTargetState {
                 format: NORMAL_ATTACHMENT_FORMAT,
                 blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrite::ALL,
-            },
+                write_mask: wgpu::ColorWrites::ALL,
+            }),
             // light attachment
-            wgpu::ColorTargetState {
+            Some(wgpu::ColorTargetState {
                 format: LIGHT_ATTACHMENT_FORMAT,
                 blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrite::ALL,
-            },
+                write_mask: wgpu::ColorWrites::ALL,
+            }),
         ]
     }
 
