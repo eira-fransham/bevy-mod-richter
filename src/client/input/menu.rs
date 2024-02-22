@@ -20,7 +20,10 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{client::menu::Menu, common::console::Console};
 
 use failure::Error;
-use winit::{keyboard::{Key, NamedKey}, event::{ElementState, Event, KeyEvent, WindowEvent}};
+use winit::{
+    event::{ElementState, Event, KeyEvent, WindowEvent},
+    keyboard::{Key, NamedKey},
+};
 
 pub struct MenuInput {
     menu: Rc<RefCell<Menu>>,

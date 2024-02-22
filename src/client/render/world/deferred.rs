@@ -5,7 +5,7 @@ use cgmath::{Matrix4, SquareMatrix as _, Vector3, Zero as _};
 use crate::{
     client::{
         entity::MAX_LIGHTS,
-        render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState},
+        render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, DIFFUSE_ATTACHMENT_FORMAT},
     },
     common::util::any_as_bytes,
 };
@@ -39,7 +39,7 @@ impl DeferredPipeline {
         sample_count: u32,
     ) -> DeferredPipeline {
         let (pipeline, bind_group_layouts) =
-            DeferredPipeline::create(device, compiler, &[], sample_count);
+            DeferredPipeline::create(device, compiler, &[], sample_count, ());
 
         use wgpu::util::DeviceExt as _;
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -72,7 +72,7 @@ impl DeferredPipeline {
         sample_count: u32,
     ) {
         let layout_refs: Vec<_> = self.bind_group_layouts.iter().collect();
-        let pipeline = DeferredPipeline::recreate(device, compiler, &layout_refs, sample_count);
+        let pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, ());
         self.pipeline = pipeline;
     }
 
@@ -159,6 +159,8 @@ impl Pipeline for DeferredPipeline {
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
 
+    type Args = ();
+
     fn name() -> &'static str {
         "deferred"
     }
@@ -188,8 +190,12 @@ impl Pipeline for DeferredPipeline {
         QuadPipeline::primitive_state()
     }
 
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
-        QuadPipeline::color_target_states()
+    fn color_target_states_with_args(_: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
+        vec![Some(wgpu::ColorTargetState {
+            format: DIFFUSE_ATTACHMENT_FORMAT,
+            blend: Some(wgpu::BlendState::REPLACE),
+            write_mask: wgpu::ColorWrites::ALL,
+        })]
     }
 
     fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {

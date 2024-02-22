@@ -64,7 +64,7 @@ impl BrushPipeline {
         sample_count: u32,
     ) -> BrushPipeline {
         let (pipeline, bind_group_layouts) =
-            BrushPipeline::create(device, compiler, world_bind_group_layouts, sample_count);
+            BrushPipeline::create(device, compiler, world_bind_group_layouts, sample_count, ());
 
         BrushPipeline {
             pipeline,
@@ -84,7 +84,7 @@ impl BrushPipeline {
             .iter()
             .chain(self.bind_group_layouts.iter())
             .collect();
-        self.pipeline = BrushPipeline::recreate(device, compiler, &layout_refs, sample_count);
+        self.pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, ());
     }
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
@@ -175,6 +175,8 @@ impl Pipeline for BrushPipeline {
     type SharedPushConstants = SharedPushConstants;
     type FragmentPushConstants = ();
 
+    type Args = ();
+
     fn name() -> &'static str {
         "brush"
     }
@@ -208,7 +210,7 @@ impl Pipeline for BrushPipeline {
         WorldPipelineBase::primitive_state()
     }
 
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
+    fn color_target_states_with_args(_: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
         WorldPipelineBase::color_target_states()
     }
 

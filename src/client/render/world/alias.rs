@@ -28,7 +28,7 @@ impl AliasPipeline {
         sample_count: u32,
     ) -> AliasPipeline {
         let (pipeline, bind_group_layouts) =
-            AliasPipeline::create(device, compiler, world_bind_group_layouts, sample_count);
+            AliasPipeline::create(device, compiler, world_bind_group_layouts, sample_count, ());
 
         AliasPipeline {
             pipeline,
@@ -47,7 +47,7 @@ impl AliasPipeline {
             .iter()
             .chain(self.bind_group_layouts.iter())
             .collect();
-        self.pipeline = AliasPipeline::recreate(device, compiler, &layout_refs, sample_count);
+        self.pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, ());
     }
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
@@ -84,6 +84,8 @@ impl Pipeline for AliasPipeline {
     type VertexPushConstants = VertexPushConstants;
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
+
+    type Args = ();
 
     fn name() -> &'static str {
         "alias"
@@ -123,7 +125,7 @@ impl Pipeline for AliasPipeline {
         WorldPipelineBase::primitive_state()
     }
 
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
+    fn color_target_states_with_args(_: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
         WorldPipelineBase::color_target_states()
     }
 

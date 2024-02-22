@@ -41,6 +41,7 @@ lazy_static! {
 pub struct GlyphPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    format: wgpu::TextureFormat,
     instance_buffer: wgpu::Buffer,
 }
 
@@ -48,10 +49,11 @@ impl GlyphPipeline {
     pub fn new(
         device: &wgpu::Device,
         compiler: &mut shaderc::Compiler,
+    format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> GlyphPipeline {
         let (pipeline, bind_group_layouts) =
-            GlyphPipeline::create(device, compiler, &[], sample_count);
+            GlyphPipeline::create(device, compiler, &[], sample_count, format);
 
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("quad instance buffer"),
@@ -63,8 +65,13 @@ impl GlyphPipeline {
         GlyphPipeline {
             pipeline,
             bind_group_layouts,
+            format,
             instance_buffer,
         }
+    }
+
+    pub fn set_format(&mut self, format: wgpu::TextureFormat) {
+        self.format = format;
     }
 
     pub fn rebuild(
@@ -74,7 +81,7 @@ impl GlyphPipeline {
         sample_count: u32,
     ) {
         let layout_refs = self.bind_group_layouts.iter().collect::<Vec<_>>();
-        self.pipeline = GlyphPipeline::recreate(device, compiler, &layout_refs, sample_count);
+        self.pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, self.format);
     }
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
@@ -116,6 +123,8 @@ impl Pipeline for GlyphPipeline {
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
 
+    type Args = wgpu::TextureFormat;
+
     fn name() -> &'static str {
         "glyph"
     }
@@ -139,8 +148,8 @@ impl Pipeline for GlyphPipeline {
         }]
     }
 
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
-        QuadPipeline::color_target_states()
+    fn color_target_states_with_args(format: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
+        QuadPipeline::color_target_states_with_args(format)
     }
 
     fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {

@@ -20,7 +20,10 @@ use std::{cell::RefCell, rc::Rc};
 use crate::common::console::Console;
 
 use failure::Error;
-use winit::{keyboard::{NamedKey, Key}, event::{ElementState, Event, KeyEvent, WindowEvent}};
+use winit::{
+    event::{ElementState, Event, KeyEvent, WindowEvent},
+    keyboard::{Key, NamedKey},
+};
 
 pub struct ConsoleInput {
     console: Rc<RefCell<Console>>,
@@ -48,9 +51,11 @@ impl ConsoleInput {
                     Key::Named(NamedKey::ArrowLeft) => self.console.borrow_mut().cursor_left(),
                     Key::Named(NamedKey::ArrowRight) => self.console.borrow_mut().cursor_right(),
                     Key::Character("`") => self.console.borrow_mut().stuff_text("toggleconsole\n"),
-                    Key::Character(c) => for c in c.chars() {
-                        self.console.borrow_mut().send_char(c);
-                    },
+                    Key::Character(c) => {
+                        for c in c.chars() {
+                            self.console.borrow_mut().send_char(c);
+                        }
+                    }
                     _ => (),
                 },
 

@@ -118,8 +118,7 @@ impl<T> LinkedSlab<T> {
             }
 
             !retain
-        }) {
-        }
+        }) {}
 
         // put them back
         self.slab = slab;

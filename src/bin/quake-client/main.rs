@@ -58,7 +58,7 @@ use wgpu::CompositeAlphaMode;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
-    window::{Window, CursorGrabMode},
+    window::{CursorGrabMode, Window},
 };
 
 struct ClientProgram<'a> {
@@ -72,6 +72,7 @@ struct ClientProgram<'a> {
     window_dimensions_changed: bool,
 
     surface: wgpu::Surface<'a>,
+    adapter: wgpu::Adapter,
     gfx_state: RefCell<GraphicsState>,
     ui_renderer: Rc<UiRenderer>,
 
@@ -102,8 +103,11 @@ impl<'a> ClientProgram<'a> {
         )));
         input.borrow_mut().bind_defaults();
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor{backends: wgpu::Backends::PRIMARY, ..Default::default() });
-        let surface =  instance.create_surface(window) .unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            ..Default::default()
+        });
+        let surface = instance.create_surface(window).unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -135,16 +139,16 @@ impl<'a> ClientProgram<'a> {
             .await
             .unwrap();
         let size: Extent2d = window.inner_size().into();
-        surface.configure(&device, &wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: DIFFUSE_ATTACHMENT_FORMAT,
-                width: size.width,
-                height: size.height,
-                present_mode: wgpu::PresentMode::Immediate,
-                alpha_mode: CompositeAlphaMode::Auto,
-                view_formats: Default::default(),
-                desired_maximum_frame_latency: Default::default(),
-        });
+        let config =
+           surface
+                .get_default_config(&adapter, size.width, size.height)
+                .unwrap_or(Self::surface_config(size.width, size.height));
+        surface.configure(
+            &device,
+            &config,
+        );
+
+        let default_swapchain_format = config.view_formats.first().copied().unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
 
         let vfs = Rc::new(vfs);
 
@@ -156,37 +160,39 @@ impl<'a> ClientProgram<'a> {
 
         sample_count = 1;
 
-        let gfx_state = GraphicsState::new(device, queue, size, sample_count, vfs.clone()).unwrap();
+        let gfx_state = GraphicsState::new(device, queue, default_swapchain_format, size, sample_count, vfs.clone()).unwrap();
         let ui_renderer = Rc::new(UiRenderer::new(&gfx_state, &menu.borrow()));
 
         // TODO: factor this out
         // implements "exec" command
         let exec_vfs = vfs.clone();
         let exec_console = console.clone();
-        cmds.borrow_mut().insert_or_replace(
-            "exec",
-            Box::new(move |args| {
-                match args.len() {
-                    // exec (filename): execute a script file
-                    1 => {
-                        let mut script_file = match exec_vfs.open(args[0]) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                return format!("Couldn't exec {}: {:?}", args[0], e);
-                            }
-                        };
+        cmds.borrow_mut()
+            .insert_or_replace(
+                "exec",
+                Box::new(move |args| {
+                    match args.len() {
+                        // exec (filename): execute a script file
+                        1 => {
+                            let mut script_file = match exec_vfs.open(args[0]) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    return format!("Couldn't exec {}: {:?}", args[0], e);
+                                }
+                            };
 
-                        let mut script = String::new();
-                        script_file.read_to_string(&mut script).unwrap();
+                            let mut script = String::new();
+                            script_file.read_to_string(&mut script).unwrap();
 
-                        exec_console.borrow().stuff_text(script);
-                        String::new()
+                            exec_console.borrow().stuff_text(script);
+                            String::new()
+                        }
+
+                        _ => format!("exec (filename): execute a script file"),
                     }
-
-                    _ => format!("exec (filename): execute a script file"),
-                }
-            }),
-        ).unwrap();
+                }),
+            )
+            .unwrap();
 
         // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
         console.borrow().stuff_text("exec quake.rc\n");
@@ -212,6 +218,7 @@ impl<'a> ClientProgram<'a> {
             window,
             window_dimensions_changed: false,
             surface,
+            adapter,
             gfx_state: RefCell::new(gfx_state),
             ui_renderer,
             game,
@@ -219,21 +226,32 @@ impl<'a> ClientProgram<'a> {
         }
     }
 
+    fn surface_config(width: u32, height: u32) -> wgpu::SurfaceConfiguration {
+        wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: DIFFUSE_ATTACHMENT_FORMAT,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::Immediate,
+            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            view_formats: Default::default(),
+            desired_maximum_frame_latency: Default::default(),
+        }
+    }
+
     /// Builds a new swap chain with the specified present mode and the window's current dimensions.
-    fn recreate_swap_chain(&self, present_mode: wgpu::PresentMode) {
+    fn recreate_swap_chain(&self, adapter: &wgpu::Adapter) {
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-        self.surface.configure(self.gfx_state.borrow().device(),
-            &wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: DIFFUSE_ATTACHMENT_FORMAT,
-                width,
-                height,
-                present_mode,
-                alpha_mode: Default::default(),
-                view_formats: Default::default(),
-                desired_maximum_frame_latency: Default::default(),
-            },
+        let config =
+            self
+                .surface
+                .get_default_config(adapter, width, height)
+                .unwrap_or(Self::surface_config(width, height));
+        self.surface.configure(
+            self.gfx_state.borrow().device(),
+            &config,
         );
+        self.gfx_state.borrow_mut().set_format(config.view_formats.first().copied().unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb));
     }
 
     fn render(&mut self) {
@@ -241,12 +259,14 @@ impl<'a> ClientProgram<'a> {
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
         self.game.render(
             &self.gfx_state.borrow(),
-            &swap_chain_output.texture.create_view(&Default::default()) ,
+            &swap_chain_output.texture.create_view(&Default::default()),
             width,
             height,
             &self.console.borrow(),
             &self.menu.borrow(),
         );
+
+        swap_chain_output.present();
     }
 }
 
@@ -273,7 +293,7 @@ impl Program for ClientProgram<'_> {
         // recreate swapchain if needed
         if self.window_dimensions_changed {
             self.window_dimensions_changed = false;
-            self.recreate_swap_chain(wgpu::PresentMode::Immediate);
+            self.recreate_swap_chain(&self.adapter);
         }
 
         let size: Extent2d = self.window.inner_size().into();
@@ -434,10 +454,12 @@ fn main() {
 
     let mut host = Host::new(client_program);
 
-    event_loop.run(move |event, target| {
-        let mut control_flow = ControlFlow::Poll;
-        host.handle_event(event, target, &mut control_flow);
+    event_loop
+        .run(move |event, target| {
+            let mut control_flow = ControlFlow::Poll;
+            host.handle_event(event, target, &mut control_flow);
 
-        target.set_control_flow(control_flow);
-    }).unwrap();
+            target.set_control_flow(control_flow);
+        })
+        .unwrap();
 }

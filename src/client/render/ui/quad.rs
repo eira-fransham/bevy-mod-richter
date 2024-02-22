@@ -76,6 +76,7 @@ lazy_static! {
 pub struct QuadPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    format: wgpu::TextureFormat,
     vertex_buffer: wgpu::Buffer,
     uniform_buffer: RefCell<DynamicUniformBuffer<QuadUniforms>>,
     uniform_buffer_blocks: RefCell<Vec<DynamicUniformBufferBlock<QuadUniforms>>>,
@@ -85,10 +86,11 @@ impl QuadPipeline {
     pub fn new(
         device: &wgpu::Device,
         compiler: &mut shaderc::Compiler,
+        format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> QuadPipeline {
         let (pipeline, bind_group_layouts) =
-            QuadPipeline::create(device, compiler, &[], sample_count);
+            QuadPipeline::create(device, compiler, &[], sample_count, format);
 
         use wgpu::util::DeviceExt as _;
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -103,10 +105,15 @@ impl QuadPipeline {
         QuadPipeline {
             pipeline,
             bind_group_layouts,
+            format,
             vertex_buffer,
             uniform_buffer,
             uniform_buffer_blocks,
         }
+    }
+
+    pub fn set_format(&mut self, format: wgpu::TextureFormat) {
+        self.format = format;
     }
 
     pub fn rebuild(
@@ -116,7 +123,7 @@ impl QuadPipeline {
         sample_count: u32,
     ) {
         let layout_refs = self.bind_group_layouts.iter().collect::<Vec<_>>();
-        self.pipeline = QuadPipeline::recreate(device, compiler, &layout_refs, sample_count);
+        self.pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, self.format);
     }
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
@@ -194,6 +201,8 @@ impl Pipeline for QuadPipeline {
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
 
+    type Args = wgpu::TextureFormat;
+
     fn name() -> &'static str {
         "quad"
     }
@@ -234,13 +243,13 @@ impl Pipeline for QuadPipeline {
             cull_mode: Some(wgpu::Face::Back),
             polygon_mode: wgpu::PolygonMode::Fill,
             conservative: false,
-            .. Default::default()
+            ..Default::default()
         }
     }
 
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
+    fn color_target_states_with_args(format: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
         vec![Some(wgpu::ColorTargetState {
-            format: DIFFUSE_ATTACHMENT_FORMAT,
+            format,
             blend: Some(wgpu::BlendState::REPLACE),
             write_mask: wgpu::ColorWrites::ALL,
         })]

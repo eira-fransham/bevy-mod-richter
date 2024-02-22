@@ -16,7 +16,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use std::{
-    borrow::Cow, cell::{Cell, RefCell}, collections::HashMap, rc::Rc, str::FromStr, string::ToString
+    borrow::Cow,
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+    str::FromStr,
+    string::ToString,
 };
 
 use crate::common::{
@@ -25,14 +30,15 @@ use crate::common::{
 };
 
 use failure::Error;
+use smol_str::SmolStr;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
-use smol_str::SmolStr;
 use winit::{
-    dpi::{LogicalPosition, PhysicalPosition}, event::{
-        DeviceEvent, ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta,
-        WindowEvent,
-    }, keyboard::{Key, NamedKey}
+    dpi::{LogicalPosition, PhysicalPosition},
+    event::{
+        DeviceEvent, ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
+    },
+    keyboard::{Key, NamedKey},
 };
 
 const ACTION_COUNT: usize = 19;
@@ -523,27 +529,90 @@ impl GameInput {
 
     /// Bind the default controls.
     pub fn bind_defaults(&mut self) {
-        self.bind(Key::Character("w".into()), BindTarget::from_str("+forward").unwrap());
-        self.bind(Key::Character("a".into()), BindTarget::from_str("+moveleft").unwrap());
-        self.bind(Key::Character("s".into()), BindTarget::from_str("+back").unwrap());
-        self.bind(Key::Character("d".into()), BindTarget::from_str("+moveright").unwrap());
-        self.bind(Key::Named(NamedKey::Space), BindTarget::from_str("+jump").unwrap());
-        self.bind(Key::Named(NamedKey::ArrowUp), BindTarget::from_str("+lookup").unwrap());
-        self.bind(Key::Named(NamedKey::ArrowLeft), BindTarget::from_str("+left").unwrap());
-        self.bind(Key::Named(NamedKey::ArrowDown), BindTarget::from_str("+lookdown").unwrap());
-        self.bind(Key::Named(NamedKey::ArrowRight), BindTarget::from_str("+right").unwrap());
-        self.bind(Key::Named(NamedKey::Control), BindTarget::from_str("+attack").unwrap());
-        self.bind(Key::Character("e".into()), BindTarget::from_str("+use").unwrap());
-        self.bind(Key::Character("`".into()), BindTarget::from_str("toggleconsole").unwrap());
-        self.bind(Key::Character("1".into()), BindTarget::from_str("impulse 1").unwrap());
-        self.bind(Key::Character("2".into()), BindTarget::from_str("impulse 2").unwrap());
-        self.bind(Key::Character("3".into()), BindTarget::from_str("impulse 3").unwrap());
-        self.bind(Key::Character("4".into()), BindTarget::from_str("impulse 4").unwrap());
-        self.bind(Key::Character("5".into()), BindTarget::from_str("impulse 5").unwrap());
-        self.bind(Key::Character("6".into()), BindTarget::from_str("impulse 6").unwrap());
-        self.bind(Key::Character("7".into()), BindTarget::from_str("impulse 7").unwrap());
-        self.bind(Key::Character("8".into()), BindTarget::from_str("impulse 8").unwrap());
-        self.bind(Key::Character("9".into()), BindTarget::from_str("impulse 9").unwrap());
+        self.bind(
+            Key::Character("w".into()),
+            BindTarget::from_str("+forward").unwrap(),
+        );
+        self.bind(
+            Key::Character("a".into()),
+            BindTarget::from_str("+moveleft").unwrap(),
+        );
+        self.bind(
+            Key::Character("s".into()),
+            BindTarget::from_str("+back").unwrap(),
+        );
+        self.bind(
+            Key::Character("d".into()),
+            BindTarget::from_str("+moveright").unwrap(),
+        );
+        self.bind(
+            Key::Named(NamedKey::Space),
+            BindTarget::from_str("+jump").unwrap(),
+        );
+        self.bind(
+            Key::Named(NamedKey::ArrowUp),
+            BindTarget::from_str("+lookup").unwrap(),
+        );
+        self.bind(
+            Key::Named(NamedKey::ArrowLeft),
+            BindTarget::from_str("+left").unwrap(),
+        );
+        self.bind(
+            Key::Named(NamedKey::ArrowDown),
+            BindTarget::from_str("+lookdown").unwrap(),
+        );
+        self.bind(
+            Key::Named(NamedKey::ArrowRight),
+            BindTarget::from_str("+right").unwrap(),
+        );
+        self.bind(
+            Key::Named(NamedKey::Control),
+            BindTarget::from_str("+attack").unwrap(),
+        );
+        self.bind(
+            Key::Character("e".into()),
+            BindTarget::from_str("+use").unwrap(),
+        );
+        self.bind(
+            Key::Character("`".into()),
+            BindTarget::from_str("toggleconsole").unwrap(),
+        );
+        self.bind(
+            Key::Character("1".into()),
+            BindTarget::from_str("impulse 1").unwrap(),
+        );
+        self.bind(
+            Key::Character("2".into()),
+            BindTarget::from_str("impulse 2").unwrap(),
+        );
+        self.bind(
+            Key::Character("3".into()),
+            BindTarget::from_str("impulse 3").unwrap(),
+        );
+        self.bind(
+            Key::Character("4".into()),
+            BindTarget::from_str("impulse 4").unwrap(),
+        );
+        self.bind(
+            Key::Character("5".into()),
+            BindTarget::from_str("impulse 5").unwrap(),
+        );
+        self.bind(
+            Key::Character("6".into()),
+            BindTarget::from_str("impulse 6").unwrap(),
+        );
+        self.bind(
+            Key::Character("7".into()),
+            BindTarget::from_str("impulse 7").unwrap(),
+        );
+        self.bind(
+            Key::Character("8".into()),
+            BindTarget::from_str("impulse 8").unwrap(),
+        );
+        self.bind(
+            Key::Character("9".into()),
+            BindTarget::from_str("impulse 9").unwrap(),
+        );
     }
 
     /// Bind a `BindInput` to a `BindTarget`.

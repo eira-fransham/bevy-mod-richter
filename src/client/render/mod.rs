@@ -60,7 +60,7 @@ pub use error::{RenderError, RenderErrorKind};
 pub use palette::Palette;
 pub use pipeline::Pipeline;
 pub use postprocess::PostProcessRenderer;
-pub use target::{RenderTarget, RenderTargetResolve, SwapChainTarget};
+pub use target::{PreferredFormat, RenderTarget, RenderTargetResolve, SwapChainTarget};
 pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
 pub use world::{
     deferred::{DeferredRenderer, DeferredUniforms, PointLight},
@@ -68,7 +68,7 @@ pub use world::{
 };
 
 use std::{
-    borrow::Cow,
+    borrow::{BorrowMut, Cow},
     cell::{Cell, Ref, RefCell, RefMut},
     mem::size_of,
     num::{NonZeroU32, NonZeroU64, NonZeroU8},
@@ -113,6 +113,7 @@ use chrono::{DateTime, Duration, Utc};
 use failure::Error;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+// TODO: Use default surface config to request this for the swapchain specifically
 pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 const NORMAL_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const LIGHT_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -295,6 +296,7 @@ impl GraphicsState {
     pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
+        swapchain_format: wgpu::TextureFormat,
         size: Extent2d,
         sample_count: u32,
         vfs: Rc<Vfs>,
@@ -409,11 +411,11 @@ impl GraphicsState {
         let deferred_pipeline = DeferredPipeline::new(&device, &mut compiler, sample_count);
         let particle_pipeline =
             ParticlePipeline::new(&device, &queue, &mut compiler, sample_count, &palette);
-        let postprocess_pipeline = PostProcessPipeline::new(&device, &mut compiler, sample_count);
-        let quad_pipeline = QuadPipeline::new(&device, &mut compiler, sample_count);
-        let glyph_pipeline = GlyphPipeline::new(&device, &mut compiler, sample_count);
+        let postprocess_pipeline = PostProcessPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
+        let quad_pipeline = QuadPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
+        let glyph_pipeline = GlyphPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
         let blit_pipeline =
-            BlitPipeline::new(&device, &mut compiler, final_pass_target.resolve_view());
+            BlitPipeline::new(&device, &mut compiler, final_pass_target.resolve_view(), swapchain_format);
 
         let default_lightmap = create_texture(
             &device,
@@ -506,6 +508,13 @@ impl GraphicsState {
                 self.final_pass_target.resolve_view(),
             )
         }
+    }
+
+    pub fn set_format(&mut self, format: wgpu::TextureFormat) {
+        self.postprocess_pipeline.borrow_mut().set_format(format);
+        self.quad_pipeline.borrow_mut().set_format(format);
+        self.glyph_pipeline.borrow_mut().set_format(format);
+        self.recreate_pipelines(self.sample_count.get());
     }
 
     /// Rebuild all render pipelines using the new sample count.
@@ -829,12 +838,8 @@ impl ClientRenderer {
             },
         };
 
-        // TODO: It seems like everything else works but we get a "resolve texture view must be multisampled" error.
-        //       However, enabling multisampling anywhere breaks the whole system.
-        const RENDER: bool = true;
-
         // final render pass: postprocess the world and draw the UI
-        if RENDER {
+        {
             // quad_commands must outlive final pass
             let mut quad_commands = Vec::new();
             let mut glyph_commands = Vec::new();

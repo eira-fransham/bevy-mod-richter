@@ -88,7 +88,7 @@ where
             }
 
             Event::AboutToWait => self.frame(),
-            Event::Suspended | Event::Resumed => {},
+            Event::Suspended | Event::Resumed => {}
             Event::LoopExiting => {
                 // TODO:
                 // - host_writeconfig

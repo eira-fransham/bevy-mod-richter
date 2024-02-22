@@ -1,7 +1,7 @@
 use std::{mem::size_of, num::NonZeroU64};
 
 use crate::{
-    client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState},
+    client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, SwapChainTarget},
     common::util::any_as_bytes,
 };
 
@@ -14,6 +14,7 @@ pub struct PostProcessUniforms {
 pub struct PostProcessPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    swapchain_format: wgpu::TextureFormat,
     uniform_buffer: wgpu::Buffer,
 }
 
@@ -21,10 +22,11 @@ impl PostProcessPipeline {
     pub fn new(
         device: &wgpu::Device,
         compiler: &mut shaderc::Compiler,
+        swapchain_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> PostProcessPipeline {
         let (pipeline, bind_group_layouts) =
-            PostProcessPipeline::create(device, compiler, &[], sample_count);
+            PostProcessPipeline::create(device, compiler, &[], sample_count, swapchain_format);
         use wgpu::util::DeviceExt as _;
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
@@ -38,10 +40,15 @@ impl PostProcessPipeline {
 
         PostProcessPipeline {
             pipeline,
+            swapchain_format,
             bind_group_layouts,
             uniform_buffer,
         }
     }
+
+    pub fn set_format(&mut self, format: wgpu::TextureFormat) {
+        self.swapchain_format = format;
+        }
 
     pub fn rebuild(
         &mut self,
@@ -50,7 +57,7 @@ impl PostProcessPipeline {
         sample_count: u32,
     ) {
         let layout_refs: Vec<_> = self.bind_group_layouts.iter().collect();
-        let pipeline = PostProcessPipeline::recreate(device, compiler, &layout_refs, sample_count);
+        let pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, self.swapchain_format);
         self.pipeline = pipeline;
     }
 
@@ -104,6 +111,8 @@ impl Pipeline for PostProcessPipeline {
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
 
+    type Args = wgpu::TextureFormat;
+
     fn name() -> &'static str {
         "postprocess"
     }
@@ -133,8 +142,8 @@ impl Pipeline for PostProcessPipeline {
         QuadPipeline::primitive_state()
     }
 
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
-        QuadPipeline::color_target_states()
+    fn color_target_states_with_args(args: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
+        QuadPipeline::color_target_states_with_args(args)
     }
 
     fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {

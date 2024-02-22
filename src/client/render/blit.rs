@@ -4,6 +4,7 @@ pub struct BlitPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     bind_group: wgpu::BindGroup,
+    format: wgpu::TextureFormat,
     sampler: wgpu::Sampler,
 }
 
@@ -34,8 +35,9 @@ impl BlitPipeline {
         device: &wgpu::Device,
         compiler: &mut shaderc::Compiler,
         input: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
     ) -> BlitPipeline {
-        let (pipeline, bind_group_layouts) = BlitPipeline::create(device, compiler, &[], 1);
+        let (pipeline, bind_group_layouts) = BlitPipeline::create(device, compiler, &[], 1, format);
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
@@ -57,6 +59,7 @@ impl BlitPipeline {
             pipeline,
             bind_group_layouts,
             bind_group,
+            format,
             sampler,
         }
     }
@@ -68,7 +71,7 @@ impl BlitPipeline {
         input: &wgpu::TextureView,
     ) {
         let layout_refs: Vec<_> = self.bind_group_layouts.iter().collect();
-        let pipeline = BlitPipeline::recreate(device, compiler, &layout_refs, 1);
+        let pipeline = BlitPipeline::recreate(device, compiler, &layout_refs, 1, self.format);
         self.pipeline = pipeline;
         self.bind_group =
             Self::create_bind_group(device, self.bind_group_layouts(), &self.sampler, input);
@@ -94,6 +97,8 @@ impl Pipeline for BlitPipeline {
     type VertexPushConstants = ();
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
+
+    type Args = wgpu::TextureFormat;
 
     fn name() -> &'static str {
         "blit"
@@ -137,8 +142,8 @@ impl Pipeline for BlitPipeline {
         QuadPipeline::primitive_state()
     }
 
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
-        QuadPipeline::color_target_states()
+    fn color_target_states_with_args(format: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
+        QuadPipeline::color_target_states_with_args(format)
     }
 
     fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {

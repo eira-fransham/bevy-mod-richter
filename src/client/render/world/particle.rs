@@ -61,7 +61,7 @@ impl ParticlePipeline {
         palette: &Palette,
     ) -> ParticlePipeline {
         let (pipeline, bind_group_layouts) =
-            ParticlePipeline::create(device, compiler, &[], sample_count);
+            ParticlePipeline::create(device, compiler, &[], sample_count, ());
 
         use wgpu::util::DeviceExt as _;
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -80,7 +80,7 @@ impl ParticlePipeline {
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_max_clamp: 1000.0,
             compare: None,
-            .. Default::default()
+            ..Default::default()
         });
 
         let textures: Vec<wgpu::Texture> = (0..128)
@@ -147,7 +147,7 @@ impl ParticlePipeline {
         sample_count: u32,
     ) {
         let layout_refs: Vec<_> = self.bind_group_layouts.iter().collect();
-        self.pipeline = ParticlePipeline::recreate(device, compiler, &layout_refs, sample_count);
+        self.pipeline = ParticlePipeline::recreate(device, compiler, &layout_refs, sample_count, ());
     }
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
@@ -258,6 +258,8 @@ impl Pipeline for ParticlePipeline {
     type SharedPushConstants = ();
     type FragmentPushConstants = FragmentPushConstants;
 
+    type Args = ();
+
     fn name() -> &'static str {
         "particle"
     }
@@ -292,7 +294,7 @@ impl Pipeline for ParticlePipeline {
         WorldPipelineBase::primitive_state()
     }
 
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
+    fn color_target_states_with_args(_: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
         WorldPipelineBase::color_target_states()
     }
 

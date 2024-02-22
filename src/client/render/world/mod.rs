@@ -104,6 +104,8 @@ impl Pipeline for WorldPipelineBase {
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
 
+    type Args = ();
+
     fn name() -> &'static str {
         "world"
     }
@@ -129,11 +131,11 @@ impl Pipeline for WorldPipelineBase {
             cull_mode: None,
             polygon_mode: wgpu::PolygonMode::Fill,
             conservative: false,
-            .. Default::default()
+            ..Default::default()
         }
     }
 
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
+    fn color_target_states_with_args(_: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
         vec![
             // diffuse attachment
             Some(wgpu::ColorTargetState {

@@ -18,7 +18,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{borrow::BorrowMut, cell::RefCell, path::PathBuf, rc::Rc, sync::{Arc, Mutex}};
+use std::{
+    borrow::BorrowMut,
+    cell::RefCell,
+    path::PathBuf,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use lazy_static::lazy_static;
 
@@ -69,16 +75,19 @@ impl Game {
 
         // set up screenshots
         let screenshot_path = Rc::new(RefCell::new(None));
-        (*cmds).borrow_mut()
+        (*cmds)
+            .borrow_mut()
             .insert("screenshot", cmd_screenshot(screenshot_path.clone()))
             .unwrap();
 
         // set up frame tracing
         let trace = Rc::new(RefCell::new(None));
-        (*cmds).borrow_mut()
+        (*cmds)
+            .borrow_mut()
             .insert("trace_begin", cmd_trace_begin(trace.clone()))
             .unwrap();
-        (*cmds).borrow_mut()
+        (*cmds)
+            .borrow_mut()
             .insert("trace_end", cmd_trace_end(cvars.clone(), trace.clone()))
             .unwrap();
 
@@ -147,9 +156,12 @@ impl Game {
         menu: &Menu,
     ) {
         info!("Beginning render pass");
-        let mut encoder = gfx_state
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Main render") });
+        let mut encoder =
+            gfx_state
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Main render"),
+                });
 
         // render world, hud, console, menus
         self.client
@@ -183,7 +195,7 @@ impl Game {
                 &mut encoder,
                 wgpu::ImageCopyTexture {
                     // TODO: Switch to final pass target
-                    texture: gfx_state.deferred_pass_target().color_attachment(),
+                    texture: gfx_state.initial_pass_target().diffuse_attachment(),
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: Default::default(),

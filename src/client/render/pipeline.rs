@@ -67,6 +67,8 @@ pub trait Pipeline {
     /// Push constants used for the fragment stage of the pipeline.
     type FragmentPushConstants: Pod;
 
+    type Args;
+
     /// The name of this pipeline.
     fn name() -> &'static str;
 
@@ -82,8 +84,13 @@ pub trait Pipeline {
     /// The primitive state used for rasterization in this pipeline.
     fn primitive_state() -> wgpu::PrimitiveState;
 
-    /// The color state used for the pipeline.
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>>;
+    /// The default color state used for the pipeline.
+    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> where Self: Pipeline<Args = ()> {
+        Self::color_target_states_with_args(())
+    }
+
+    /// The default color state used for the pipeline.
+    fn color_target_states_with_args(args: Self::Args) -> Vec<Option<wgpu::ColorTargetState>>;
 
     /// The depth-stencil state used for the pipeline, if any.
     fn depth_stencil_state() -> Option<wgpu::DepthStencilState>;
@@ -172,6 +179,7 @@ pub trait Pipeline {
         compiler: &mut shaderc::Compiler,
         bind_group_layout_prefix: &[wgpu::BindGroupLayout],
         sample_count: u32,
+        args: Self::Args,
     ) -> (wgpu::RenderPipeline, Vec<wgpu::BindGroupLayout>) {
         Self::validate_push_constant_types(device.limits());
 
@@ -231,7 +239,7 @@ pub trait Pipeline {
             fragment: Some(wgpu::FragmentState {
                 module: &fragment_shader,
                 entry_point: "main",
-                targets: &Self::color_target_states(),
+                targets: &Self::color_target_states_with_args(args) ,
             }),
             multisample: wgpu::MultisampleState {
                 count: sample_count,
@@ -253,6 +261,7 @@ pub trait Pipeline {
         compiler: &mut shaderc::Compiler,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
         sample_count: u32,
+        args: Self::Args,
     ) -> wgpu::RenderPipeline {
         Self::validate_push_constant_types(device.limits());
 
@@ -290,7 +299,7 @@ pub trait Pipeline {
             fragment: Some(wgpu::FragmentState {
                 module: &fragment_shader,
                 entry_point: "main",
-                targets: &Self::color_target_states(),
+                targets: &Self::color_target_states_with_args(args) ,
             }),
             multisample: wgpu::MultisampleState {
                 count: sample_count,

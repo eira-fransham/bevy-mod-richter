@@ -135,7 +135,11 @@ impl<'a> RenderPassBuilder<'a> {
 /// A render target consists of a series of color attachments and an optional depth-stencil
 /// attachment.
 pub trait RenderTarget {
-    fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder<'a>;
+    fn render_pass_builder(&self) -> RenderPassBuilder<'_>;
+}
+
+pub trait PreferredFormat {
+    fn preferred_format(&self) -> wgpu::TextureFormat;
 }
 
 /// A trait describing a render target with a built-in resolve attachment.
@@ -163,14 +167,30 @@ pub struct InitialPassTarget {
 
 impl InitialPassTarget {
     pub fn new(device: &wgpu::Device, size: Extent2d, sample_count: u32) -> InitialPassTarget {
-        let diffuse_attachment =
-            create_color_attachment(device, size, sample_count, wgpu::TextureUsages::TEXTURE_BINDING);
-        let normal_attachment =
-            create_normal_attachment(device, size, sample_count, wgpu::TextureUsages::TEXTURE_BINDING);
-        let light_attachment =
-            create_light_attachment(device, size, sample_count, wgpu::TextureUsages::TEXTURE_BINDING);
-        let depth_attachment =
-            create_depth_attachment(device, size, sample_count, wgpu::TextureUsages::TEXTURE_BINDING);
+        let diffuse_attachment = create_color_attachment(
+            device,
+            size,
+            sample_count,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let normal_attachment = create_normal_attachment(
+            device,
+            size,
+            sample_count,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let light_attachment = create_light_attachment(
+            device,
+            size,
+            sample_count,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let depth_attachment = create_depth_attachment(
+            device,
+            size,
+            sample_count,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
 
         let diffuse_view = diffuse_attachment.create_view(&Default::default());
         let normal_view = normal_attachment.create_view(&Default::default());
@@ -282,8 +302,12 @@ pub struct DeferredPassTarget {
 
 impl DeferredPassTarget {
     pub fn new(device: &wgpu::Device, size: Extent2d, sample_count: u32) -> DeferredPassTarget {
-        let color_attachment =
-            create_color_attachment(device, size, sample_count, wgpu::TextureUsages::TEXTURE_BINDING);
+        let color_attachment = create_color_attachment(
+            device,
+            size,
+            sample_count,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
         let color_view = color_attachment.create_view(&Default::default());
 
         DeferredPassTarget {

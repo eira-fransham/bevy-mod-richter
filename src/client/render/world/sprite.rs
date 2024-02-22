@@ -27,7 +27,7 @@ impl SpritePipeline {
         sample_count: u32,
     ) -> SpritePipeline {
         let (pipeline, bind_group_layouts) =
-            SpritePipeline::create(device, compiler, world_bind_group_layouts, sample_count);
+            SpritePipeline::create(device, compiler, world_bind_group_layouts, sample_count, ());
 
         use wgpu::util::DeviceExt as _;
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -54,7 +54,7 @@ impl SpritePipeline {
             .iter()
             .chain(self.bind_group_layouts.iter())
             .collect();
-        self.pipeline = SpritePipeline::recreate(device, compiler, &layout_refs, sample_count);
+        self.pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, ());
     }
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
@@ -86,6 +86,8 @@ impl Pipeline for SpritePipeline {
     type VertexPushConstants = ();
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
+
+    type Args = ();
 
     fn name() -> &'static str {
         "sprite"
@@ -127,7 +129,7 @@ impl Pipeline for SpritePipeline {
         WorldPipelineBase::primitive_state()
     }
 
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> {
+    fn color_target_states_with_args(_: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
         WorldPipelineBase::color_target_states()
     }
 
