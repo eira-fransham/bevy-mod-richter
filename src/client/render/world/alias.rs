@@ -67,12 +67,12 @@ pub struct VertexPushConstants {
 }
 
 lazy_static! {
-    static ref VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
+    static ref VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
         wgpu::vertex_attr_array![
             // frame 0 position
             0 => Float32x3,
             // frame 1 position
-            1 => Float32x3,
+            // 1 => Float32x3,
             // normal
             2 => Float32x3,
             // texcoord
