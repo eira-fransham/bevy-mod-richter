@@ -29,7 +29,7 @@ use std::{
     io::{Cursor, Read, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
-    process::exit,
+    process::{self, exit},
     rc::Rc,
 };
 
@@ -351,6 +351,7 @@ impl Program for ClientProgram<'_> {
 
     fn shutdown(&mut self) {
         // TODO: do cleanup things here
+        process::exit(0);
     }
 
     fn cvars(&self) -> Ref<CvarRegistry> {

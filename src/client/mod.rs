@@ -725,10 +725,8 @@ impl Connection {
 
                 ServerCmd::SetPause { .. } => {}
 
-                x => {
-                    dbg!(x);
-                    unimplemented!();
-                }
+                ServerCmd::StopSound { entity_id, channel } => self.state.mixer.stop_sound(Some(entity_id as _), channel) ,
+                ServerCmd::SellScreen => todo!(),
             }
         }
 

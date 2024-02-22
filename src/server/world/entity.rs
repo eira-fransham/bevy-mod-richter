@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, convert::TryInto, error::Error, fmt, rc::Rc};
+use std::{cell::RefCell, convert::TryInto, error::Error, fmt, iter, rc::Rc};
 
 use crate::{
     common::{engine::duration_to_f32, net::EntityState},
@@ -29,6 +29,7 @@ use arrayvec::ArrayString;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use cgmath::Vector3;
 use chrono::Duration;
+use im::Vector;
 use num::FromPrimitive;
 use uluru::LRUCache;
 
@@ -360,7 +361,7 @@ struct FieldDefCacheEntry {
 
 #[derive(Debug)]
 pub struct EntityTypeDef {
-    string_table: Rc<RefCell<StringTable>>,
+    string_table: Rc<StringTable>,
     addr_count: usize,
     field_defs: Box<[FieldDef]>,
 
@@ -369,7 +370,7 @@ pub struct EntityTypeDef {
 
 impl EntityTypeDef {
     pub fn new(
-        string_table: Rc<RefCell<StringTable>>,
+        string_table: Rc<StringTable>,
         addr_count: usize,
         field_defs: Box<[FieldDef]>,
     ) -> Result<EntityTypeDef, EntityError> {
@@ -411,7 +412,7 @@ impl EntityTypeDef {
             return Some(&self.field_defs[cached.index]);
         }
 
-        let name_id = self.string_table.borrow().find(name)?;
+        let name_id = self.string_table.find(name)?;
 
         let (index, def) = self
             .field_defs
@@ -437,11 +438,11 @@ pub enum EntitySolid {
     Bsp = 4,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Entity {
-    string_table: Rc<RefCell<StringTable>>,
+    string_table: Rc<StringTable>,
     type_def: Rc<EntityTypeDef>,
-    addrs: Box<[[u8; 4]]>,
+    addrs: Vector<[u8; 4]>,
 
     pub leaf_count: usize,
     pub leaf_ids: [usize; MAX_ENT_LEAVES],
@@ -449,16 +450,13 @@ pub struct Entity {
 }
 
 impl Entity {
-    pub fn new(string_table: Rc<RefCell<StringTable>>, type_def: Rc<EntityTypeDef>) -> Entity {
-        let mut addrs = Vec::with_capacity(type_def.addr_count);
-        for _ in 0..type_def.addr_count {
-            addrs.push([0; 4]);
-        }
+    pub fn new(string_table: Rc<StringTable>, type_def: Rc<EntityTypeDef>) -> Entity {
+        let addrs = iter::repeat_n([0; 4], type_def.addr_count).collect();
 
         Entity {
             string_table,
             type_def,
-            addrs: addrs.into_boxed_slice(),
+            addrs,
             leaf_count: 0,
             leaf_ids: [0; MAX_ENT_LEAVES],
             baseline: EntityState::uninitialized(),

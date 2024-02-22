@@ -229,7 +229,7 @@ pub enum GlobalAddrFunction {
 
 #[derive(Debug)]
 pub struct Globals {
-    string_table: Rc<RefCell<StringTable>>,
+    string_table: Rc<StringTable>,
     defs: Box<[GlobalDef]>,
     addrs: Box<[[u8; 4]]>,
 }
@@ -237,7 +237,7 @@ pub struct Globals {
 impl Globals {
     /// Constructs a new `Globals` object.
     pub fn new(
-        string_table: Rc<RefCell<StringTable>>,
+        string_table: Rc<StringTable>,
         defs: Box<[GlobalDef]>,
         addrs: Box<[[u8; 4]]>,
     ) -> Globals {

@@ -269,6 +269,7 @@ pub struct GraphicsState {
 
     entity_uniform_buffer: RefCell<DynamicUniformBuffer<EntityUniforms>>,
     diffuse_sampler: wgpu::Sampler,
+    nearest_sampler: wgpu::Sampler,
     lightmap_sampler: wgpu::Sampler,
 
     sample_count: Cell<u32>,
@@ -322,6 +323,20 @@ impl GraphicsState {
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            // TODO: these are the OpenGL defaults; see if there's a better choice for us
+            lod_max_clamp: 1000.0,
+            compare: None,
+            ..Default::default()
+        });
+
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: None,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
@@ -336,9 +351,9 @@ impl GraphicsState {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
             // TODO: these are the OpenGL defaults; see if there's a better choice for us
             lod_max_clamp: 1000.0,
             compare: None,
@@ -461,7 +476,9 @@ impl GraphicsState {
             blit_pipeline,
 
             diffuse_sampler,
+            nearest_sampler,
             lightmap_sampler,
+
             default_lightmap,
             default_lightmap_view,
             vfs,
@@ -599,6 +616,10 @@ impl GraphicsState {
 
     pub fn diffuse_sampler(&self) -> &wgpu::Sampler {
         &self.diffuse_sampler
+    }
+
+    pub fn nearest_sampler(&self) -> &wgpu::Sampler {
+        &self.nearest_sampler
     }
 
     pub fn default_lightmap(&self) -> &wgpu::Texture {

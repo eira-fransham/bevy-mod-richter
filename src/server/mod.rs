@@ -301,7 +301,7 @@ pub struct LevelState {
     vfs: Rc<Vfs>,
     cvars: Rc<RefCell<CvarRegistry>>,
 
-    string_table: Rc<RefCell<StringTable>>,
+    string_table: Rc<StringTable>,
     sound_precache: Precache,
     model_precache: Precache,
     lightstyles: [StringId; MAX_LIGHTSTYLES],
@@ -347,8 +347,8 @@ impl LevelState {
         model_precache.precache("");
 
         for model in models.iter() {
-            let model_name = (*string_table).borrow_mut().find_or_insert(model.name());
-            model_precache.precache(string_table.borrow().get(model_name).unwrap());
+            let model_name = string_table.find_or_insert(model.name());
+            model_precache.precache(&*string_table.get(model_name).unwrap());
         }
 
         let world = World::create(models, entity_def.clone(), string_table.clone()).unwrap();
@@ -379,34 +379,26 @@ impl LevelState {
 
     #[inline]
     pub fn precache_sound(&mut self, name_id: StringId) {
-        let name = Ref::map(self.string_table.borrow(), |this| {
-            this.get(name_id).unwrap()
-        });
-        self.sound_precache.precache(&*name);
+        self.sound_precache
+            .precache(&*self.string_table.get(name_id).unwrap());
     }
 
     #[inline]
     pub fn precache_model(&mut self, name_id: StringId) {
-        let name = Ref::map(self.string_table.borrow(), |this| {
-            this.get(name_id).unwrap()
-        });
-        self.model_precache.precache(&*name)
+        self.model_precache
+            .precache(&*self.string_table.get(name_id).unwrap())
     }
 
     #[inline]
     pub fn sound_id(&self, name_id: StringId) -> Option<usize> {
-        let name = Ref::map(self.string_table.borrow(), |this| {
-            this.get(name_id).unwrap()
-        });
-        self.sound_precache.find(&*name)
+        self.sound_precache
+            .find(&*self.string_table.get(name_id).unwrap())
     }
 
     #[inline]
     pub fn model_id(&self, name_id: StringId) -> Option<usize> {
-        let name = Ref::map(self.string_table.borrow(), |this| {
-            this.get(name_id).unwrap()
-        });
-        self.model_precache.find(&*name)
+        self.model_precache
+            .find(&*self.string_table.get(name_id).unwrap())
     }
 
     #[inline]
@@ -483,7 +475,7 @@ impl LevelState {
                     }
 
                     let name_id = self.cx.function_def(f_to_call)?.name_id;
-                    let name = self.string_table.borrow().get(name_id).unwrap().to_owned();
+                    let name = &self.string_table.get(name_id).unwrap().to_owned();
 
                     if let FunctionKind::BuiltIn(b) = self.cx.function_def(f_to_call)?.kind {
                         debug!("Calling built-in function {}", name);
@@ -709,8 +701,8 @@ impl LevelState {
 
             ent.put_string_id(model_name_id, FieldAddrStringId::ModelName as i16)?;
 
-            let model_id = match self.string_table.borrow().get(model_name_id) {
-                Some(name) => match self.model_precache.find(name) {
+            let model_id = match self.string_table.get(model_name_id) {
+                Some(name) => match self.model_precache.find(&*name) {
                     Some(i) => i,
                     None => return Err(ProgsError::with_msg("model not precached")),
                 },
@@ -1541,10 +1533,10 @@ impl LevelState {
     }
 
     pub fn builtin_dprint(&mut self) -> Result<(), ProgsError> {
-        let strs = self.string_table.borrow();
+        let strs = &self.string_table;
         let s_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
         let string = strs.get(s_id).unwrap();
-        debug!("DPRINT: {}", string);
+        debug!("DPRINT: {}", &*string);
 
         Ok(())
     }
@@ -1571,23 +1563,23 @@ impl LevelState {
 
     pub fn builtin_cvar(&mut self) -> Result<(), ProgsError> {
         let s_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
-        let strs = self.string_table.borrow();
+        let strs = &self.string_table;
         let s = strs.get(s_id).unwrap();
-        let f = self.cvars.borrow().get_value(s).unwrap();
+        let f = self.cvars.borrow().get_value(&*s).unwrap();
         self.globals.put_float(f, GLOBAL_ADDR_RETURN as i16)?;
 
         Ok(())
     }
 
     pub fn builtin_cvar_set(&mut self) -> Result<(), ProgsError> {
-        let strs = self.string_table.borrow();
+        let strs = &self.string_table;
 
         let var_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
         let var = strs.get(var_id).unwrap();
         let val_id = self.globals.string_id(GLOBAL_ADDR_ARG_1 as i16)?;
         let val = strs.get(val_id).unwrap();
 
-        self.cvars.borrow_mut().set(var, val).unwrap();
+        self.cvars.borrow_mut().set(&*var, &*val).unwrap();
 
         Ok(())
     }

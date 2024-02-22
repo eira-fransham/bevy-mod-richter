@@ -6,11 +6,12 @@ const uint MAX_LIGHTS = 32;
 layout(location = 0) in vec2 a_texcoord;
 
 layout(set = 0, binding = 0) uniform sampler u_sampler;
-layout(set = 0, binding = 1) uniform texture2D u_diffuse;
-layout(set = 0, binding = 2) uniform texture2D u_normal;
-layout(set = 0, binding = 3) uniform texture2D u_light;
-layout(set = 0, binding = 4) uniform texture2D u_depth;
-layout(set = 0, binding = 5) uniform DeferredUniforms {
+layout(set = 0, binding = 1) uniform sampler u_nearestsampler;
+layout(set = 0, binding = 2) uniform texture2D u_diffuse;
+layout(set = 0, binding = 3) uniform texture2D u_normal;
+layout(set = 0, binding = 4) uniform texture2D u_light;
+layout(set = 0, binding = 5) uniform texture2D u_depth;
+layout(set = 0, binding = 6) uniform DeferredUniforms {
   mat4 inv_projection;
   uint light_count;
   uint _pad1;
@@ -47,7 +48,7 @@ void main() {
   // Double to restore overbright values.
   vec4 in_light = 2.0 * texture(sampler2D(u_light, u_sampler), a_texcoord);
 
-  float in_depth = texture(sampler2D(u_depth, u_sampler), a_texcoord).x;
+  float in_depth = texture(sampler2D(u_depth, u_nearestsampler), a_texcoord).x;
   vec3 position = reconstruct_position(in_depth);
 
   vec4 out_color = in_color;

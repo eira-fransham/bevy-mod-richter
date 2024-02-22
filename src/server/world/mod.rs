@@ -21,6 +21,7 @@ pub mod phys;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
+    iter,
     rc::Rc,
 };
 
@@ -35,6 +36,7 @@ pub use self::{
     },
     phys::{MoveKind, Trace, TraceEnd, TraceEndKind, TraceStart},
 };
+use im::Vector;
 
 use crate::{
     common::{
@@ -195,13 +197,13 @@ struct AreaBranch {
     back: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct AreaEntity {
     entity: Entity,
     area_id: Option<usize>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum AreaEntitySlot {
     Vacant,
     Occupied(AreaEntity),
@@ -210,11 +212,11 @@ enum AreaEntitySlot {
 /// A representation of the current state of the game world.
 #[derive(Debug)]
 pub struct World {
-    string_table: Rc<RefCell<StringTable>>,
+    string_table: Rc<StringTable>,
     type_def: Rc<EntityTypeDef>,
 
     area_nodes: ArrayVec<AreaNode, NUM_AREA_NODES>,
-    slots: Box<[AreaEntitySlot]>,
+    slots: Vector<AreaEntitySlot>,
     models: Vec<Model>,
 }
 
@@ -222,7 +224,7 @@ impl World {
     pub fn create(
         mut brush_models: Vec<Model>,
         type_def: Rc<EntityTypeDef>,
-        string_table: Rc<RefCell<StringTable>>,
+        string_table: Rc<StringTable>,
     ) -> Result<World, ProgsError> {
         // generate area tree for world model
         let area_nodes = AreaNode::generate(brush_models[0].min(), brush_models[0].max());
@@ -238,7 +240,7 @@ impl World {
         // generate world entity
         let mut world_entity = Entity::new(string_table.clone(), type_def.clone());
         world_entity.put_string_id(
-            string_table.borrow_mut().find_or_insert(models[1].name()),
+            string_table.find_or_insert(models[1].name()),
             FieldAddrStringId::ModelName as i16,
         )?;
         world_entity.put_float(1.0, FieldAddrFloat::ModelIndex as i16)?;
@@ -248,30 +250,28 @@ impl World {
             FieldAddrFloat::MoveKind as i16,
         )?;
 
-        let mut slots = Vec::with_capacity(MAX_ENTITIES);
-        slots.push(AreaEntitySlot::Occupied(AreaEntity {
+        let slots = iter::once(AreaEntitySlot::Occupied(AreaEntity {
             entity: world_entity,
             area_id: None,
-        }));
-        for _ in 0..MAX_ENTITIES - 1 {
-            slots.push(AreaEntitySlot::Vacant);
-        }
+        }))
+        .chain(iter::repeat_n(AreaEntitySlot::Vacant, MAX_ENTITIES - 1))
+        .collect();
 
         Ok(World {
             string_table,
             area_nodes,
             type_def,
-            slots: slots.into_boxed_slice(),
+            slots,
             models,
         })
     }
 
     pub fn add_model(&mut self, vfs: &Vfs, name_id: StringId) -> Result<(), ProgsError> {
-        let strs = self.string_table.borrow();
+        let strs = &self.string_table;
         let name = strs.get(name_id).unwrap();
 
         if name.ends_with(".bsp") {
-            let data = vfs.open(name).unwrap();
+            let data = vfs.open(&*name).unwrap();
             let (mut brush_models, _) = bsp::load(data).unwrap();
             if brush_models.len() > 1 {
                 return Err(ProgsError::with_msg(
@@ -280,19 +280,19 @@ impl World {
             }
             self.models.append(&mut brush_models);
         } else if name.ends_with(".mdl") {
-            let data = vfs.open(&name).unwrap();
+            let data = vfs.open(&*name).unwrap();
             let alias_model = mdl::load(data).unwrap();
             self.models
-                .push(Model::from_alias_model(&name, alias_model));
+                .push(Model::from_alias_model(&*name, alias_model));
         } else if name.ends_with(".spr") {
-            let data = vfs.open(&name).unwrap();
+            let data = vfs.open(&*name).unwrap();
             let sprite_model = sprite::load(data);
             self.models
-                .push(Model::from_sprite_model(&name, sprite_model));
+                .push(Model::from_sprite_model(&*name, sprite_model));
         } else {
             return Err(ProgsError::with_msg(format!(
                 "Unrecognized model type: {}",
-                name
+                &*name
             )));
         }
 
@@ -309,7 +309,7 @@ impl World {
             .type_def
             .field_defs()
             .iter()
-            .find(|def| self.string_table.borrow().get(def.name_id).unwrap() == name)
+            .find(|def| &*self.string_table.get(def.name_id).unwrap() == name)
         {
             Some(d) => Ok(d),
             None => Err(ProgsError::with_msg(format!("no field with name {}", name))),
@@ -415,7 +415,7 @@ impl World {
                         Type::QPointer => unimplemented!(),
 
                         Type::QString => {
-                            let s_id = self.string_table.borrow_mut().insert(val);
+                            let s_id = self.string_table.insert(val);
                             ent.put_string_id(s_id, def.offset as i16)?;
                         }
 

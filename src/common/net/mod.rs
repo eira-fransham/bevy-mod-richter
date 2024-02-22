@@ -714,7 +714,7 @@ pub enum ServerCmd {
     PlayerData(PlayerData),
     StopSound {
         entity_id: u16,
-        channel: u8,
+        channel: i8,
     },
     UpdateColors {
         player_id: u8,
@@ -1272,7 +1272,7 @@ impl ServerCmd {
             ServerCmdCode::StopSound => {
                 let entity_channel = reader.read_u16::<LittleEndian>()?;
                 let entity_id = entity_channel >> 3;
-                let channel = (entity_channel & 0b111) as u8;
+                let channel = (entity_channel & 0b111) as i8;
 
                 ServerCmd::StopSound { entity_id, channel }
             }

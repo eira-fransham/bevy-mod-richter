@@ -160,7 +160,7 @@ pub struct FunctionDef {
 
 #[derive(Debug)]
 pub struct Functions {
-    pub string_table: Rc<RefCell<StringTable>>,
+    pub string_table: Rc<StringTable>,
     pub defs: Box<[FunctionDef]>,
     pub statements: Box<[Statement]>,
 }
@@ -197,11 +197,11 @@ impl Functions {
         S: AsRef<str>,
     {
         for (i, def) in self.defs.iter().enumerate() {
-            let strs = self.string_table.borrow();
+            let strs = &self.string_table;
             let f_name = strs.get(def.name_id).ok_or_else(|| {
                 ProgsError::with_msg(format!("No string with ID {:?}", def.name_id))
             })?;
-            if f_name == name.as_ref() {
+            if &*f_name == name.as_ref() {
                 return Ok(FunctionId(i));
             }
         }

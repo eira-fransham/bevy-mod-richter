@@ -96,45 +96,51 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     wgpu::BindGroupLayoutEntry {
         binding: 0,
         visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    },
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
         count: None,
     },
     // color buffer
     wgpu::BindGroupLayoutEntry {
-        binding: 1,
+        binding: 2,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             view_dimension: wgpu::TextureViewDimension::D2,
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             multisampled: false,
         },
         count: None,
     },
     // normal buffer
     wgpu::BindGroupLayoutEntry {
-        binding: 2,
+        binding: 3,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             view_dimension: wgpu::TextureViewDimension::D2,
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             multisampled: false,
         },
         count: None,
     },
     // light buffer
     wgpu::BindGroupLayoutEntry {
-        binding: 3,
+        binding: 4,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             view_dimension: wgpu::TextureViewDimension::D2,
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             multisampled: false,
         },
         count: None,
     },
     // depth buffer
     wgpu::BindGroupLayoutEntry {
-        binding: 4,
+        binding: 5,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             view_dimension: wgpu::TextureViewDimension::D2,
@@ -145,7 +151,7 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     },
     // uniform buffer
     wgpu::BindGroupLayoutEntry {
-        binding: 5,
+        binding: 6,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
@@ -232,29 +238,34 @@ impl DeferredRenderer {
                         binding: 0,
                         resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
                     },
-                    // diffuse buffer
+                    // sampler
                     wgpu::BindGroupEntry {
                         binding: 1,
+                        resource: wgpu::BindingResource::Sampler(state.nearest_sampler()),
+                    },
+                    // diffuse buffer
+                    wgpu::BindGroupEntry {
+                        binding: 2,
                         resource: wgpu::BindingResource::TextureView(diffuse_buffer),
                     },
                     // normal buffer
                     wgpu::BindGroupEntry {
-                        binding: 2,
+                        binding: 3,
                         resource: wgpu::BindingResource::TextureView(normal_buffer),
                     },
                     // light buffer
                     wgpu::BindGroupEntry {
-                        binding: 3,
+                        binding: 4,
                         resource: wgpu::BindingResource::TextureView(light_buffer),
                     },
                     // depth buffer
                     wgpu::BindGroupEntry {
-                        binding: 4,
+                        binding: 5,
                         resource: wgpu::BindingResource::TextureView(depth_buffer),
                     },
                     // uniform buffer
                     wgpu::BindGroupEntry {
-                        binding: 5,
+                        binding: 6,
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                             buffer: state.deferred_pipeline().uniform_buffer(),
                             offset: 0,

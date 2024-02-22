@@ -1,11 +1,16 @@
-use std::{cell::RefCell, collections::HashMap};
+use im::HashMap;
+use imstr::string::{ImString, Local};
+use std::{
+    cell::{Ref, RefCell},
+    ops::Deref,
+};
 
 use crate::server::progs::{ProgsError, StringId};
 
 #[derive(Debug)]
 pub struct StringTable {
     /// Interned string data.
-    data: String,
+    data: RefCell<ImString<Local>>,
 
     /// Caches string lengths for faster lookup.
     lengths: RefCell<HashMap<StringId, usize>>,
@@ -14,7 +19,7 @@ pub struct StringTable {
 impl StringTable {
     pub fn new(data: Vec<u8>) -> StringTable {
         StringTable {
-            data: String::from_utf8(data).unwrap(),
+            data: ImString::from_utf8(data).unwrap().into(),
             lengths: RefCell::new(HashMap::new()),
         }
     }
@@ -26,7 +31,7 @@ impl StringTable {
 
         let id = StringId(value as usize);
 
-        if id.0 < self.data.len() {
+        if id.0 < self.data.borrow().len() {
             Ok(id)
         } else {
             Err(ProgsError::with_msg(format!("no string with ID {}", value)))
@@ -39,13 +44,13 @@ impl StringTable {
     {
         let target = target.as_ref();
         for (ofs, _) in target.char_indices() {
-            let sub = &self.data[ofs..];
+            let sub = &self.data.borrow()[ofs..];
             if !sub.starts_with(target) {
                 continue;
             }
 
             // Make sure the string is NUL-terminated. Otherwise, this could
-            // erroneously return the StringId of a String whose first
+            // erroneously return the StringId of a ImString whose first
             // `target.len()` bytes were equal to `target`, but which had
             // additional bytes.
             if sub.as_bytes().get(target.len()) != Some(&0) {
@@ -58,19 +63,19 @@ impl StringTable {
         None
     }
 
-    pub fn get(&self, id: StringId) -> Option<&str> {
+    pub fn get(&self, id: StringId) -> Option<impl Deref<Target = str> + '_> {
         let start = id.0;
 
-        if start >= self.data.len() {
+        if start >= self.data.borrow().len() {
             return None;
         }
 
         if let Some(len) = self.lengths.borrow().get(&id) {
             let end = start + len;
-            return Some(&self.data[start..end]);
+            return Some(Ref::map(self.data.borrow(), |this| &this[start..end]));
         }
 
-        match (&self.data[start..])
+        match (&self.data.borrow()[start..])
             .chars()
             .take(1024 * 1024)
             .enumerate()
@@ -79,13 +84,13 @@ impl StringTable {
             Some((len, _)) => {
                 self.lengths.borrow_mut().insert(id, len);
                 let end = start + len;
-                Some(&self.data[start..end])
+                Some(Ref::map(self.data.borrow(), |this| &this[start..end]))
             }
             None => panic!("string data not NUL-terminated!"),
         }
     }
 
-    pub fn insert<S>(&mut self, s: S) -> StringId
+    pub fn insert<S>(&self, s: S) -> StringId
     where
         S: AsRef<str>,
     {
@@ -93,13 +98,13 @@ impl StringTable {
 
         assert!(!s.contains('\0'));
 
-        let id = StringId(self.data.len());
-        self.data.push_str(s);
+        let id = StringId(self.data.borrow().len());
+        self.data.borrow_mut().push_str(s);
         self.lengths.borrow_mut().insert(id, s.len());
         id
     }
 
-    pub fn find_or_insert<S>(&mut self, target: S) -> StringId
+    pub fn find_or_insert<S>(&self, target: S) -> StringId
     where
         S: AsRef<str>,
     {
@@ -109,7 +114,14 @@ impl StringTable {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &str> {
-        self.data.split('\0')
+    pub fn iter(&self) -> impl Iterator<Item = impl Deref<Target = str>> + '_ {
+        // TODO: Make this work properly with the refcell - since the inner data
+        //       is cheaply clonable this should be relatively easy.
+        self.data
+            .borrow()
+            .split('\0')
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 }

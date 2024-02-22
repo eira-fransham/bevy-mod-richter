@@ -294,7 +294,7 @@ pub struct LoadProgs {
     pub cx: ExecutionContext,
     pub globals: Globals,
     pub entity_def: Rc<EntityTypeDef>,
-    pub string_table: Rc<RefCell<StringTable>>,
+    pub string_table: Rc<StringTable>,
 }
 
 /// Loads all data from a `progs.dat` file.
@@ -332,7 +332,7 @@ where
     (&mut src)
         .take(string_lump.count as u64)
         .read_to_end(&mut strings)?;
-    let string_table = Rc::new(RefCell::new(StringTable::new(strings)));
+    let string_table = Rc::new(StringTable::new(strings));
 
     assert_eq!(
         src.seek(SeekFrom::Current(0))?,
@@ -373,12 +373,8 @@ where
         // throw away profile variable
         let _ = src.read_i32::<LittleEndian>()?;
 
-        let name_id = string_table
-            .borrow()
-            .id_from_i32(src.read_i32::<LittleEndian>()?)?;
-        let srcfile_id = string_table
-            .borrow()
-            .id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let name_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let srcfile_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
 
         let argc = src.read_i32::<LittleEndian>()?;
         let mut argsz = [0; MAX_ARGS];
@@ -433,9 +429,7 @@ where
     for _ in 0..globaldef_lump.count {
         let type_ = src.read_u16::<LittleEndian>()?;
         let offset = src.read_u16::<LittleEndian>()?;
-        let name_id = string_table
-            .borrow()
-            .id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let name_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
         globaldefs.push(GlobalDef {
             save: type_ & SAVE_GLOBAL != 0,
             type_: Type::from_u16(type_ & !SAVE_GLOBAL).unwrap(),
@@ -457,9 +451,7 @@ where
     for _ in 0..fielddef_lump.count {
         let type_ = src.read_u16::<LittleEndian>()?;
         let offset = src.read_u16::<LittleEndian>()?;
-        let name_id = string_table
-            .borrow()
-            .id_from_i32(src.read_i32::<LittleEndian>()?)?;
+        let name_id = string_table.id_from_i32(src.read_i32::<LittleEndian>()?)?;
 
         if type_ & SAVE_GLOBAL != 0 {
             return Err(ProgsError::with_msg(
@@ -538,7 +530,7 @@ struct StackFrame {
 /// A QuakeC VM context.
 #[derive(Debug)]
 pub struct ExecutionContext {
-    string_table: Rc<RefCell<StringTable>>,
+    string_table: Rc<StringTable>,
     functions: Rc<Functions>,
     pc: usize,
     current_function: FunctionId,
@@ -547,10 +539,7 @@ pub struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    pub fn create(
-        string_table: Rc<RefCell<StringTable>>,
-        functions: Rc<Functions>,
-    ) -> ExecutionContext {
+    pub fn create(string_table: Rc<StringTable>, functions: Rc<Functions>) -> ExecutionContext {
         ExecutionContext {
             string_table,
             functions,
@@ -584,7 +573,7 @@ impl ExecutionContext {
         let def = self.functions.get_def(f)?;
         debug!(
             "Calling QuakeC function {}",
-            self.string_table.borrow().get(def.name_id).unwrap()
+            &*self.string_table.get(def.name_id).unwrap()
         );
 
         // save stack frame
@@ -632,7 +621,7 @@ impl ExecutionContext {
         let def = self.functions.get_def(self.current_function)?;
         debug!(
             "Returning from QuakeC function {}",
-            self.string_table.borrow().get(def.name_id).unwrap()
+            &*self.string_table.get(def.name_id).unwrap()
         );
 
         for i in (0..def.locals).rev() {

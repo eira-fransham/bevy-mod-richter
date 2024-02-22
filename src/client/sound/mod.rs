@@ -263,6 +263,10 @@ impl EntityChannel {
     pub fn entity_id(&self) -> Option<usize> {
         self.ent_id
     }
+
+    pub fn channel_id(&self) -> i8 {
+        self.ent_channel
+    }
 }
 
 pub struct EntityMixer {
@@ -346,6 +350,17 @@ impl EntityMixer {
             ent_channel,
             channel: new_channel,
         })
+    }
+
+    pub fn stop_sound(&mut self, ent_id: Option<usize>, ent_channel: i8) {
+        let matching_channels = self
+            .channels
+            .iter_mut()
+            .filter_map(|chan| chan.as_mut())
+            .filter(|c| c.entity_id() == ent_id && c.channel_id() == ent_channel);
+        for c in matching_channels {
+            c.channel().stop()
+        }
     }
 
     pub fn iter_entity_channels(&self) -> impl Iterator<Item = &EntityChannel> {

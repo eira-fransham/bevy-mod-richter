@@ -41,44 +41,44 @@ lazy_static! {
     static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 2] = [
         vec![
             wgpu::BindGroupLayoutEntry {
-                binding:0,
-                visibility:wgpu::ShaderStages::all(),
-                ty:wgpu::BindingType::Buffer {
+                binding: 0,
+                visibility: wgpu::ShaderStages::all(),
+                ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size:
                         std::num::NonZeroU64::new(size_of::<FrameUniforms>() as u64)
                 },
-                count:None,
+                count: None,
             },
         ],
         vec![
             // transform matrix
             // TODO: move this to push constants once they're exposed in wgpu
             wgpu::BindGroupLayoutEntry {
-                binding:0,
-                visibility:wgpu::ShaderStages::VERTEX,
-                ty:wgpu::BindingType::Buffer {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
                     min_binding_size:
                         std::num::NonZeroU64::new(size_of::<EntityUniforms>() as u64)
                 },
-                count:None,
+                count: None,
             },
             // diffuse and fullbright sampler
             wgpu::BindGroupLayoutEntry {
-                binding:1,
-                visibility:wgpu::ShaderStages::FRAGMENT,
-                ty:wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                count:None,
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
             },
             // lightmap sampler
             wgpu::BindGroupLayoutEntry {
-                binding:2,
-                visibility:wgpu::ShaderStages::FRAGMENT,
-                ty:wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                count:None,
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
             },
         ],
     ];

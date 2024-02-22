@@ -35,8 +35,7 @@ strum_macros = "0.18.0"
 smol_str = "0.2"
 thiserror = "1.0"
 uluru = "2"
-wgpu = { version = "0.19", features = ["spirv"] }
-
-# "winit" = "0.22.2"
-# necessary until winit/#1524 is merged
+wgpu = { version = "0.19", features = ["spirv", "vulkan-portability"] }
 winit = "0.29"
+im = "15.1.0"
+imstr = "0.2"
