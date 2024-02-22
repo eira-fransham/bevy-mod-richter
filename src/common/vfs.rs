@@ -67,11 +67,8 @@ impl Vfs {
             std::process::exit(1);
         }
 
-        vfs.add_directory(&game_dir).unwrap();
-
-        // ...then add PAK archives.
         let mut num_paks = 0;
-        let mut pak_path = game_dir;
+        let mut pak_path = game_dir.clone();
         for vfs_id in 0..crate::common::MAX_PAKFILES {
             // Add the file name.
             pak_path.push(format!("pak{}.pak", vfs_id));
@@ -92,6 +89,10 @@ impl Vfs {
             // Remove the file name, leaving the game directory.
             pak_path.pop();
         }
+
+        // Allow files in id1 dir to overwrite files in paks (unsure if this is correct for quake
+        // but for e.g. Source it's a nice feature)
+        vfs.add_directory(&game_dir).unwrap();
 
         if num_paks == 0 {
             log::warn!("No PAK files found.");

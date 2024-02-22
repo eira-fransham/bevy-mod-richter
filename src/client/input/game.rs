@@ -688,7 +688,7 @@ impl GameInput {
 
                 BindTarget::ConsoleInput { ref text } => {
                     if state == ElementState::Pressed {
-                        self.console.borrow_mut().stuff_text(text);
+                        self.console.borrow_mut().append_text(text);
                     }
                 }
             }
@@ -706,89 +706,77 @@ impl GameInput {
             for (state_str, state_bool) in states.iter().cloned() {
                 let action_states = self.action_states.clone();
                 let cmd_name = format!("{}{}", state_str, action.to_string());
-                cmds.insert_or_replace(
-                    &cmd_name,
-                    Box::new(move |_| {
-                        action_states.borrow_mut()[action as usize] = state_bool;
-                        String::new()
-                    }),
-                )
+                cmds.insert_or_replace(&cmd_name, move |_| {
+                    action_states.borrow_mut()[action as usize] = state_bool;
+                    String::new()
+                })
                 .unwrap();
             }
         }
 
         // "bind"
         let bindings = self.bindings.clone();
-        cmds.insert_or_replace(
-            "bind",
-            Box::new(move |args| {
-                match args.len() {
-                    // bind (key)
-                    // queries what (key) is bound to, if anything
-                    1 => match BindInput::from_str(args[0]) {
-                        Ok(i) => match bindings.borrow().get(&i) {
-                            Some(t) => format!("\"{}\" = \"{}\"", i.to_string(), t.to_string()),
-                            None => format!("\"{}\" is not bound", i.to_string()),
-                        },
-
-                        Err(_) => format!("\"{}\" isn't a valid key", args[0]),
+        cmds.insert_or_replace("bind", move |args| {
+            match args.len() {
+                // bind (key)
+                // queries what (key) is bound to, if anything
+                1 => match BindInput::from_str(args[0]) {
+                    Ok(i) => match bindings.borrow().get(&i) {
+                        Some(t) => format!("\"{}\" = \"{}\"", i.to_string(), t.to_string()),
+                        None => format!("\"{}\" is not bound", i.to_string()),
                     },
 
-                    // bind (key) [command]
-                    2 => match BindInput::from_str(args[0]) {
-                        Ok(input) => match BindTarget::from_str(args[1]) {
-                            Ok(target) => {
-                                bindings.borrow_mut().insert(input.clone(), target);
-                                debug!("Bound {:?} to {:?}", input, args[1]);
-                                String::new()
-                            }
-                            Err(_) => {
-                                format!("\"{}\" isn't a valid bind target", args[1])
-                            }
-                        },
+                    Err(_) => format!("\"{}\" isn't a valid key", args[0]),
+                },
 
-                        Err(_) => format!("\"{}\" isn't a valid key", args[0]),
+                // bind (key) [command]
+                2 => match BindInput::from_str(args[0]) {
+                    Ok(input) => match BindTarget::from_str(args[1]) {
+                        Ok(target) => {
+                            bindings.borrow_mut().insert(input.clone(), target);
+                            debug!("Bound {:?} to {:?}", input, args[1]);
+                            String::new()
+                        }
+                        Err(_) => {
+                            format!("\"{}\" isn't a valid bind target", args[1])
+                        }
                     },
 
-                    _ => "bind [key] (command): attach a command to a key".to_owned(),
-                }
-            }),
-        )
+                    Err(_) => format!("\"{}\" isn't a valid key", args[0]),
+                },
+
+                _ => "bind [key] (command): attach a command to a key".to_owned(),
+            }
+        })
         .unwrap();
 
         // "unbindall"
         let bindings = self.bindings.clone();
-        cmds.insert_or_replace(
-            "unbindall",
-            Box::new(move |args| match args.len() {
-                0 => {
-                    let _ = bindings.replace(HashMap::new());
-                    String::new()
-                }
-                _ => "unbindall: delete all keybindings".to_owned(),
-            }),
-        )
+        cmds.insert_or_replace("unbindall", move |args| match args.len() {
+            0 => {
+                let _ = bindings.replace(HashMap::new());
+                String::new()
+            }
+            _ => "unbindall: delete all keybindings".to_owned(),
+        })
         .unwrap();
 
         // "impulse"
         let impulse = self.impulse.clone();
-        cmds.insert_or_replace(
-            "impulse",
-            Box::new(move |args| {
-                println!("args: {}", args.len());
-                match args.len() {
-                    1 => match u8::from_str(args[0]) {
-                        Ok(i) => {
-                            impulse.set(i);
-                            String::new()
-                        }
-                        Err(_) => "Impulse must be a number between 0 and 255".to_owned(),
-                    },
+        cmds.insert_or_replace("impulse", move |args| {
+            println!("args: {}", args.len());
+            match args.len() {
+                1 => match u8::from_str(args[0]) {
+                    Ok(i) => {
+                        impulse.set(i);
+                        String::new()
+                    }
+                    Err(_) => "Impulse must be a number between 0 and 255".to_owned(),
+                },
 
-                    _ => "usage: impulse [number]".to_owned(),
-                }
-            }),
-        )
+                _ => "usage: impulse [number]".to_owned(),
+            }
+        })
         .unwrap();
     }
 

@@ -50,7 +50,8 @@ impl ConsoleInput {
                     Key::Named(NamedKey::ArrowDown) => self.console.borrow_mut().history_down(),
                     Key::Named(NamedKey::ArrowLeft) => self.console.borrow_mut().cursor_left(),
                     Key::Named(NamedKey::ArrowRight) => self.console.borrow_mut().cursor_right(),
-                    Key::Character("`") => self.console.borrow_mut().stuff_text("toggleconsole\n"),
+                    Key::Named(NamedKey::Enter) => self.console.borrow_mut().send_char('\r'),
+                    Key::Character("`") => self.console.borrow_mut().append_text("toggleconsole"),
                     Key::Character(c) => {
                         for c in c.chars() {
                             self.console.borrow_mut().send_char(c);

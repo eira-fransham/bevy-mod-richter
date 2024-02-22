@@ -40,12 +40,12 @@ impl BlitPipeline {
         let (pipeline, bind_group_layouts) = BlitPipeline::create(device, compiler, &[], 1, format);
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: None,
+            label: Some("blit sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_max_clamp: 1000.0,
             compare: None,
@@ -112,7 +112,7 @@ impl Pipeline for BlitPipeline {
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
                 // blit texture
@@ -121,7 +121,7 @@ impl Pipeline for BlitPipeline {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         multisampled: false,
                     },
                     count: None,

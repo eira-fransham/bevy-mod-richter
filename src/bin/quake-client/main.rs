@@ -48,7 +48,7 @@ use richter::{
     },
     common::{
         self,
-        console::{CmdRegistry, Console, CvarRegistry},
+        console::{CmdRegistry, Console, CvarRegistry, ExecResult},
         host::{Host, Program},
         vfs::Vfs,
     },
@@ -72,7 +72,6 @@ struct ClientProgram<'a> {
     window_dimensions_changed: bool,
 
     surface: wgpu::Surface<'a>,
-    adapter: wgpu::Adapter,
     gfx_state: RefCell<GraphicsState>,
     ui_renderer: Rc<UiRenderer>,
 
@@ -162,6 +161,7 @@ impl<'a> ClientProgram<'a> {
 
         let gfx_state = GraphicsState::new(
             device,
+            adapter,
             queue,
             default_swapchain_format,
             size,
@@ -174,36 +174,43 @@ impl<'a> ClientProgram<'a> {
         // TODO: factor this out
         // implements "exec" command
         let exec_vfs = vfs.clone();
-        let exec_console = console.clone();
-        cmds.borrow_mut()
-            .insert_or_replace(
-                "exec",
-                Box::new(move |args| {
+
+        {
+            cmds.borrow_mut()
+                .insert_or_replace("exec", move |args| {
                     match args.len() {
                         // exec (filename): execute a script file
                         1 => {
                             let mut script_file = match exec_vfs.open(args[0]) {
                                 Ok(s) => s,
                                 Err(e) => {
-                                    return format!("Couldn't exec {}: {:?}", args[0], e);
+                                    return ExecResult {
+                                        extra_commands: String::new(),
+                                        output: format!("Couldn't exec {}: {:?}", args[0], e),
+                                    };
                                 }
                             };
 
                             let mut script = String::new();
                             script_file.read_to_string(&mut script).unwrap();
 
-                            exec_console.borrow().stuff_text(script);
-                            String::new()
+                            ExecResult {
+                                extra_commands: script,
+                                output: String::new(),
+                            }
                         }
 
-                        _ => format!("exec (filename): execute a script file"),
+                        _ => ExecResult {
+                            extra_commands: String::new(),
+                            output: format!("exec (filename): execute a script file"),
+                        },
                     }
-                }),
-            )
-            .unwrap();
+                })
+                .unwrap();
 
-        // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
-        console.borrow().stuff_text("exec quake.rc\n");
+            // this will also execute config.cfg and autoexec.cfg (assuming an unmodified quake.rc)
+            console.borrow().append_text("exec quake.rc\n");
+        }
 
         let client = Client::new(
             vfs.clone(),
@@ -226,7 +233,6 @@ impl<'a> ClientProgram<'a> {
             window,
             window_dimensions_changed: false,
             surface,
-            adapter,
             gfx_state: RefCell::new(gfx_state),
             ui_renderer,
             game,
@@ -248,21 +254,14 @@ impl<'a> ClientProgram<'a> {
     }
 
     /// Builds a new swap chain with the specified present mode and the window's current dimensions.
-    fn recreate_swap_chain(&self, adapter: &wgpu::Adapter) {
+    fn recreate_swap_chain(&self) {
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
         let config = self
             .surface
-            .get_default_config(adapter, width, height)
+            .get_default_config(self.gfx_state.borrow().adapter(), width, height)
             .unwrap_or(Self::surface_config(width, height));
         self.surface
             .configure(self.gfx_state.borrow().device(), &config);
-        self.gfx_state.borrow_mut().set_format(
-            config
-                .view_formats
-                .first()
-                .copied()
-                .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb),
-        );
     }
 
     fn render(&mut self) {
@@ -304,7 +303,7 @@ impl Program for ClientProgram<'_> {
         // recreate swapchain if needed
         if self.window_dimensions_changed {
             self.window_dimensions_changed = false;
-            self.recreate_swap_chain(&self.adapter);
+            self.recreate_swap_chain();
         }
 
         let size: Extent2d = self.window.inner_size().into();
@@ -452,19 +451,20 @@ fn main() {
 
         std::process::exit(0);
     }
-    if let Some(ref server) = opt.connect {
-        client_program
-            .console
-            .borrow_mut()
-            .stuff_text(format!("connect {}", server));
-    } else if let Some(ref demo) = opt.demo {
-        client_program
-            .console
-            .borrow_mut()
-            .stuff_text(format!("playdemo {}", demo));
-    }
 
     let mut host = Host::new(client_program);
+
+    if let Some(ref server) = opt.connect {
+        host.program()
+            .console
+            .borrow()
+            .append_text(format!("connect {}", server));
+    } else if let Some(ref demo) = opt.demo {
+        host.program()
+            .console
+            .borrow()
+            .append_text(format!("playdemo {}", demo));
+    }
 
     event_loop
         .run(move |event, target| {

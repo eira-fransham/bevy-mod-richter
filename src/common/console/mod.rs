@@ -19,6 +19,7 @@
 // SOFTWARE.
 
 use std::{
+    borrow::Cow,
     cell::{Ref, RefCell},
     collections::{HashMap, VecDeque},
     fmt::Write,
@@ -47,7 +48,7 @@ pub enum ConsoleError {
     NoSuchCvar(String),
 }
 
-type Cmd = Box<dyn Fn(&[&str]) -> String>;
+type Cmd = Box<dyn Fn(&[&str]) -> ExecResult>;
 
 fn insert_name<S>(names: &mut Vec<String>, name: S) -> Result<usize, usize>
 where
@@ -69,6 +70,20 @@ pub struct CmdRegistry {
     names: Rc<RefCell<Vec<String>>>,
 }
 
+pub struct ExecResult {
+    pub extra_commands: String,
+    pub output: String,
+}
+
+impl From<String> for ExecResult {
+    fn from(value: String) -> Self {
+        Self {
+            extra_commands: String::new(),
+            output: value,
+        }
+    }
+}
+
 impl CmdRegistry {
     pub fn new(names: Rc<RefCell<Vec<String>>>) -> CmdRegistry {
         CmdRegistry {
@@ -80,9 +95,11 @@ impl CmdRegistry {
     /// Registers a new command with the given name.
     ///
     /// Returns an error if a command with the specified name already exists.
-    pub fn insert<S>(&mut self, name: S, cmd: Cmd) -> Result<(), ConsoleError>
+    pub fn insert<S, C, CO>(&mut self, name: S, cmd: C) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
+        C: Fn(&[&str]) -> CO + 'static,
+        CO: Into<ExecResult>,
     {
         let name = name.as_ref();
 
@@ -93,7 +110,8 @@ impl CmdRegistry {
                     return Err(ConsoleError::DuplicateCvar(name.into()));
                 }
 
-                self.cmds.insert(name.to_owned(), cmd);
+                self.cmds
+                    .insert(name.to_owned(), Box::new(move |args| cmd(args).into()));
             }
         }
 
@@ -101,9 +119,11 @@ impl CmdRegistry {
     }
 
     /// Registers a new command with the given name, or replaces one if the name is in use.
-    pub fn insert_or_replace<S>(&mut self, name: S, cmd: Cmd) -> Result<(), ConsoleError>
+    pub fn insert_or_replace<S, C, CO>(&mut self, name: S, cmd: C) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
+        C: Fn(&[&str]) -> CO + 'static,
+        CO: Into<ExecResult>,
     {
         let name = name.as_ref();
 
@@ -114,7 +134,8 @@ impl CmdRegistry {
             return Err(ConsoleError::DuplicateCvar(name.into()));
         }
 
-        self.cmds.insert(name.into(), cmd);
+        self.cmds
+            .insert(name.into(), Box::new(move |args| cmd(args).into()));
 
         Ok(())
     }
@@ -142,7 +163,7 @@ impl CmdRegistry {
     /// Executes a command.
     ///
     /// Returns an error if no command with the specified name exists.
-    pub fn exec<S>(&mut self, name: S, args: &[&str]) -> Result<String, ConsoleError>
+    pub fn exec<S>(&mut self, name: S, args: &[&str]) -> Result<ExecResult, ConsoleError>
     where
         S: AsRef<str>,
     {
@@ -551,78 +572,68 @@ impl Console {
     pub fn new(cmds: Rc<RefCell<CmdRegistry>>, cvars: Rc<RefCell<CvarRegistry>>) -> Console {
         let output = RefCell::new(ConsoleOutput::new());
         cmds.borrow_mut()
-            .insert(
-                "echo",
-                Box::new(move |args| {
-                    let msg = match args.len() {
-                        0 => "",
-                        _ => args[0],
-                    };
+            .insert("echo", |args| {
+                let msg = match args.len() {
+                    0 => "",
+                    _ => args[0],
+                };
 
-                    msg.to_owned()
-                }),
-            )
+                msg.to_owned()
+            })
             .unwrap();
 
         let aliases: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
         let cmd_aliases = aliases.clone();
         cmds.borrow_mut()
-            .insert(
-                "alias",
-                Box::new(move |args| {
-                    match args.len() {
-                        0 => {
-                            for (name, script) in cmd_aliases.borrow().iter() {
-                                println!("    {}: {}", name, script);
-                            }
-                            println!("{} alias command(s)", cmd_aliases.borrow().len());
+            .insert("alias", move |args| {
+                match args.len() {
+                    0 => {
+                        for (name, script) in cmd_aliases.borrow().iter() {
+                            println!("    {}: {}", name, script);
                         }
-
-                        2 => {
-                            let name = args[0].to_string();
-                            let script = args[1].to_string();
-                            let _ = cmd_aliases.borrow_mut().insert(name, script);
-                        }
-
-                        _ => (),
+                        println!("{} alias command(s)", cmd_aliases.borrow().len());
                     }
-                    String::new()
-                }),
-            )
+
+                    2 => {
+                        let name = args[0].to_string();
+                        let script = args[1].to_string();
+                        let _ = cmd_aliases.borrow_mut().insert(name, script);
+                    }
+
+                    _ => (),
+                }
+                String::new()
+            })
             .unwrap();
 
         let find_names = cmds.borrow().names();
         cmds.borrow_mut()
-            .insert(
-                "find",
-                Box::new(move |args| match args.len() {
-                    1 => {
-                        let names = find_names.borrow_mut();
+            .insert("find", move |args| match args.len() {
+                1 => {
+                    let names = find_names.borrow_mut();
 
-                        // Find the index of the first item >= the target.
-                        let start = match names.binary_search_by(|item| item.as_str().cmp(&args[0]))
-                        {
-                            Ok(i) => i,
-                            Err(i) => i,
-                        };
+                    // Find the index of the first item >= the target.
+                    let start = match names.binary_search_by(|item| item.as_str().cmp(&args[0])) {
+                        Ok(i) => i,
+                        Err(i) => i,
+                    };
 
-                        // Take every item starting with the target.
-                        let it = (&names[start..])
-                            .iter()
-                            .take_while(move |item| item.starts_with(&args[0]))
-                            .map(|s| s.as_str());
+                    // Take every item starting with the target.
+                    let it = (&names[start..])
+                        .iter()
+                        .take_while(move |item| item.starts_with(&args[0]))
+                        .map(|s| s.as_str());
 
-                        let mut output = String::new();
-                        for name in it {
-                            write!(&mut output, "{}\n", name).unwrap();
-                        }
-
-                        output
+                    let mut output = String::new();
+                    for name in it {
+                        write!(&mut output, "{}\n", name).unwrap();
                     }
 
-                    _ => "usage: find <cvar or command>".into(),
-                }),
-            )
+                    output
+                }
+
+                _ => "usage: find <cvar or command>".into(),
+            })
             .unwrap();
 
         Console {
@@ -750,19 +761,35 @@ impl Console {
     pub fn execute(&self) {
         let text = self.buffer.replace(String::new());
 
-        let (_remaining, commands) = parse::commands(text.as_str()).unwrap();
+        fn parse_commands<'a, 'b, F: FnMut(&'b str) -> Cow<'a, str> + 'a>(
+            input: &'b str,
+            mut func: F,
+        ) -> nom::IResult<&'b str, Vec<Vec<Cow<'a, str>>>> {
+            let (rest, commands) = parse::commands(input)?;
+            let out = commands
+                .into_iter()
+                .map(|cmd| cmd.into_iter().map(&mut func).collect::<Vec<_>>())
+                .collect::<Vec<_>>();
 
-        for command in commands.iter() {
-            debug!("{:?}", command);
+            Ok((rest, out))
         }
 
-        for args in commands {
+        let (_, mut commands) = parse_commands(&text[..], |c| Cow::Borrowed(c)).unwrap();
+
+        commands.reverse();
+
+        while let Some(args) = commands.pop() {
             if let Some(arg_0) = args.get(0) {
-                let maybe_alias = self.aliases.borrow().get(*arg_0).map(|a| a.to_owned());
+                let maybe_alias = self
+                    .aliases
+                    .borrow()
+                    .get(arg_0.as_ref())
+                    .map(|a| a.to_owned());
                 match maybe_alias {
                     Some(a) => {
-                        self.stuff_text(a);
-                        self.execute();
+                        let (_, extra_commands) =
+                            parse_commands(&*a, |s| Cow::from(s.to_string())).unwrap();
+                        commands.extend(extra_commands.into_iter().rev());
                     }
 
                     None => {
@@ -771,9 +798,21 @@ impl Console {
 
                         if self.cmds.borrow().contains(arg_0) {
                             match self.cmds.borrow_mut().exec(arg_0, &tail_args) {
-                                Ok(o) => {
-                                    if !o.is_empty() {
-                                        self.println(o)
+                                Ok(ExecResult {
+                                    extra_commands,
+                                    output,
+                                }) => {
+                                    if !extra_commands.is_empty() {
+                                        let (_, extra_commands) =
+                                            parse_commands(&*extra_commands, |s| {
+                                                Cow::from(s.to_string())
+                                            })
+                                            .unwrap();
+                                        commands.extend(extra_commands.into_iter().rev());
+                                    }
+
+                                    if !output.is_empty() {
+                                        self.println(output)
                                     }
                                 }
                                 Err(e) => self.println(format!("{}", e)),
@@ -805,14 +844,12 @@ impl Console {
         String::from_iter(self.input.text.clone().into_iter())
     }
 
-    pub fn stuff_text<S>(&self, text: S)
+    pub fn append_text<S>(&self, text: S)
     where
         S: AsRef<str>,
     {
         debug!("stuff_text:\n{:?}", text.as_ref());
         self.buffer.borrow_mut().push_str(text.as_ref());
-
-        // in case the last line doesn't end with a newline
         self.buffer.borrow_mut().push_str("\n");
     }
 

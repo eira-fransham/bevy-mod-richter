@@ -99,6 +99,14 @@ where
         }
     }
 
+    pub fn program(&self) -> &P {
+        &self.program
+    }
+
+    pub fn program_mut(&mut self) -> &mut P {
+        &mut self.program
+    }
+
     pub fn frame(&mut self) {
         // TODO: make sure this doesn't cause weirdness with e.g. leap seconds
         let new_frame_time = Utc::now();

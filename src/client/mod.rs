@@ -33,6 +33,7 @@ pub use self::cvars::register_cvars;
 use self::render::RenderTarget;
 
 use std::{
+    any::Any,
     cell::RefCell,
     collections::{HashMap, VecDeque},
     io::BufReader,
@@ -491,16 +492,13 @@ impl Connection {
 
                     let bonus_cshift =
                         self.state.color_shifts[ColorShiftCode::Bonus as usize].clone();
-                    cmds.insert_or_replace(
-                        "bf",
-                        Box::new(move |_| {
-                            bonus_cshift.replace(ColorShift {
-                                dest_color: [215, 186, 69],
-                                percent: 50,
-                            });
-                            String::new()
-                        }),
-                    )
+                    cmds.insert_or_replace("bf", move |_| {
+                        bonus_cshift.replace(ColorShift {
+                            dest_color: [215, 186, 69],
+                            percent: 50,
+                        });
+                        String::new()
+                    })
                     .unwrap();
                 }
 
@@ -619,7 +617,7 @@ impl Connection {
 
                 ServerCmd::TempEntity { temp_entity } => self.state.spawn_temp_entity(&temp_entity),
 
-                ServerCmd::StuffText { text } => console.stuff_text(text),
+                ServerCmd::StuffText { text } => console.append_text(text),
 
                 ServerCmd::Time { time } => {
                     self.state.msg_times[1] = self.state.msg_times[0];
@@ -725,7 +723,9 @@ impl Connection {
 
                 ServerCmd::SetPause { .. } => {}
 
-                ServerCmd::StopSound { entity_id, channel } => self.state.mixer.stop_sound(Some(entity_id as _), channel) ,
+                ServerCmd::StopSound { entity_id, channel } => {
+                    self.state.mixer.stop_sound(Some(entity_id as _), channel)
+                }
                 ServerCmd::SellScreen => todo!(),
             }
         }
@@ -1203,8 +1203,8 @@ impl std::ops::Drop for Client {
 fn cmd_toggleconsole(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
-) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |_| {
+) -> impl Fn(&[&str]) -> String {
+    move |_| {
         let focus = input.borrow().focus();
         match *conn.borrow() {
             Some(_) => match focus {
@@ -1219,15 +1219,15 @@ fn cmd_toggleconsole(
             },
         }
         String::new()
-    })
+    }
 }
 
 // implements the "togglemenu" command
 fn cmd_togglemenu(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
-) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |_| {
+) -> impl Fn(&[&str]) -> String {
+    move |_| {
         let focus = input.borrow().focus();
         match *conn.borrow() {
             Some(_) => match focus {
@@ -1242,7 +1242,7 @@ fn cmd_togglemenu(
             },
         }
         String::new()
-    })
+    }
 }
 
 fn connect<A>(server_addrs: A, stream: OutputStreamHandle) -> Result<Connection, ClientError>
@@ -1338,8 +1338,8 @@ fn cmd_connect(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
     stream: OutputStreamHandle,
-) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |args| {
+) -> impl Fn(&[&str]) -> String {
+    move |args| {
         if args.len() < 1 {
             // TODO: print to console
             return "usage: connect <server_ip>:<server_port>".to_owned();
@@ -1353,14 +1353,14 @@ fn cmd_connect(
             }
             Err(e) => format!("{}", e),
         }
-    })
+    }
 }
 
 fn cmd_reconnect(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
-) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |_| {
+) -> impl Fn(&[&str]) -> String {
+    move |_| {
         match *conn.borrow_mut() {
             Some(ref mut conn) => {
                 // TODO: clear client state
@@ -1371,14 +1371,14 @@ fn cmd_reconnect(
             // TODO: log message, e.g. "can't reconnect while disconnected"
             None => "not connected".to_string(),
         }
-    })
+    }
 }
 
 fn cmd_disconnect(
     conn: Rc<RefCell<Option<Connection>>>,
     input: Rc<RefCell<Input>>,
-) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |_| {
+) -> impl Fn(&[&str]) -> String {
+    move |_| {
         let connected = conn.borrow().is_some();
         if connected {
             conn.replace(None);
@@ -1387,7 +1387,7 @@ fn cmd_disconnect(
         } else {
             "not connected".to_string()
         }
-    })
+    }
 }
 
 fn cmd_playdemo(
@@ -1395,31 +1395,40 @@ fn cmd_playdemo(
     vfs: Rc<Vfs>,
     input: Rc<RefCell<Input>>,
     stream: OutputStreamHandle,
-) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |args| {
+) -> impl Fn(&[&str]) -> String {
+    move |args| {
         if args.len() != 1 {
             return "usage: playdemo [DEMOFILE]".to_owned();
         }
 
-        let mut demo_file = match vfs.open(format!("{}.dem", args[0])) {
-            Ok(f) => f,
-            Err(e) => return format!("{}", e),
-        };
+        let demo = args[0];
 
-        let demo_server = match DemoServer::new(&mut demo_file) {
-            Ok(d) => d,
-            Err(e) => return format!("{}", e),
-        };
+        let new_conn = {
+            let mut demo_file = match vfs.open(format!("{}.dem", demo)) {
+                Ok(f) => f,
+                Err(e) => {
+                    return format!("{}", e);
+                }
+            };
 
-        conn.replace(Some(Connection {
-            state: ClientState::new(stream.clone()),
-            kind: ConnectionKind::Demo(demo_server),
-            conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
-        }));
+            match DemoServer::new(&mut demo_file) {
+                Ok(d) => Connection {
+                    kind: ConnectionKind::Demo(d),
+                    state: ClientState::new(stream.clone()),
+                    conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
+                },
+                Err(e) => {
+                    return format!("{}", e);
+                }
+            }
+        };
 
         input.borrow_mut().set_focus(InputFocus::Game);
+
+        conn.replace(Some(new_conn));
+
         String::new()
-    })
+    }
 }
 
 fn cmd_startdemos(
@@ -1428,8 +1437,8 @@ fn cmd_startdemos(
     input: Rc<RefCell<Input>>,
     stream: OutputStreamHandle,
     demo_queue: Rc<RefCell<VecDeque<String>>>,
-) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |args| {
+) -> impl Fn(&[&str]) -> String {
+    move |args| {
         if args.len() == 0 {
             return "usage: startdemos [DEMOS]".to_owned();
         }
@@ -1438,33 +1447,44 @@ fn cmd_startdemos(
             demo_queue.borrow_mut().push_back(arg.to_string());
         }
 
-        let mut demo_file = match vfs.open(format!(
-            "{}.dem",
-            demo_queue.borrow_mut().pop_front().unwrap()
-        )) {
-            Ok(f) => f,
-            Err(e) => return format!("{}", e),
-        };
+        let new_conn = match demo_queue.borrow_mut().pop_front() {
+            Some(demo) => {
+                let mut demo_file = match vfs.open(format!("{}.dem", demo)) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        // log the error, dump the demo queue and disconnect
+                        demo_queue.borrow_mut().clear();
+                        return format!("{}", e);
+                    }
+                };
 
-        let demo_server = match DemoServer::new(&mut demo_file) {
-            Ok(d) => d,
-            Err(e) => return format!("{}", e),
-        };
+                match DemoServer::new(&mut demo_file) {
+                    Ok(d) => Connection {
+                        kind: ConnectionKind::Demo(d),
+                        state: ClientState::new(stream.clone()),
+                        conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
+                    },
+                    Err(e) => {
+                        demo_queue.borrow_mut().clear();
+                        return format!("{}", e);
+                    }
+                }
+            }
 
-        conn.replace(Some(Connection {
-            state: ClientState::new(stream.clone()),
-            kind: ConnectionKind::Demo(demo_server),
-            conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
-        }));
+            // if there are no more demos in the queue, disconnect
+            None => return "usage: startdemos [DEMOS]".to_owned(),
+        };
 
         input.borrow_mut().set_focus(InputFocus::Game);
 
+        conn.replace(Some(new_conn));
+
         String::new()
-    })
+    }
 }
 
-fn cmd_music(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |args| {
+fn cmd_music(music_player: Rc<RefCell<MusicPlayer>>) -> impl Fn(&[&str]) -> String {
+    move |args| {
         if args.len() != 1 {
             return "usage: music [TRACKNAME]".to_owned();
         }
@@ -1477,26 +1497,26 @@ fn cmd_music(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> S
                 format!("{}", e)
             }
         }
-    })
+    }
 }
 
-fn cmd_music_stop(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |_| {
+fn cmd_music_stop(music_player: Rc<RefCell<MusicPlayer>>) -> impl Fn(&[&str]) -> String {
+    move |_| {
         music_player.borrow_mut().stop();
         String::new()
-    })
+    }
 }
 
-fn cmd_music_pause(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |_| {
+fn cmd_music_pause(music_player: Rc<RefCell<MusicPlayer>>) -> impl Fn(&[&str]) -> String {
+    move |_| {
         music_player.borrow_mut().pause();
         String::new()
-    })
+    }
 }
 
-fn cmd_music_resume(music_player: Rc<RefCell<MusicPlayer>>) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |_| {
+fn cmd_music_resume(music_player: Rc<RefCell<MusicPlayer>>) -> impl Fn(&[&str]) -> String {
+    move |_| {
         music_player.borrow_mut().resume();
         String::new()
-    })
+    }
 }

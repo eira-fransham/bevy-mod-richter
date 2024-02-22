@@ -18,6 +18,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use wgpu::TextureFormatFeatureFlags;
+
 use crate::client::render::{
     Extent2d, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, LIGHT_ATTACHMENT_FORMAT,
     NORMAL_ATTACHMENT_FORMAT,
@@ -136,6 +138,15 @@ impl<'a> RenderPassBuilder<'a> {
 /// attachment.
 pub trait RenderTarget {
     fn render_pass_builder(&self) -> RenderPassBuilder<'_>;
+}
+
+impl<T> RenderTarget for &'_ T
+where
+    T: RenderTarget,
+{
+    fn render_pass_builder(&self) -> RenderPassBuilder<'_> {
+        (**self).render_pass_builder()
+    }
 }
 
 pub trait PreferredFormat {
@@ -361,7 +372,34 @@ pub struct FinalPassTarget {
 }
 
 impl FinalPassTarget {
-    pub fn new(device: &wgpu::Device, size: Extent2d, sample_count: u32) -> FinalPassTarget {
+    pub const FORMAT: wgpu::TextureFormat = DIFFUSE_ATTACHMENT_FORMAT;
+
+    pub fn new(
+        device: &wgpu::Device,
+        adapter: &wgpu::Adapter,
+        size: Extent2d,
+        sample_count: u32,
+    ) -> FinalPassTarget {
+        let multisample_attachment_map = [
+            (TextureFormatFeatureFlags::MULTISAMPLE_X8, 8u32),
+            (TextureFormatFeatureFlags::MULTISAMPLE_X4, 4),
+            (TextureFormatFeatureFlags::MULTISAMPLE_X2, 2),
+        ];
+
+        let features = adapter.get_texture_format_features(Self::FORMAT);
+
+        let sample_count = multisample_attachment_map
+            .iter()
+            .filter_map(|(feature, sample_count)| {
+                if features.flags.contains(*feature) {
+                    Some(*sample_count)
+                } else {
+                    None
+                }
+            })
+            .next()
+            .unwrap_or(1);
+
         let color_attachment =
             create_color_attachment(device, size, sample_count, wgpu::TextureUsages::empty());
         let color_view = color_attachment.create_view(&Default::default());

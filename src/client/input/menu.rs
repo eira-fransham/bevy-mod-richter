@@ -49,7 +49,7 @@ impl MenuInput {
                 } => match key {
                     NamedKey::Escape => {
                         if self.menu.borrow().at_root() {
-                            self.console.borrow().stuff_text("togglemenu\n");
+                            self.console.borrow().append_text("togglemenu");
                         } else {
                             self.menu.borrow().back()?;
                         }

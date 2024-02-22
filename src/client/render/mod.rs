@@ -256,6 +256,7 @@ impl std::convert::From<winit::dpi::PhysicalSize<u32>> for Extent2d {
 
 pub struct GraphicsState {
     device: wgpu::Device,
+    adapter: wgpu::Adapter,
     queue: wgpu::Queue,
 
     initial_pass_target: InitialPassTarget,
@@ -296,6 +297,7 @@ pub struct GraphicsState {
 impl GraphicsState {
     pub fn new(
         device: wgpu::Device,
+        adapter: wgpu::Adapter,
         queue: wgpu::Queue,
         swapchain_format: wgpu::TextureFormat,
         size: Extent2d,
@@ -308,7 +310,7 @@ impl GraphicsState {
 
         let initial_pass_target = InitialPassTarget::new(&device, size, sample_count);
         let deferred_pass_target = DeferredPassTarget::new(&device, size, sample_count);
-        let final_pass_target = FinalPassTarget::new(&device, size, sample_count);
+        let final_pass_target = FinalPassTarget::new(&device, &adapter, size, sample_count);
 
         let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame uniform buffer"),
@@ -426,12 +428,15 @@ impl GraphicsState {
         let deferred_pipeline = DeferredPipeline::new(&device, &mut compiler, sample_count);
         let particle_pipeline =
             ParticlePipeline::new(&device, &queue, &mut compiler, sample_count, &palette);
+        let final_format = FinalPassTarget::FORMAT;
+        let final_sample_count = final_pass_target.sample_count();
+
         let postprocess_pipeline =
-            PostProcessPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
+            PostProcessPipeline::new(&device, &mut compiler, final_format, final_sample_count);
         let quad_pipeline =
-            QuadPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
+            QuadPipeline::new(&device, &mut compiler, final_format, final_sample_count);
         let glyph_pipeline =
-            GlyphPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
+            GlyphPipeline::new(&device, &mut compiler, final_format, final_sample_count);
         let blit_pipeline = BlitPipeline::new(
             &device,
             &mut compiler,
@@ -453,6 +458,7 @@ impl GraphicsState {
 
         Ok(GraphicsState {
             device,
+            adapter,
             queue,
             initial_pass_target,
             deferred_pass_target,
@@ -486,6 +492,10 @@ impl GraphicsState {
             gfx_wad,
             compiler: RefCell::new(compiler),
         })
+    }
+
+    pub fn adapter(&self) -> &wgpu::Adapter {
+        &self.adapter
     }
 
     pub fn create_texture<'a>(
@@ -525,20 +535,14 @@ impl GraphicsState {
         if self.final_pass_target.size() != size
             || self.final_pass_target.sample_count() != sample_count
         {
-            self.final_pass_target = FinalPassTarget::new(self.device(), size, sample_count);
+            self.final_pass_target =
+                FinalPassTarget::new(self.device(), self.adapter(), size, sample_count);
             self.blit_pipeline.rebuild(
                 &self.device,
                 &mut *self.compiler.borrow_mut(),
                 self.final_pass_target.resolve_view(),
             )
         }
-    }
-
-    pub fn set_format(&mut self, format: wgpu::TextureFormat) {
-        self.postprocess_pipeline.borrow_mut().set_format(format);
-        self.quad_pipeline.borrow_mut().set_format(format);
-        self.glyph_pipeline.borrow_mut().set_format(format);
-        self.recreate_pipelines(self.sample_count.get());
     }
 
     /// Rebuild all render pipelines using the new sample count.

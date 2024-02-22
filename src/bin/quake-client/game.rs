@@ -172,7 +172,8 @@ impl Game {
                 height,
                 menu,
                 self.input.borrow().focus(),
-                SwapChainTarget::with_swap_chain_view(color_attachment_view),
+                // SwapChainTarget::with_swap_chain_view(color_attachment_view),
+                gfx_state.final_pass_target(),
             )
             .unwrap();
 
@@ -182,8 +183,7 @@ impl Game {
             cap.copy_from_texture(
                 &mut encoder,
                 wgpu::ImageCopyTexture {
-                    // TODO: Switch to final pass target
-                    texture: gfx_state.initial_pass_target().diffuse_attachment(),
+                    texture: gfx_state.final_pass_target().resolve_attachment(),
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: Default::default(),
@@ -200,12 +200,12 @@ impl Game {
         //       both an intermediate buffer (for screenshots) and the swapchain, but this isn't
         //       implemented yet.
         // blit to swap chain
-        // {
-        //     let swap_chain_target = SwapChainTarget::with_swap_chain_view(color_attachment_view);
-        //     let blit_pass_builder = swap_chain_target.render_pass_builder();
-        //     let mut blit_pass = encoder.begin_render_pass(&blit_pass_builder.descriptor());
-        //     gfx_state.blit_pipeline().blit(gfx_state, &mut blit_pass);
-        // }
+        {
+            let swap_chain_target = SwapChainTarget::with_swap_chain_view(color_attachment_view);
+            let blit_pass_builder = swap_chain_target.render_pass_builder();
+            let mut blit_pass = encoder.begin_render_pass(&blit_pass_builder.descriptor());
+            gfx_state.blit_pipeline().blit(gfx_state, &mut blit_pass);
+        }
 
         let command_buffer = encoder.finish();
         {
