@@ -18,7 +18,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::cell::{Cell, RefCell};
+use std::{
+    cell::{Cell, RefCell},
+    fmt::Debug,
+};
 
 use crate::client::menu::Menu;
 
@@ -31,6 +34,25 @@ pub enum Item {
     Enum(Enum),
     Slider(Slider),
     TextField(TextField),
+}
+
+impl Debug for Item {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        enum Item<'a> {
+            Submenu(&'a Menu),
+            Action,
+            Toggle {
+                state: bool,
+            },
+            Enum {
+                selected: usize,
+                items: Vec<&'a str>,
+            },
+            // TODO
+        }
+
+        todo!()
+    }
 }
 
 pub struct Toggle {

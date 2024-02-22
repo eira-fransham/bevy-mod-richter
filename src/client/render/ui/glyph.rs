@@ -49,7 +49,7 @@ impl GlyphPipeline {
     pub fn new(
         device: &wgpu::Device,
         compiler: &mut shaderc::Compiler,
-    format: wgpu::TextureFormat,
+        format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> GlyphPipeline {
         let (pipeline, bind_group_layouts) =

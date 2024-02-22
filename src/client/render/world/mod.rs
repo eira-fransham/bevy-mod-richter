@@ -551,8 +551,14 @@ impl WorldRenderer {
                 );
                 alias.record_draw(state, pass, time, 0, 0);
             }
+            EntityRenderer::None => {}
 
-            _ => unreachable!("non-alias viewmodel"),
+            EntityRenderer::Brush(..) => {
+                unreachable!("Viewmodel is brush - this should never happen")
+            }
+            EntityRenderer::Sprite(..) => {
+                unreachable!("Viewmodel is sprite - this should never happen")
+            }
         }
 
         log::debug!("Drawing particles");

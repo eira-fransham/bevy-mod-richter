@@ -139,16 +139,16 @@ impl<'a> ClientProgram<'a> {
             .await
             .unwrap();
         let size: Extent2d = window.inner_size().into();
-        let config =
-           surface
-                .get_default_config(&adapter, size.width, size.height)
-                .unwrap_or(Self::surface_config(size.width, size.height));
-        surface.configure(
-            &device,
-            &config,
-        );
+        let config = surface
+            .get_default_config(&adapter, size.width, size.height)
+            .unwrap_or(Self::surface_config(size.width, size.height));
+        surface.configure(&device, &config);
 
-        let default_swapchain_format = config.view_formats.first().copied().unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
+        let default_swapchain_format = config
+            .view_formats
+            .first()
+            .copied()
+            .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
 
         let vfs = Rc::new(vfs);
 
@@ -160,7 +160,15 @@ impl<'a> ClientProgram<'a> {
 
         sample_count = 1;
 
-        let gfx_state = GraphicsState::new(device, queue, default_swapchain_format, size, sample_count, vfs.clone()).unwrap();
+        let gfx_state = GraphicsState::new(
+            device,
+            queue,
+            default_swapchain_format,
+            size,
+            sample_count,
+            vfs.clone(),
+        )
+        .unwrap();
         let ui_renderer = Rc::new(UiRenderer::new(&gfx_state, &menu.borrow()));
 
         // TODO: factor this out
@@ -242,16 +250,19 @@ impl<'a> ClientProgram<'a> {
     /// Builds a new swap chain with the specified present mode and the window's current dimensions.
     fn recreate_swap_chain(&self, adapter: &wgpu::Adapter) {
         let winit::dpi::PhysicalSize { width, height } = self.window.inner_size();
-        let config =
-            self
-                .surface
-                .get_default_config(adapter, width, height)
-                .unwrap_or(Self::surface_config(width, height));
-        self.surface.configure(
-            self.gfx_state.borrow().device(),
-            &config,
+        let config = self
+            .surface
+            .get_default_config(adapter, width, height)
+            .unwrap_or(Self::surface_config(width, height));
+        self.surface
+            .configure(self.gfx_state.borrow().device(), &config);
+        self.gfx_state.borrow_mut().set_format(
+            config
+                .view_formats
+                .first()
+                .copied()
+                .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb),
         );
-        self.gfx_state.borrow_mut().set_format(config.view_formats.first().copied().unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb));
     }
 
     fn render(&mut self) {

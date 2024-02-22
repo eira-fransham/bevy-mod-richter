@@ -411,11 +411,18 @@ impl GraphicsState {
         let deferred_pipeline = DeferredPipeline::new(&device, &mut compiler, sample_count);
         let particle_pipeline =
             ParticlePipeline::new(&device, &queue, &mut compiler, sample_count, &palette);
-        let postprocess_pipeline = PostProcessPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
-        let quad_pipeline = QuadPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
-        let glyph_pipeline = GlyphPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
-        let blit_pipeline =
-            BlitPipeline::new(&device, &mut compiler, final_pass_target.resolve_view(), swapchain_format);
+        let postprocess_pipeline =
+            PostProcessPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
+        let quad_pipeline =
+            QuadPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
+        let glyph_pipeline =
+            GlyphPipeline::new(&device, &mut compiler, swapchain_format, sample_count);
+        let blit_pipeline = BlitPipeline::new(
+            &device,
+            &mut compiler,
+            final_pass_target.resolve_view(),
+            swapchain_format,
+        );
 
         let default_lightmap = create_texture(
             &device,

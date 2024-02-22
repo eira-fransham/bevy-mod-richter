@@ -5,7 +5,9 @@ use cgmath::{Matrix4, SquareMatrix as _, Vector3, Zero as _};
 use crate::{
     client::{
         entity::MAX_LIGHTS,
-        render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, DIFFUSE_ATTACHMENT_FORMAT},
+        render::{
+            pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, DIFFUSE_ATTACHMENT_FORMAT,
+        },
     },
     common::util::any_as_bytes,
 };

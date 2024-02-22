@@ -85,7 +85,10 @@ pub trait Pipeline {
     fn primitive_state() -> wgpu::PrimitiveState;
 
     /// The default color state used for the pipeline.
-    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>> where Self: Pipeline<Args = ()> {
+    fn color_target_states() -> Vec<Option<wgpu::ColorTargetState>>
+    where
+        Self: Pipeline<Args = ()>,
+    {
         Self::color_target_states_with_args(())
     }
 
@@ -239,7 +242,7 @@ pub trait Pipeline {
             fragment: Some(wgpu::FragmentState {
                 module: &fragment_shader,
                 entry_point: "main",
-                targets: &Self::color_target_states_with_args(args) ,
+                targets: &Self::color_target_states_with_args(args),
             }),
             multisample: wgpu::MultisampleState {
                 count: sample_count,
@@ -299,7 +302,7 @@ pub trait Pipeline {
             fragment: Some(wgpu::FragmentState {
                 module: &fragment_shader,
                 entry_point: "main",
-                targets: &Self::color_target_states_with_args(args) ,
+                targets: &Self::color_target_states_with_args(args),
             }),
             multisample: wgpu::MultisampleState {
                 count: sample_count,

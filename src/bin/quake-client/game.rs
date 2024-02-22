@@ -176,18 +176,6 @@ impl Game {
             )
             .unwrap();
 
-        lazy_static! {
-            static ref I: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
-        }
-
-        let mut i = I.lock().unwrap();
-
-        if *i % 120 == 0 {
-            *(*self.screenshot_path).borrow_mut() = Some(format!("./test{}.png", *i).into());
-        }
-
-        *i += 1;
-
         // screenshot setup
         let capture = self.screenshot_path.borrow().as_ref().map(|_| {
             let cap = Capture::new(gfx_state.device(), Extent2d { width, height });
@@ -204,6 +192,13 @@ impl Game {
             cap
         });
 
+        // TODO: On macOS we have a problem writing to an intermediate texture due to some weirdness
+        //       related to how it does multisampling. It looks like we need to write to a multisampled
+        //       texture for some reason, but trying to create a multisampled texture ourselves causes
+        //       issues too. For now, we make do with a suboptimal system where screenshots will only
+        //       write the diffuse texture. We can probably work around the issue by dual-writing to
+        //       both an intermediate buffer (for screenshots) and the swapchain, but this isn't
+        //       implemented yet.
         // blit to swap chain
         // {
         //     let swap_chain_target = SwapChainTarget::with_swap_chain_view(color_attachment_view);

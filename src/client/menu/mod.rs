@@ -38,6 +38,7 @@ pub enum MenuState {
     InSubMenu { index: usize },
 }
 
+#[derive(Debug)]
 /// Specifies how the menu body should be rendered.
 pub enum MenuBodyView {
     /// The menu body is rendered using a predefined bitmap.
@@ -49,6 +50,7 @@ pub enum MenuBodyView {
     Dynamic,
 }
 
+#[derive(Debug)]
 pub struct MenuView {
     pub draw_plaque: bool,
     pub title_path: String,
@@ -72,6 +74,7 @@ impl MenuView {
     }
 }
 
+#[derive(Debug)]
 pub struct Menu {
     items: Vec<NamedMenuItem>,
     state: Cell<MenuState>,
@@ -366,6 +369,7 @@ impl MenuBuilder {
     }
 }
 
+#[derive(Debug)]
 pub struct NamedMenuItem {
     name: String,
     item: Item,

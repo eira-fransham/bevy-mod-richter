@@ -147,7 +147,8 @@ impl ParticlePipeline {
         sample_count: u32,
     ) {
         let layout_refs: Vec<_> = self.bind_group_layouts.iter().collect();
-        self.pipeline = ParticlePipeline::recreate(device, compiler, &layout_refs, sample_count, ());
+        self.pipeline =
+            ParticlePipeline::recreate(device, compiler, &layout_refs, sample_count, ());
     }
 
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {

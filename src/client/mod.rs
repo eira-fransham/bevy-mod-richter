@@ -723,8 +723,10 @@ impl Connection {
                     }
                 }
 
+                ServerCmd::SetPause { .. } => {}
+
                 x => {
-                    debug!("{:?}", x);
+                    dbg!(x);
                     unimplemented!();
                 }
             }

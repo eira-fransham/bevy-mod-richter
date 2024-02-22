@@ -48,7 +48,7 @@ impl PostProcessPipeline {
 
     pub fn set_format(&mut self, format: wgpu::TextureFormat) {
         self.swapchain_format = format;
-        }
+    }
 
     pub fn rebuild(
         &mut self,
@@ -57,7 +57,13 @@ impl PostProcessPipeline {
         sample_count: u32,
     ) {
         let layout_refs: Vec<_> = self.bind_group_layouts.iter().collect();
-        let pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, self.swapchain_format);
+        let pipeline = Self::recreate(
+            device,
+            compiler,
+            &layout_refs,
+            sample_count,
+            self.swapchain_format,
+        );
         self.pipeline = pipeline;
     }
 
