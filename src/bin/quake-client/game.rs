@@ -26,6 +26,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use ffmpeg_next::{
+    encoder,
+    format::{self, context::output::Output},
+};
 use lazy_static::lazy_static;
 
 use crate::{
@@ -46,9 +50,43 @@ use richter::{
     common::console::{CmdRegistry, Console, CvarRegistry},
 };
 
-use chrono::Duration;
+use chrono::{Duration, Utc};
 use failure::Error;
 use log::info;
+
+fn cmd_startvideo(video_context: Rc<RefCell<Option<Output>>>) -> impl Fn(&[&str]) -> String {
+    move |args| {
+        let path = match args.len() {
+            // TODO: make default path configurable
+            0 => PathBuf::from(format!("richter-{}.mp4", Utc::now().format("%FT%H-%M-%S"))),
+            1 => PathBuf::from(args[0]),
+            _ => {
+                return "Usage: startvideo [PATH]".to_owned();
+            }
+        };
+
+        let output = match format::output(&path) {
+            Ok(o) => o,
+            Err(e) => return format!("{}", e),
+        };
+
+        video_context.replace(todo!());
+
+        String::new()
+    }
+}
+
+fn cmd_endvideo(video_context: Rc<RefCell<Option<Output>>>) -> impl Fn(&[&str]) -> String {
+    move |args| {
+        if !args.is_empty() {
+            return "Usage: endvideo".to_owned();
+        }
+
+        video_context.replace(None);
+
+        String::new()
+    }
+}
 
 pub struct Game {
     cvars: Rc<RefCell<CvarRegistry>>,
@@ -61,6 +99,8 @@ pub struct Game {
 
     // if Some(path), take a screenshot and save it to path
     screenshot_path: Rc<RefCell<Option<PathBuf>>>,
+
+    video_context: Rc<RefCell<Option<encoder::video::Video>>>,
 }
 
 impl Game {
@@ -75,6 +115,7 @@ impl Game {
 
         // set up screenshots
         let screenshot_path = Rc::new(RefCell::new(None));
+        let video_context = Rc::new(RefCell::new(None));
         (*cmds)
             .borrow_mut()
             .insert("screenshot", cmd_screenshot(screenshot_path.clone()))
@@ -98,6 +139,7 @@ impl Game {
             client,
             trace,
             screenshot_path,
+            video_context,
         })
     }
 
@@ -178,19 +220,22 @@ impl Game {
             .unwrap();
 
         // screenshot setup
-        let capture = self.screenshot_path.borrow().as_ref().map(|_| {
-            let cap = Capture::new(gfx_state.device(), Extent2d { width, height });
-            cap.copy_from_texture(
-                &mut encoder,
-                wgpu::ImageCopyTexture {
-                    texture: gfx_state.final_pass_target().resolve_attachment(),
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: Default::default(),
-                },
-            );
-            cap
-        });
+        let capture =
+            if self.screenshot_path.borrow().is_some() || self.video_context.borrow().is_some() {
+                let cap = Capture::new(gfx_state.device(), Extent2d { width, height });
+                cap.copy_from_texture(
+                    &mut encoder,
+                    wgpu::ImageCopyTexture {
+                        texture: gfx_state.final_pass_target().resolve_attachment(),
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: Default::default(),
+                    },
+                );
+                Some(cap)
+            } else {
+                None
+            };
 
         // TODO: On macOS we have a problem writing to an intermediate texture due to some weirdness
         //       related to how it does multisampling. It looks like we need to write to a multisampled
@@ -220,6 +265,9 @@ impl Game {
                 .unwrap()
                 .write_to_file(gfx_state.device(), path)
         });
+        if let Some(octx) = &*self.video_context.borrow() {
+            todo!();
+        }
     }
 }
 

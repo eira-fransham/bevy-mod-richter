@@ -39,3 +39,9 @@ wgpu = { version = "0.19", features = ["spirv", "vulkan-portability"] }
 winit = "0.29"
 im = "15.1.0"
 imstr = "0.2"
+
+ffmpeg-next = { version = "6", optional = true }
+
+[features]
+default = ["screenrecord"]
+screenrecord = ["ffmpeg-next"]

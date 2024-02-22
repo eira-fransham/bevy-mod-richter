@@ -17,10 +17,8 @@ const BYTES_PER_PIXEL: u32 = 4;
 ///
 /// This function returns a boxed closure which sets the `screenshot_path`
 /// argument to `Some` when called.
-pub fn cmd_screenshot(
-    screenshot_path: Rc<RefCell<Option<PathBuf>>>,
-) -> Box<dyn Fn(&[&str]) -> String> {
-    Box::new(move |args| {
+pub fn cmd_screenshot(screenshot_path: Rc<RefCell<Option<PathBuf>>>) -> impl Fn(&[&str]) -> String {
+    move |args| {
         let path = match args.len() {
             // TODO: make default path configurable
             0 => PathBuf::from(format!("richter-{}.png", Utc::now().format("%FT%H-%M-%S"))),
@@ -33,7 +31,7 @@ pub fn cmd_screenshot(
 
         screenshot_path.replace(Some(path));
         String::new()
-    })
+    }
 }
 
 pub struct Capture {
