@@ -81,7 +81,13 @@ fn cmd_startvideo(
             video_rs::init().unwrap();
         });
 
-        video_context.replace(Some(VideoState::Pending(path, target)));
+        if let Some(VideoState::Recording(RecordingState { mut encoder, .. })) =
+            video_context.replace(Some(VideoState::Pending(path, target)))
+        {
+            if let Err(e) = encoder.finish() {
+                return format!("Failed writing video: {}", e);
+            }
+        }
 
         String::new()
     }
@@ -93,7 +99,13 @@ fn cmd_stopvideo(video_context: Rc<RefCell<Option<VideoState>>>) -> impl Fn(&[&s
             return "Usage: endvideo".to_owned();
         }
 
-        video_context.replace(None);
+        if let Some(VideoState::Recording(RecordingState { mut encoder, .. })) =
+            video_context.replace(None)
+        {
+            if let Err(e) = encoder.finish() {
+                return format!("Failed writing video: {}", e);
+            }
+        }
 
         String::new()
     }
@@ -106,10 +118,6 @@ struct RecordingState {
     encoder: Encoder,
     target: ScreenshotTarget,
     size: (usize, usize),
-}
-
-impl std::ops::Drop for RecordingState {
-    fn drop(&mut self) {}
 }
 
 enum VideoState {
@@ -263,8 +271,6 @@ impl Game {
                 height,
                 menu,
                 self.input.borrow().focus(),
-                // SwapChainTarget::with_swap_chain_view(color_attachment_view),
-                gfx_state.final_pass_target(),
             )
             .unwrap();
 
@@ -457,8 +463,8 @@ impl std::ops::Drop for Game {
         let _ = (*self.cmds).borrow_mut().remove("startvideogame");
         let _ = (*self.cmds).borrow_mut().remove("endvideo");
 
-        if let Some(VideoState::Recording(RecordingState { encoder, .. })) =
-            (*self.video_context).borrow_mut().as_mut()
+        if let Some(VideoState::Recording(RecordingState { mut encoder, .. })) =
+            self.video_context.replace(None)
         {
             if let Err(e) = encoder.finish() {
                 debug!("Failed writing video: {}", e);

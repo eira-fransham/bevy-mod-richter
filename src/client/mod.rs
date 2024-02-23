@@ -505,11 +505,13 @@ impl Connection {
                 ServerCmd::SetAngle { angles } => self.state.set_view_angles(angles),
 
                 ServerCmd::SetView { ent_id } => {
-                    if ent_id <= 0 {
+                    if ent_id == 0 {
+                        // TODO: Why do we occasionally see this in demos?
+                    } else if ent_id <= 0 {
                         Err(ClientError::InvalidViewEntity(ent_id as usize))?;
+                    } else {
+                        self.state.set_view_entity(ent_id as usize)?;
                     }
-
-                    self.state.set_view_entity(ent_id as usize)?;
                 }
 
                 ServerCmd::SignOnStage { stage } => self.handle_signon(stage, gfx_state)?,
@@ -967,35 +969,48 @@ impl Client {
                     Disconnect => None,
 
                     // get the next demo from the queue
-                    NextDemo => match self.demo_queue.borrow_mut().pop_front() {
-                        Some(demo) => {
-                            let mut demo_file = match self.vfs.open(format!("{}.dem", demo)) {
-                                Ok(f) => Some(f),
-                                Err(e) => {
-                                    // log the error, dump the demo queue and disconnect
-                                    self.console.borrow_mut().println(format!("{}", e));
-                                    self.demo_queue.borrow_mut().clear();
-                                    None
-                                }
-                            };
+                    NextDemo => {
+                        // Prevent the demo queue borrow from lasting too long
+                        let next = {
+                            let next = self.demo_queue.borrow_mut().pop_front();
 
-                            demo_file.as_mut().and_then(|df| match DemoServer::new(df) {
-                                Ok(d) => Some(Connection {
-                                    kind: ConnectionKind::Demo(d),
-                                    state: ClientState::new(self.output_stream_handle.clone()),
-                                    conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
-                                }),
-                                Err(e) => {
-                                    self.console.borrow_mut().println(format!("{}", e));
-                                    self.demo_queue.borrow_mut().clear();
-                                    None
-                                }
-                            })
+                            next
+                        };
+                        match next {
+                            Some(demo) => {
+                                // TODO: Extract this to a separate function so we don't duplicate the logic to find the demos in different places
+                                let mut demo_file = match self
+                                    .vfs
+                                    .open(format!("{}.dem", demo))
+                                    .or_else(|_| self.vfs.open(format!("demos/{}.dem", demo)))
+                                {
+                                    Ok(f) => Some(f),
+                                    Err(e) => {
+                                        // log the error, dump the demo queue and disconnect
+                                        self.console.borrow_mut().println(format!("{}", e));
+                                        self.demo_queue.borrow_mut().clear();
+                                        None
+                                    }
+                                };
+
+                                demo_file.as_mut().and_then(|df| match DemoServer::new(df) {
+                                    Ok(d) => Some(Connection {
+                                        kind: ConnectionKind::Demo(d),
+                                        state: ClientState::new(self.output_stream_handle.clone()),
+                                        conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
+                                    }),
+                                    Err(e) => {
+                                        self.console.borrow_mut().println(format!("{}", e));
+                                        self.demo_queue.borrow_mut().clear();
+                                        None
+                                    }
+                                })
+                            }
+
+                            // if there are no more demos in the queue, disconnect
+                            None => None,
                         }
-
-                        // if there are no more demos in the queue, disconnect
-                        None => None,
-                    },
+                    }
 
                     // covered in first match
                     Maintain => unreachable!(),
@@ -1023,7 +1038,6 @@ impl Client {
         height: u32,
         menu: &Menu,
         focus: InputFocus,
-        target: impl RenderTarget,
     ) -> Result<(), ClientError> {
         let fov = Deg(self.cvar_value("fov")?);
         let cvars = self.cvars.borrow();
@@ -1040,7 +1054,6 @@ impl Client {
             &console,
             menu,
             focus,
-            target,
         );
 
         Ok(())

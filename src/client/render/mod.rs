@@ -68,10 +68,10 @@ pub use world::{
 };
 
 use std::{
-    borrow::{BorrowMut, Cow},
+    borrow::Cow,
     cell::{Cell, Ref, RefCell, RefMut},
     mem::size_of,
-    num::{NonZeroU32, NonZeroU64, NonZeroU8},
+    num::NonZeroU64,
     rc::Rc,
 };
 
@@ -99,8 +99,6 @@ use crate::{
     },
     common::{
         console::{Console, CvarRegistry},
-        model::Model,
-        net::SignOnStage,
         vfs::Vfs,
         wad::Wad,
     },
@@ -108,17 +106,17 @@ use crate::{
 
 use super::ConnectionState;
 use bumpalo::Bump;
-use cgmath::{Deg, InnerSpace, Vector3, Zero};
-use chrono::{DateTime, Duration, TimeDelta, Utc};
+use cgmath::{Deg, Vector3, Zero};
+use chrono::{DateTime, TimeDelta, Utc};
 use failure::Error;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-// TODO: Use default surface config to request this for the swapchain specifically
-pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
+pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub const FINAL_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const NORMAL_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const LIGHT_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+const DIFFUSE_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const FULLBRIGHT_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const LIGHTMAP_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
@@ -159,7 +157,14 @@ pub fn create_texture<'a>(
         width,
         height
     );
-    let texture = device.create_texture(&texture_descriptor(label, width, height, data.format()));
+
+    // It looks like sometimes quake includes textures with at least one zero aspect?
+    let texture = device.create_texture(&texture_descriptor(
+        label,
+        width.max(1),
+        height.max(1),
+        data.format(),
+    ));
     queue.write_texture(
         wgpu::ImageCopyTexture {
             texture: &texture,
@@ -219,10 +224,19 @@ impl<'a> TextureData<'a> {
     }
 
     pub fn stride(&self) -> u32 {
-        (match self {
-            TextureData::Diffuse(_) => size_of::<[u8; 4]>(),
-            TextureData::Fullbright(_) => size_of::<u8>(),
-            TextureData::Lightmap(_) => size_of::<u8>(),
+        use std::mem;
+        use wgpu::TextureFormat::*;
+
+        (match self.format() {
+            Rg8Unorm | Rg8Snorm | Rg8Uint | Rg8Sint => mem::size_of::<[u8; 2]>(),
+            R8Unorm | R8Snorm | R8Uint | R8Sint => mem::size_of::<u8>(),
+            Bgra8Unorm | Bgra8UnormSrgb | Rgba8Unorm | Rgba8UnormSrgb => mem::size_of::<[u8; 4]>(),
+            R16Uint | R16Sint | R16Unorm | R16Snorm | R16Float => mem::size_of::<u16>(),
+            Rg16Uint | Rg16Sint | Rg16Unorm | Rg16Snorm | Rg16Float => mem::size_of::<[u16; 2]>(),
+            Rgba16Uint | Rgba16Sint | Rgba16Unorm | Rgba16Snorm | Rgba16Float => {
+                mem::size_of::<[u16; 4]>()
+            }
+            _ => todo!(),
         }) as u32
     }
 
@@ -428,15 +442,16 @@ impl GraphicsState {
         let deferred_pipeline = DeferredPipeline::new(&device, &mut compiler, sample_count);
         let particle_pipeline =
             ParticlePipeline::new(&device, &queue, &mut compiler, sample_count, &palette);
+        let quad_pipeline =
+            QuadPipeline::new(&device, &mut compiler, DIFFUSE_ATTACHMENT_FORMAT, sample_count);
+        let glyph_pipeline =
+            GlyphPipeline::new(&device, &mut compiler, DIFFUSE_ATTACHMENT_FORMAT, sample_count);
+
         let final_format = FinalPassTarget::FORMAT;
         let final_sample_count = final_pass_target.sample_count();
 
         let postprocess_pipeline =
             PostProcessPipeline::new(&device, &mut compiler, final_format, final_sample_count);
-        let quad_pipeline =
-            QuadPipeline::new(&device, &mut compiler, final_format, final_sample_count);
-        let glyph_pipeline =
-            GlyphPipeline::new(&device, &mut compiler, final_format, final_sample_count);
         let blit_pipeline = BlitPipeline::new(
             &device,
             &mut compiler,
@@ -744,7 +759,6 @@ impl ClientRenderer {
         console: &Console,
         menu: &Menu,
         focus: InputFocus,
-        render_target: impl RenderTarget,
     ) {
         self.bump.reset();
 
@@ -788,6 +802,10 @@ impl ClientRenderer {
                         );
                     }
 
+                    // quad_commands must outlive final pass
+                    let mut quad_commands = Vec::new();
+                    let mut glyph_commands = Vec::new();
+
                     // deferred lighting pass
                     {
                         let deferred_pass_builder =
@@ -828,6 +846,58 @@ impl ClientRenderer {
 
                         self.deferred_renderer
                             .record_draw(gfx_state, &mut deferred_pass, uniforms);
+
+                        let ui_state = match conn {
+                            Some(Connection {
+                                state: ref cl_state,
+                                ..
+                            }) => UiState::InGame {
+                                hud: match cl_state.intermission() {
+                                    Some(kind) => HudState::Intermission {
+                                        kind,
+                                        completion_duration: cl_state.completion_time().unwrap()
+                                            - cl_state.start_time(),
+                                        stats: cl_state.stats(),
+                                        console,
+                                    },
+
+                                    None => HudState::InGame {
+                                        items: cl_state.items(),
+                                        item_pickup_time: cl_state.item_pickup_times(),
+                                        stats: cl_state.stats(),
+                                        face_anim_time: cl_state.face_anim_time(),
+                                        console,
+                                    },
+                                },
+
+                                overlay: match focus {
+                                    InputFocus::Game => None,
+                                    InputFocus::Console => Some(UiOverlay::Console(console)),
+                                    InputFocus::Menu => Some(UiOverlay::Menu(menu)),
+                                },
+                            },
+
+                            None => UiState::Title {
+                                overlay: match focus {
+                                    InputFocus::Console => UiOverlay::Console(console),
+                                    InputFocus::Menu => UiOverlay::Menu(menu),
+                                    InputFocus::Game => unreachable!(),
+                                },
+                            },
+                        };
+
+                        let elapsed = self.elapsed(conn);
+
+                        self.ui_renderer.render_pass(
+                            &gfx_state,
+                            &mut deferred_pass,
+                            Extent2d { width, height },
+                            // use client time when in game, renderer time otherwise
+                            elapsed,
+                            &ui_state,
+                            &mut quad_commands,
+                            &mut glyph_commands,
+                        );
                     }
                 }
 
@@ -838,52 +908,9 @@ impl ClientRenderer {
             }
         }
 
-        let ui_state = match conn {
-            Some(Connection {
-                state: ref cl_state,
-                ..
-            }) => UiState::InGame {
-                hud: match cl_state.intermission() {
-                    Some(kind) => HudState::Intermission {
-                        kind,
-                        completion_duration: cl_state.completion_time().unwrap()
-                            - cl_state.start_time(),
-                        stats: cl_state.stats(),
-                        console,
-                    },
-
-                    None => HudState::InGame {
-                        items: cl_state.items(),
-                        item_pickup_time: cl_state.item_pickup_times(),
-                        stats: cl_state.stats(),
-                        face_anim_time: cl_state.face_anim_time(),
-                        console,
-                    },
-                },
-
-                overlay: match focus {
-                    InputFocus::Game => None,
-                    InputFocus::Console => Some(UiOverlay::Console(console)),
-                    InputFocus::Menu => Some(UiOverlay::Menu(menu)),
-                },
-            },
-
-            None => UiState::Title {
-                overlay: match focus {
-                    InputFocus::Console => UiOverlay::Console(console),
-                    InputFocus::Menu => UiOverlay::Menu(menu),
-                    InputFocus::Game => unreachable!(),
-                },
-            },
-        };
-
         // final render pass: postprocess the world and draw the UI
         {
-            // quad_commands must outlive final pass
-            let mut quad_commands = Vec::new();
-            let mut glyph_commands = Vec::new();
-
-            let final_pass_builder = render_target.render_pass_builder();
+            let final_pass_builder = gfx_state.final_pass_target().render_pass_builder();
             let mut final_pass = encoder.begin_render_pass(&final_pass_builder.descriptor());
 
             if let Some(Connection {
@@ -903,19 +930,6 @@ impl ClientRenderer {
                     );
                 }
             }
-
-            let elapsed = self.elapsed(conn);
-
-            self.ui_renderer.render_pass(
-                &gfx_state,
-                &mut final_pass,
-                Extent2d { width, height },
-                // use client time when in game, renderer time otherwise
-                elapsed,
-                &ui_state,
-                &mut quad_commands,
-                &mut glyph_commands,
-            );
         }
     }
 }

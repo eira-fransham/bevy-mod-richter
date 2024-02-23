@@ -46,7 +46,7 @@ void main() {
     - 1.0;
 
   // Double to restore overbright values.
-  vec4 in_light = 2.0 * texture(sampler2D(u_light, u_sampler), a_texcoord);
+  vec4 in_light = texture(sampler2D(u_light, u_sampler), a_texcoord);
 
   float in_depth = texture(sampler2D(u_depth, u_nearestsampler), a_texcoord).x;
   vec3 position = reconstruct_position(in_depth);

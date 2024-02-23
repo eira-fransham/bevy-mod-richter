@@ -1059,19 +1059,13 @@ impl ServerCmd {
             }
 
             ServerCmdCode::Print => {
-                let text = match util::read_cstring(reader) {
-                    Ok(t) => t,
-                    Err(e) => return Err(NetError::with_msg(format!("{}", e))),
-                };
+                let text = util::read_cstring(reader);
 
                 ServerCmd::Print { text }
             }
 
             ServerCmdCode::StuffText => {
-                let text = match util::read_cstring(reader) {
-                    Ok(t) => t,
-                    Err(e) => return Err(NetError::with_msg(format!("{}", e))),
-                };
+                let text = util::read_cstring(reader);
 
                 ServerCmd::StuffText { text }
             }
@@ -1100,11 +1094,11 @@ impl ServerCmd {
                     }
                 };
 
-                let message = util::read_cstring(reader).unwrap();
+                let message = util::read_cstring(reader);
 
                 let mut model_precache = Vec::new();
                 loop {
-                    let model_name = util::read_cstring(reader).unwrap();
+                    let model_name = util::read_cstring(reader);
                     if model_name.is_empty() {
                         break;
                     }
@@ -1113,7 +1107,7 @@ impl ServerCmd {
 
                 let mut sound_precache = Vec::new();
                 loop {
-                    let sound_name = util::read_cstring(reader).unwrap();
+                    let sound_name = util::read_cstring(reader);
                     if sound_name.is_empty() {
                         break;
                     }
@@ -1132,13 +1126,13 @@ impl ServerCmd {
 
             ServerCmdCode::LightStyle => {
                 let id = reader.read_u8()?;
-                let value = util::read_cstring(reader).unwrap();
+                let value = util::read_cstring(reader);
                 ServerCmd::LightStyle { id, value }
             }
 
             ServerCmdCode::UpdateName => {
                 let player_id = reader.read_u8()?;
-                let new_name = util::read_cstring(reader).unwrap();
+                let new_name = util::read_cstring(reader);
                 ServerCmd::UpdateName {
                     player_id,
                     new_name,
@@ -1399,10 +1393,7 @@ impl ServerCmd {
             }
 
             ServerCmdCode::CenterPrint => {
-                let text = match util::read_cstring(reader) {
-                    Ok(t) => t,
-                    Err(e) => return Err(NetError::with_msg(format!("{}", e))),
-                };
+                let text = util::read_cstring(reader);
 
                 ServerCmd::CenterPrint { text }
             }
@@ -1427,10 +1418,7 @@ impl ServerCmd {
             ServerCmdCode::Intermission => ServerCmd::Intermission,
 
             ServerCmdCode::Finale => {
-                let text = match util::read_cstring(reader) {
-                    Ok(t) => t,
-                    Err(e) => return Err(NetError::with_msg(format!("{}", e))),
-                };
+                let text = util::read_cstring(reader);
 
                 ServerCmd::Finale { text }
             }
@@ -1444,10 +1432,7 @@ impl ServerCmd {
             ServerCmdCode::SellScreen => ServerCmd::SellScreen,
 
             ServerCmdCode::Cutscene => {
-                let text = match util::read_cstring(reader) {
-                    Ok(t) => t,
-                    Err(e) => return Err(NetError::with_msg(format!("{}", e))),
-                };
+                let text = util::read_cstring(reader);
 
                 ServerCmd::Cutscene { text }
             }
@@ -1930,7 +1915,7 @@ impl ClientCmd {
                 }
             }
             ClientCmdCode::StringCmd => {
-                let cmd = util::read_cstring(reader).unwrap();
+                let cmd = util::read_cstring(reader);
                 ClientCmd::StringCmd { cmd }
             }
         };

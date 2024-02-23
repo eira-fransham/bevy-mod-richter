@@ -39,14 +39,14 @@ where
 ///
 /// ## Panics
 /// - If the end of the input is reached before a zero byte is found.
-pub fn read_cstring<R>(src: &mut R) -> Result<String, std::string::FromUtf8Error>
+pub fn read_cstring<R>(src: &mut R) -> String
 where
     R: std::io::BufRead,
 {
     let mut bytes: Vec<u8> = Vec::new();
     src.read_until(0, &mut bytes).unwrap();
     bytes.pop();
-    String::from_utf8(bytes)
+    String::from_utf8_lossy(&*bytes).into_owned()
 }
 
 pub unsafe fn any_as_bytes<T>(t: &T) -> &[u8]

@@ -1,7 +1,7 @@
 use std::{mem::size_of, num::NonZeroU64};
 
 use crate::{
-    client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, SwapChainTarget},
+    client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState},
     common::util::any_as_bytes,
 };
 
@@ -9,7 +9,12 @@ use crate::{
 #[derive(Clone, Copy, Debug)]
 pub struct PostProcessUniforms {
     pub color_shift: [f32; 4],
+    pub brightness: f32,
+    pub inv_gamma: f32,
 }
+
+const BRIGHTNESS: f32 = 2.5;
+const GAMMA: f32 = 1.4;
 
 pub struct PostProcessPipeline {
     pipeline: wgpu::RenderPipeline,
@@ -33,6 +38,8 @@ impl PostProcessPipeline {
             contents: unsafe {
                 any_as_bytes(&PostProcessUniforms {
                     color_shift: [0.0; 4],
+                    brightness: BRIGHTNESS,
+                    inv_gamma: GAMMA.recip(),
                 })
             },
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -215,7 +222,7 @@ impl PostProcessRenderer {
         state
             .queue()
             .write_buffer(state.postprocess_pipeline().uniform_buffer(), 0, unsafe {
-                any_as_bytes(&PostProcessUniforms { color_shift })
+                any_as_bytes(&PostProcessUniforms { color_shift, brightness: BRIGHTNESS, inv_gamma: GAMMA.recip() })
             });
     }
 

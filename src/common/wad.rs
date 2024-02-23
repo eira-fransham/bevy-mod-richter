@@ -184,7 +184,7 @@ impl Wad {
             reader.read_exact(&mut name_bytes)?;
             let name_lossy = String::from_utf8_lossy(&name_bytes);
             debug!("name: {}", name_lossy);
-            let name = util::read_cstring(&mut BufReader::new(Cursor::new(name_bytes)))?;
+            let name = util::read_cstring(&mut BufReader::new(Cursor::new(name_bytes)));
 
             lump_infos.push(LumpInfo { offset, size, name });
         }

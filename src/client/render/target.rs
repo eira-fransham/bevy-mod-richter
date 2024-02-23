@@ -25,6 +25,8 @@ use crate::client::render::{
     NORMAL_ATTACHMENT_FORMAT,
 };
 
+use super::FINAL_ATTACHMENT_FORMAT;
+
 // TODO: collapse these into a single definition
 /// Create a texture suitable for use as a color attachment.
 ///
@@ -43,7 +45,7 @@ pub fn create_color_attachment(
         sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: DIFFUSE_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | usage,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | usage,
         view_formats: Default::default(),
     })
 }
@@ -312,12 +314,18 @@ pub struct DeferredPassTarget {
 }
 
 impl DeferredPassTarget {
+    pub const FORMAT: wgpu::TextureFormat = FINAL_ATTACHMENT_FORMAT;
+
+    pub fn format(&self) -> wgpu::TextureFormat {
+        Self::FORMAT
+    }
+
     pub fn new(device: &wgpu::Device, size: Extent2d, sample_count: u32) -> DeferredPassTarget {
         let color_attachment = create_color_attachment(
             device,
             size,
             sample_count,
-            wgpu::TextureUsages::TEXTURE_BINDING,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
         );
         let color_view = color_attachment.create_view(&Default::default());
 
@@ -385,9 +393,9 @@ impl FinalPassTarget {
         sample_count: u32,
     ) -> FinalPassTarget {
         let multisample_attachment_map = [
-            (TextureFormatFeatureFlags::MULTISAMPLE_X8, 8u32),
-            (TextureFormatFeatureFlags::MULTISAMPLE_X4, 4),
             (TextureFormatFeatureFlags::MULTISAMPLE_X2, 2),
+            (TextureFormatFeatureFlags::MULTISAMPLE_X4, 4),
+            (TextureFormatFeatureFlags::MULTISAMPLE_X8, 8u32),
         ];
 
         let features = adapter.get_texture_format_features(Self::FORMAT);
@@ -404,8 +412,19 @@ impl FinalPassTarget {
             .next()
             .unwrap_or(1);
 
-        let color_attachment =
-            create_color_attachment(device, size, sample_count, wgpu::TextureUsages::empty());
+        let color_attachment = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("color attachment"),
+            size: size.into(),
+            mip_level_count: 1,
+            sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::FORMAT,
+            usage: wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: Default::default(),
+        });
+
         let color_view = color_attachment.create_view(&Default::default());
         // add COPY_SRC so we can copy to a buffer for capture and SAMPLED so we
         // can blit to the swap chain
