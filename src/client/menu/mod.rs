@@ -24,6 +24,9 @@ use std::cell::Cell;
 
 use failure::Error;
 
+use crate::common::host::Control;
+
+use self::item::Action;
 pub use self::item::{Enum, EnumItem, Item, Slider, TextField, Toggle};
 
 #[derive(Clone, Copy, Debug)]
@@ -170,23 +173,27 @@ impl Menu {
     /// `Action`.
     ///
     /// Otherwise, this has no effect.
-    pub fn activate(&self) -> Result<(), Error> {
+    pub fn activate(&self) -> Result<Control, Error> {
         let m = self.active_submenu()?;
 
-        if let MenuState::Active { index } = m.state.get() {
+        let control = if let MenuState::Active { index } = m.state.get() {
             match m.items[index].item {
                 Item::Submenu(ref submenu) => {
                     m.state.replace(MenuState::InSubMenu { index });
                     submenu.state.replace(MenuState::Active { index: 0 });
+
+                    Control::Continue
                 }
 
-                Item::Action(ref action) => (action)(),
+                Item::Action(ref action) => (action.0)(),
 
-                _ => (),
+                _ => Control::Continue,
             }
-        }
+        } else {
+            Control::Continue
+        };
 
-        Ok(())
+        Ok(control)
     }
 
     pub fn left(&self) -> Result<(), Error> {
@@ -303,12 +310,13 @@ impl MenuBuilder {
         self
     }
 
-    pub fn add_action<S>(mut self, name: S, action: Box<dyn Fn()>) -> MenuBuilder
+    pub fn add_action<S, F>(mut self, name: S, action: F) -> MenuBuilder
     where
         S: AsRef<str>,
+        F: Into<Action>,
     {
         self.items
-            .push(NamedMenuItem::new(name, Item::Action(action)));
+            .push(NamedMenuItem::new(name, Item::Action(action.into())));
         self
     }
 

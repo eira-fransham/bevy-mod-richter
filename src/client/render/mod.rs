@@ -109,7 +109,7 @@ use crate::{
 use super::ConnectionState;
 use bumpalo::Bump;
 use cgmath::{Deg, InnerSpace, Vector3, Zero};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, TimeDelta, Utc};
 use failure::Error;
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -725,6 +725,13 @@ impl ClientRenderer {
         }
     }
 
+    pub fn elapsed(&self, conn: Option<&Connection>) -> TimeDelta {
+        match conn {
+            Some(Connection { ref state, .. }) => state.time,
+            None => Utc::now().signed_duration_since(self.start_time),
+        }
+    }
+
     pub fn render(
         &mut self,
         gfx_state: &GraphicsState,
@@ -897,15 +904,14 @@ impl ClientRenderer {
                 }
             }
 
+            let elapsed = self.elapsed(conn);
+
             self.ui_renderer.render_pass(
                 &gfx_state,
                 &mut final_pass,
                 Extent2d { width, height },
                 // use client time when in game, renderer time otherwise
-                match conn {
-                    Some(Connection { ref state, .. }) => state.time,
-                    None => Utc::now().signed_duration_since(self.start_time),
-                },
+                elapsed,
                 &ui_state,
                 &mut quad_commands,
                 &mut glyph_commands,

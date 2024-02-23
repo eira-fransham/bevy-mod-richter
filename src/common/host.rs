@@ -34,7 +34,7 @@ pub trait Program: Sized {
         event: Event<T>,
         _target: &EventLoopWindowTarget<T>,
         control_flow: &mut ControlFlow,
-    );
+    ) -> Control;
 
     fn frame(&mut self, frame_duration: Duration);
     fn shutdown(&mut self);
@@ -51,6 +51,11 @@ where
     init_time: DateTime<Utc>,
     prev_frame_time: DateTime<Utc>,
     prev_frame_duration: Duration,
+}
+
+pub enum Control {
+    Continue,
+    Exit,
 }
 
 impl<P> Host<P>
@@ -77,22 +82,23 @@ where
         event: Event<T>,
         _target: &EventLoopWindowTarget<T>,
         control_flow: &mut ControlFlow,
-    ) {
+    ) -> Control {
         match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
-            } => {
-                self.program.shutdown();
-                // *control_flow = ControlFlow::Exit;
-            }
+            } => Control::Exit,
 
-            Event::AboutToWait => self.frame(),
-            Event::Suspended | Event::Resumed => {}
+            Event::AboutToWait => {
+                self.frame();
+                Control::Continue
+            }
+            Event::Suspended | Event::Resumed => Control::Continue,
             Event::LoopExiting => {
                 // TODO:
                 // - host_writeconfig
                 // - others...
+                Control::Exit
             }
 
             e => self.program.handle_event(e, _target, control_flow),

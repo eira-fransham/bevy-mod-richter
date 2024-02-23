@@ -49,7 +49,7 @@ use richter::{
     common::{
         self,
         console::{CmdRegistry, Console, CvarRegistry, ExecResult},
-        host::{Host, Program},
+        host::{Control, Host, Program},
         vfs::Vfs,
     },
 };
@@ -80,8 +80,13 @@ struct ClientProgram<'a> {
 }
 
 impl<'a> ClientProgram<'a> {
-    pub async fn new(window: &'a Window, base_dir: Option<PathBuf>, trace: bool) -> Self {
-        let vfs = Vfs::with_base_dir(base_dir.unwrap_or(common::default_base_dir()));
+    pub async fn new(
+        window: &'a Window,
+        base_dir: Option<PathBuf>,
+        game: Option<&str>,
+        trace: bool,
+    ) -> Self {
+        let vfs = Vfs::with_base_dir(base_dir.unwrap_or(common::default_base_dir()), game);
 
         let con_names = Rc::new(RefCell::new(Vec::new()));
 
@@ -286,13 +291,14 @@ impl Program for ClientProgram<'_> {
         event: Event<T>,
         _target: &EventLoopWindowTarget<T>,
         _control_flow: &mut ControlFlow,
-    ) {
+    ) -> Control {
         match event {
             Event::WindowEvent {
                 event: WindowEvent::Resized(_),
                 ..
             } => {
                 self.window_dimensions_changed = true;
+                Control::Continue
             }
 
             e => self.input.borrow_mut().handle_event(e).unwrap(),
@@ -377,7 +383,16 @@ struct Opt {
     demo: Option<String>,
 
     #[structopt(long)]
+    demos: Vec<String>,
+
+    #[structopt(short, long, default_value)]
+    commands: String,
+
+    #[structopt(long)]
     base_dir: Option<PathBuf>,
+
+    #[structopt(long)]
+    game: Option<String>,
 }
 
 fn main() {
@@ -408,8 +423,12 @@ fn main() {
         }
     };
 
-    let client_program =
-        futures::executor::block_on(ClientProgram::new(&window, opt.base_dir, opt.trace));
+    let client_program = futures::executor::block_on(ClientProgram::new(
+        &window,
+        opt.base_dir,
+        opt.game.as_deref(),
+        opt.trace,
+    ));
 
     // TODO: make dump_demo part of top-level binary and allow choosing file name
     if let Some(ref demo) = opt.dump_demo {
@@ -464,14 +483,22 @@ fn main() {
             .console
             .borrow()
             .append_text(format!("playdemo {}", demo));
+    } else if !opt.demos.is_empty() {
+        host.program()
+            .console
+            .borrow()
+            .append_text(format!("startdemos {}", opt.demos.join(" ")));
     }
+
+    host.program().console.borrow().append_text(opt.commands);
 
     event_loop
         .run(move |event, target| {
             let mut control_flow = ControlFlow::Poll;
-            host.handle_event(event, target, &mut control_flow);
-
-            target.set_control_flow(control_flow);
+            match host.handle_event(event, target, &mut control_flow) {
+                Control::Exit => target.exit(),
+                Control::Continue => target.set_control_flow(control_flow),
+            }
         })
         .unwrap();
 }

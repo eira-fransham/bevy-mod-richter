@@ -34,7 +34,7 @@ use self::render::RenderTarget;
 
 use std::{
     any::Any,
-    cell::RefCell,
+    cell::{Ref, RefCell},
     collections::{HashMap, VecDeque},
     io::BufReader,
     net::ToSocketAddrs,
@@ -66,7 +66,7 @@ use crate::{
 };
 
 use cgmath::Deg;
-use chrono::Duration;
+use chrono::{Duration, TimeDelta};
 use input::InputFocus;
 use menu::Menu;
 use render::{ClientRenderer, GraphicsState, WorldRenderer};
@@ -915,6 +915,14 @@ impl Client {
         }
     }
 
+    fn connection(&self) -> impl std::ops::Deref<Target = Option<Connection>> + '_ {
+        self.conn.borrow()
+    }
+
+    pub fn elapsed(&self) -> TimeDelta {
+        self.renderer.elapsed((&*self.connection()).as_ref())
+    }
+
     pub fn disconnect(&mut self) {
         self.conn.replace(None);
         self.input.borrow_mut().set_focus(InputFocus::Console);
@@ -1443,13 +1451,14 @@ fn cmd_startdemos(
             return "usage: startdemos [DEMOS]".to_owned();
         }
 
-        for arg in args {
-            demo_queue.borrow_mut().push_back(arg.to_string());
-        }
+        *demo_queue.borrow_mut() = args.into_iter().map(|s| s.to_string()).collect();
 
         let new_conn = match demo_queue.borrow_mut().pop_front() {
             Some(demo) => {
-                let mut demo_file = match vfs.open(format!("{}.dem", demo)) {
+                let mut demo_file = match vfs
+                    .open(format!("{}.dem", demo))
+                    .or_else(|_| vfs.open(format!("demos/{}.dem", demo)))
+                {
                     Ok(f) => f,
                     Err(e) => {
                         // log the error, dump the demo queue and disconnect

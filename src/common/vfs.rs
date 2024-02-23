@@ -18,6 +18,7 @@
 use std::{
     fs::File,
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
+    iter,
     path::{Path, PathBuf},
 };
 
@@ -52,13 +53,19 @@ impl Vfs {
     }
 
     /// Initializes the virtual filesystem using a base directory.
-    pub fn with_base_dir(base_dir: PathBuf) -> Vfs {
+    pub fn with_base_dir(base_dir: PathBuf, game: Option<&str>) -> Vfs {
         let mut vfs = Vfs::new();
 
-        let mut game_dir = base_dir;
-        game_dir.push("id1");
+        let mut quake_dir = base_dir;
+        let game_dir = game.map(|g| {
+            let mut game_dir = quake_dir.clone();
+            game_dir.push(g);
+            game_dir
+        });
 
-        if !game_dir.is_dir() {
+        quake_dir.push("id1");
+
+        if !quake_dir.is_dir() {
             log::error!(concat!(
                 "`id1/` directory does not exist! Use the `--base-dir` option with the name of the",
                 " directory which contains `id1/`."
@@ -67,32 +74,46 @@ impl Vfs {
             std::process::exit(1);
         }
 
-        let mut num_paks = 0;
-        let mut pak_path = game_dir.clone();
-        for vfs_id in 0..crate::common::MAX_PAKFILES {
-            // Add the file name.
-            pak_path.push(format!("pak{}.pak", vfs_id));
+        if let Some(game_dir) = &game_dir {
+            if !game_dir.is_dir() {
+                log::error!(
+                        "`{0}/` directory does not exist! Use the `--base-dir` option with the name of the directory which contains `{0}/`.",
+                        game.unwrap()
+                    );
 
-            // Keep adding PAKs until we don't find one or we hit MAX_PAKFILES.
-            if !pak_path.exists() {
-                // If the lowercase path doesn't exist, try again with uppercase.
-                pak_path.pop();
-                pak_path.push(format!("PAK{}.PAK", vfs_id));
-                if !pak_path.exists() {
-                    break;
-                }
+                std::process::exit(1);
             }
-
-            vfs.add_pakfile(&pak_path).unwrap();
-            num_paks += 1;
-
-            // Remove the file name, leaving the game directory.
-            pak_path.pop();
         }
 
-        // Allow files in id1 dir to overwrite files in paks (unsure if this is correct for quake
-        // but for e.g. Source it's a nice feature)
-        vfs.add_directory(&game_dir).unwrap();
+        let mut num_paks = 0;
+        let pak_paths = iter::once(quake_dir).chain(game_dir);
+        for mut pak_path in pak_paths {
+            for vfs_id in 0..crate::common::MAX_PAKFILES {
+                // Add the file name.
+                pak_path.push(format!("pak{}.pak", vfs_id));
+
+                // Keep adding PAKs until we don't find one or we hit MAX_PAKFILES.
+                if !pak_path.exists() {
+                    // If the lowercase path doesn't exist, try again with uppercase.
+                    pak_path.pop();
+                    pak_path.push(format!("PAK{}.PAK", vfs_id));
+                    if !pak_path.exists() {
+                        pak_path.pop();
+                        break;
+                    }
+                }
+
+                vfs.add_pakfile(&pak_path).unwrap();
+                num_paks += 1;
+
+                // Remove the file name, leaving the game directory.
+                pak_path.pop();
+            }
+
+            // Allow files in id1 dir to overwrite files in paks (unsure if this is correct for quake
+            // but for e.g. Source it's a nice feature)
+            vfs.add_directory(&pak_path).unwrap();
+        }
 
         if num_paks == 0 {
             log::warn!("No PAK files found.");

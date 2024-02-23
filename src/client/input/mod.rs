@@ -23,7 +23,10 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     client::menu::Menu,
-    common::console::{CmdRegistry, Console},
+    common::{
+        console::{CmdRegistry, Console},
+        host::Control,
+    },
 };
 
 use failure::Error;
@@ -67,7 +70,7 @@ impl Input {
         }
     }
 
-    pub fn handle_event<T>(&mut self, event: Event<T>) -> Result<(), Error> {
+    pub fn handle_event<T>(&mut self, event: Event<T>) -> Result<Control, Error> {
         match event {
             // we're polling for hardware events, so we have to check window focus ourselves
             Event::WindowEvent {
@@ -80,13 +83,13 @@ impl Input {
                     match self.focus {
                         InputFocus::Game => self.game_input.handle_event(event),
                         InputFocus::Console => self.console_input.handle_event(event)?,
-                        InputFocus::Menu => self.menu_input.handle_event(event)?,
+                        InputFocus::Menu => return self.menu_input.handle_event(event),
                     }
                 }
             }
         }
 
-        Ok(())
+        Ok(Control::Continue)
     }
 
     pub fn focus(&self) -> InputFocus {

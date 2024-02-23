@@ -17,7 +17,10 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{client::menu::Menu, common::console::Console};
+use crate::{
+    client::menu::Menu,
+    common::{console::Console, host::Control},
+};
 
 use failure::Error;
 use winit::{
@@ -35,7 +38,7 @@ impl MenuInput {
         MenuInput { menu, console }
     }
 
-    pub fn handle_event<T>(&self, event: Event<T>) -> Result<(), Error> {
+    pub fn handle_event<T>(&self, event: Event<T>) -> Result<Control, Error> {
         match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::KeyboardInput {
@@ -57,7 +60,9 @@ impl MenuInput {
 
                     NamedKey::ArrowUp => self.menu.borrow().prev()?,
                     NamedKey::ArrowDown => self.menu.borrow().next()?,
-                    NamedKey::Enter => self.menu.borrow().activate()?,
+                    NamedKey::Enter => {
+                        return self.menu.borrow().activate();
+                    }
                     NamedKey::ArrowLeft => self.menu.borrow().left()?,
                     NamedKey::ArrowRight => self.menu.borrow().right()?,
 
@@ -70,6 +75,6 @@ impl MenuInput {
             _ => (),
         }
 
-        Ok(())
+        Ok(Control::Continue)
     }
 }

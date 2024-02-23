@@ -23,13 +23,33 @@ use std::{
     fmt::Debug,
 };
 
-use crate::client::menu::Menu;
+use crate::{client::menu::Menu, common::host::Control};
 
 use failure::Error;
 
+pub struct Action(pub Box<dyn Fn() -> Control>);
+
+impl From<Box<dyn Fn() -> Control>> for Action {
+    fn from(value: Box<dyn Fn() -> Control>) -> Self {
+        Self(value)
+    }
+}
+
+impl<F> From<F> for Action
+where
+    F: Fn() + 'static,
+{
+    fn from(value: F) -> Self {
+        Self(Box::new(move || {
+            value();
+            Control::Continue
+        }))
+    }
+}
+
 pub enum Item {
     Submenu(Menu),
-    Action(Box<dyn Fn()>),
+    Action(Action),
     Toggle(Toggle),
     Enum(Enum),
     Slider(Slider),

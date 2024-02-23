@@ -374,6 +374,10 @@ pub struct FinalPassTarget {
 impl FinalPassTarget {
     pub const FORMAT: wgpu::TextureFormat = DIFFUSE_ATTACHMENT_FORMAT;
 
+    pub fn format(&self) -> wgpu::TextureFormat {
+        Self::FORMAT
+    }
+
     pub fn new(
         device: &wgpu::Device,
         adapter: &wgpu::Adapter,

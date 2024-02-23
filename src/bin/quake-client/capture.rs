@@ -43,6 +43,8 @@ pub struct Capture {
 
     // mappable buffer
     buffer: wgpu::Buffer,
+
+    data: Option<Box<[u8]>>,
 }
 
 impl Capture {
@@ -62,6 +64,7 @@ impl Capture {
             capture_size,
             row_width,
             buffer,
+            data: None,
         }
     }
 
@@ -84,10 +87,11 @@ impl Capture {
         );
     }
 
-    pub fn write_to_file<P>(&self, device: &wgpu::Device, path: P)
-    where
-        P: AsRef<Path>,
-    {
+    pub fn read_texture(&mut self, device: &wgpu::Device) {
+        if self.data.is_some() {
+            return;
+        }
+
         let mut data = Vec::new();
         {
             // map the buffer
@@ -115,6 +119,23 @@ impl Capture {
         }
         self.buffer.unmap();
 
+        self.data = Some(data.into());
+    }
+
+    pub fn data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
+
+    pub fn write_to_file<P>(&mut self, device: &wgpu::Device, path: P)
+    where
+        P: AsRef<Path>,
+    {
+        if self.data.is_none() {
+            self.read_texture(device);
+        }
+
+        let data = self.data().unwrap();
+
         let f = File::create(path).unwrap();
         let mut png_encoder = png::Encoder::new(
             BufWriter::new(f),
@@ -124,6 +145,6 @@ impl Capture {
         png_encoder.set_color(png::ColorType::RGBA);
         png_encoder.set_depth(png::BitDepth::Eight);
         let mut writer = png_encoder.write_header().unwrap();
-        writer.write_image_data(&data).unwrap();
+        writer.write_image_data(data).unwrap();
     }
 }

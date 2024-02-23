@@ -18,9 +18,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::process;
-
-use richter::client::menu::{Menu, MenuBodyView, MenuBuilder, MenuView};
+use richter::{
+    client::menu::{Menu, MenuBodyView, MenuBuilder, MenuView},
+    common::host::Control,
+};
 
 use failure::Error;
 
@@ -30,7 +31,7 @@ pub fn build_main_menu() -> Result<Menu, Error> {
         .add_submenu("Multiplayer", build_menu_mp()?)
         .add_submenu("Options", build_menu_options()?)
         .add_action("Help/Ordering", Box::new(|| ()))
-        .add_action("Quit", Box::new(|| process::exit(0)))
+        .add_action::<_, Box<dyn Fn() -> Control>>("Quit", Box::new(|| Control::Exit))
         .build(MenuView {
             draw_plaque: true,
             title_path: "gfx/ttl_main.lmp".to_string(),
