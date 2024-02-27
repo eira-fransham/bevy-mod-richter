@@ -26,7 +26,7 @@ use crate::{
 };
 
 use bevy::{
-    ecs::system::Resource,
+    ecs::{system::Resource, world::FromWorld},
     render::renderer::{RenderDevice, RenderQueue},
 };
 use cgmath::{Matrix4, Vector2};
@@ -99,6 +99,18 @@ pub struct UiRenderer {
     hud_renderer: HudRenderer,
     glyph_renderer: GlyphRenderer,
     quad_renderer: QuadRenderer,
+}
+
+impl FromWorld for UiRenderer {
+    fn from_world(world: &mut bevy::prelude::World) -> Self {
+        let state = world.resource::<GraphicsState>();
+        let vfs = world.resource::<Vfs>();
+        let device = world.resource::<RenderDevice>();
+        let queue = world.resource::<RenderQueue>();
+        let menu = world.resource::<Menu>();
+
+        UiRenderer::new(state, vfs, device, queue, menu)
+    }
 }
 
 impl UiRenderer {

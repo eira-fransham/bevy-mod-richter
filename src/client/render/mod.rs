@@ -56,12 +56,21 @@ mod warp;
 mod world;
 
 use bevy::{
-    ecs::system::{Res, ResMut, Resource},
+    app::{Plugin, Startup, Update},
+    core_pipeline::core_3d::graph::{Core3d, Node3d},
+    ecs::{
+        system::{In, IntoSystem as _, Res, ResMut, Resource},
+        world::FromWorld,
+    },
     render::{
-        render_graph::Node,
+        extract_resource::{ExtractResource as _, ExtractResourcePlugin},
+        render_graph::{RenderGraphApp as _, RenderLabel, ViewNode, ViewNodeRunner},
         render_resource::{BindGroup, BindGroupLayout, Buffer, Sampler, Texture, TextureView},
         renderer::{RenderDevice, RenderQueue},
+        view::ViewTarget,
+        ExtractSchedule, Render, RenderApp,
     },
+    time::{Time, Virtual},
 };
 pub use cvars::register_cvars;
 pub use error::{RenderError, RenderErrorKind};
@@ -79,6 +88,7 @@ pub use world::{
 use std::{
     borrow::Cow,
     cell::RefCell,
+    io::Read as _,
     mem::size_of,
     num::NonZeroU64,
     ops::{Deref, DerefMut},
@@ -90,7 +100,6 @@ use crate::{
         input::InputFocus,
         menu::Menu,
         render::{
-            blit::BlitPipeline,
             target::{DeferredPassTarget, FinalPassTarget, InitialPassTarget},
             ui::{glyph::GlyphPipeline, quad::QuadPipeline},
             uniform::DynamicUniformBuffer,
@@ -104,20 +113,176 @@ use crate::{
                 EntityUniforms,
             },
         },
-        Connection, ConnectionKind, RenderConnectionKind,
+        RenderConnectionKind,
     },
     common::{
-        console::{Console, CvarRegistry},
+        console::{CmdRegistry, Console, CvarRegistry, ExecResult},
         vfs::Vfs,
         wad::Wad,
     },
 };
 
-use super::{ConnectionState, RenderResolution, RenderState, RenderStateRes};
+use self::blit::BlitPipeline;
+
+use super::{
+    cvar_error_handler, extract_resolution, init_client,
+    input::Input,
+    sound::{AudioOut, MusicPlayer},
+    ConnectionState, DemoQueue, GameConnection, RenderResolution, RenderState, RenderStateRes,
+    TimeHack,
+};
 use bumpalo::Bump;
 use cgmath::{Deg, Vector3, Zero};
-use chrono::{DateTime, Duration, TimeDelta, Utc};
+use chrono::{DateTime, Duration, Utc};
 use failure::Error;
+
+pub struct RichterRenderPlugin;
+
+impl Plugin for RichterRenderPlugin {
+    fn build(&self, app: &mut bevy::prelude::App) {
+        app //.add_systems(Startup, register_cvars.pipe(cvar_error_handler))
+            .init_resource::<RenderResolution>()
+            .add_plugins((
+                // ExtractResourcePlugin::<Vfs>::default(),
+                // ExtractResourcePlugin::<CvarRegistry>::default(),
+                // ExtractResourcePlugin::<Console>::default(),
+                // ExtractResourcePlugin::<Menu>::default(),
+                // ExtractResourcePlugin::<RenderStateRes>::default(),
+                // ExtractResourcePlugin::<InputFocus>::default(),
+                // ExtractResourcePlugin::<Fov>::default(),
+                // TODO: This is only so we can run the per-frame update in the render thread, which we should not do
+                ExtractResourcePlugin::<TimeHack>::default(),
+                // ExtractResourcePlugin::<DemoQueue>::default(),
+                // ExtractResourcePlugin::<GameConnection>::default(),
+                // ExtractResourcePlugin::<CmdRegistry>::default(),
+                // ExtractResourcePlugin::<AudioOut>::default(),
+            ))
+            .add_systems(ExtractSchedule, extract_resolution);
+
+        let vfs = app.world.resource::<Vfs>().clone();
+        let mut cvars = app.world.resource_mut::<CvarRegistry>();
+        super::register_cvars(&mut *cvars).unwrap();
+        register_cvars(&mut *cvars).unwrap();
+        let cvars = cvars.clone();
+
+        let mut console = app.world.resource_mut::<Console>();
+        console.append_text("exec quake.rc\n");
+        let console = console.clone();
+        let menu = app.world.resource::<Menu>().clone();
+        let res = *app.world.resource::<RenderResolution>();
+        // TODO: This is only so we can run the per-frame update in the render thread, which we should not do
+        let mut cmds = app.world.resource_mut::<CmdRegistry>();
+        init_client(&mut *cmds);
+        cmds.insert_or_replace("exec", move |args, world| {
+            let vfs = world.resource::<Vfs>();
+            match args.len() {
+                // exec (filename): execute a script file
+                1 => {
+                    let mut script_file = match vfs.open(args[0]) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            return ExecResult {
+                                extra_commands: String::new(),
+                                output: format!("Couldn't exec {}: {:?}", args[0], e),
+                            };
+                        }
+                    };
+
+                    let mut script = String::new();
+                    script_file.read_to_string(&mut script).unwrap();
+
+                    ExecResult {
+                        extra_commands: script,
+                        output: String::new(),
+                    }
+                }
+
+                _ => ExecResult {
+                    extra_commands: String::new(),
+                    output: format!("exec (filename): execute a script file"),
+                },
+            }
+        })
+        .unwrap();
+        let cmd = cmds.clone();
+        // let conn = app.world.resource::<GameConnection>().clone();
+        let demo_queue = app.world.resource::<DemoQueue>().clone();
+        let input = app.world.resource::<Input>().clone();
+        let audio = app.world.resource::<AudioOut>().clone();
+
+        let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+
+        // TODO: Is there a cleaner way to do this?
+        render_app.insert_resource(vfs);
+        render_app.insert_resource(cvars);
+        render_app.insert_resource(console);
+        render_app.insert_resource(res);
+        render_app.insert_resource(menu);
+
+        // TODO: This is only so we can run the per-frame update in the render thread, which we should not do
+        render_app.insert_resource(cmd);
+        // render_app.insert_resource(conn);
+        render_app.init_resource::<GameConnection>();
+        render_app.insert_resource(demo_queue);
+        render_app.insert_resource(input);
+        render_app.insert_resource(audio);
+
+        render_app
+            // TODO: This is only so we can run the per-frame update in the render thread, which we should not do
+            .init_resource::<TimeHack>()
+            .init_resource::<MusicPlayer>()
+            // .init_resource::<RenderStateRes>()
+            // TODO: This is only so we can run the per-frame update in the render thread, which we should not do
+            .add_systems(
+                Render,
+                (
+                    super::frame.pipe(|In(res)| {
+                        // TODO: Error handling
+                        if let Err(e) = res {
+                            warn!("{}", e);
+                        }
+                    }),
+                    super::handle_input.pipe(|In(res)| {
+                        // TODO: Error handling
+                        if let Err(e) = res {
+                            warn!("{}", e);
+                        }
+                    }),
+                    super::run_console,
+                ),
+            )
+            .add_render_graph_node::<ViewNodeRunner<ClientRenderer>>(
+                // Specify the label of the graph, in this case we want the graph for 3d
+                Core3d,
+                // It also needs the label of the node
+                ClientRenderLabel,
+            )
+            .add_render_graph_edges(
+                Core3d,
+                // Specify the node ordering.
+                // This will automatically create all required node edges to enforce the given ordering.
+                (
+                    Node3d::MainOpaquePass,
+                    ClientRenderLabel,
+                    Node3d::EndMainPass,
+                ),
+            );
+    }
+
+    fn finish(&self, app: &mut bevy::prelude::App) {
+        let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+
+        render_app
+            .init_resource::<GraphicsState>()
+            .init_resource::<PostProcessRenderer>()
+            .init_resource::<DeferredRenderer>()
+            .init_resource::<UiRenderer>();
+    }
+}
 
 const DEPTH_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const DIFFUSE_ATTACHMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -288,6 +453,7 @@ pub struct GraphicsState {
 
     frame_uniform_buffer: Buffer,
 
+    // TODO: This probably doesn't need to be a rwlock
     entity_uniform_buffer: RwLock<DynamicUniformBuffer<EntityUniforms>>,
 
     diffuse_sampler: Sampler,
@@ -313,12 +479,33 @@ pub struct GraphicsState {
     gfx_wad: Wad,
 }
 
-enum GameRenderStage {
-    Alias,
-    Brush,
-    Sprite,
-    Deferred,
-    Particle,
+impl FromWorld for GraphicsState {
+    fn from_world(world: &mut bevy::prelude::World) -> Self {
+        let render_device = world.resource::<RenderDevice>();
+        let render_queue = world.resource::<RenderQueue>();
+        let render_resolution = world.resource::<RenderResolution>();
+        let cvars = world.resource::<CvarRegistry>();
+        let mut sample_count = cvars.get_value("r_msaa_samples").unwrap_or(2.0) as u32;
+        if !&[2, 4].contains(&sample_count) {
+            sample_count = 2;
+        }
+        // TODO: Reimplement MSAA
+        sample_count = 1;
+
+        let vfs = world.resource::<Vfs>();
+
+        Self::new(
+            render_device,
+            render_queue,
+            Extent2d {
+                width: render_resolution.0,
+                height: render_resolution.1,
+            },
+            sample_count,
+            vfs,
+        )
+        .unwrap()
+    }
 }
 
 thread_local! {
@@ -328,9 +515,7 @@ thread_local! {
 impl GraphicsState {
     pub fn new(
         device: &RenderDevice,
-        adapter: &wgpu::Adapter,
         queue: &RenderQueue,
-        swapchain_format: wgpu::TextureFormat,
         size: Extent2d,
         sample_count: u32,
         vfs: &Vfs,
@@ -471,7 +656,7 @@ impl GraphicsState {
                 device,
                 compiler,
                 final_pass_target.resolve_view(),
-                swapchain_format,
+                final_pass_target.format(),
             );
 
             (
@@ -573,10 +758,11 @@ impl GraphicsState {
         {
             self.final_pass_target = FinalPassTarget::new(device, size);
 
-            COMPILER.with_borrow_mut(|compiler| {
-                self.blit_pipeline
-                    .rebuild(device, compiler, self.final_pass_target.resolve_view());
-            });
+            // TODO: How do we do the final pass?
+            // COMPILER.with_borrow_mut(|compiler| {
+            //     self.blit_pipeline
+            //         .rebuild(device, compiler, self.final_pass_target.resolve_view());
+            // });
         }
     }
 
@@ -610,8 +796,6 @@ impl GraphicsState {
                 .rebuild(device, compiler, sample_count);
             self.glyph_pipeline.rebuild(device, compiler, sample_count);
             self.quad_pipeline.rebuild(device, compiler, sample_count);
-            self.blit_pipeline
-                .rebuild(device, compiler, self.final_pass_target.resolve_view());
         });
     }
 
@@ -722,21 +906,33 @@ impl GraphicsState {
     }
 }
 
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+struct ClientRenderLabel;
+
 pub struct ClientRenderer {
     start_time: DateTime<Utc>,
+}
+
+impl Default for ClientRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Resource)]
 pub struct Fov(pub Deg<f32>);
 
-impl Node for ClientRenderer {
+impl ViewNode for ClientRenderer {
+    type ViewQuery = &'static ViewTarget;
+
     fn run<'w>(
         &self,
-        graph: &mut bevy::render::render_graph::RenderGraphContext,
+        _graph: &mut bevy::render::render_graph::RenderGraphContext,
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
+        view_target: &ViewTarget,
         world: &'w bevy::prelude::World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
-        let render_state = world.resource::<RenderStateRes>();
+        let render_state = RenderStateRes::extract_resource(world.resource::<GameConnection>());
         let queue = world.resource::<RenderQueue>();
         let gfx_state = world.resource::<GraphicsState>();
         let deferred_renderer = world.resource::<DeferredRenderer>();
@@ -746,8 +942,9 @@ impl Node for ClientRenderer {
         let console = world.resource::<Console>();
         let resolution = world.resource::<RenderResolution>();
         let menu = world.resource::<Menu>();
-        let focus = world.resource::<InputFocus>();
-        let fov = world.resource::<Fov>();
+        let focus = world.resource::<Input>().focus();
+        // let fov = world.resource::<Fov>();
+        let fov = Fov::extract_resource(cvars);
 
         self.render(
             gfx_state,
@@ -763,8 +960,19 @@ impl Node for ClientRenderer {
             cvars,
             console,
             menu,
-            *focus,
+            focus,
         );
+
+        let attachment = view_target.main_texture_view();
+
+        {
+            let swap_chain_target = SwapChainTarget::with_swap_chain_view(attachment);
+            let blit_pass_builder = swap_chain_target.render_pass_builder();
+            let mut blit_pass = render_context
+                .command_encoder()
+                .begin_render_pass(&blit_pass_builder.descriptor());
+            gfx_state.blit_pipeline().blit(gfx_state, &mut blit_pass);
+        }
 
         Ok(())
     }
@@ -792,22 +1000,8 @@ pub fn update_renderers(
 }
 
 impl ClientRenderer {
-    pub fn new(state: &GraphicsState, device: &RenderDevice, menu: &Menu) -> ClientRenderer {
+    pub fn new() -> ClientRenderer {
         ClientRenderer {
-            // deferred_renderer: DeferredRenderer::new(
-            //     state,
-            //     device,
-            //     state.initial_pass_target.diffuse_view(),
-            //     state.initial_pass_target.normal_view(),
-            //     state.initial_pass_target.light_view(),
-            //     state.initial_pass_target.depth_view(),
-            // ),
-            // postprocess_renderer: PostProcessRenderer::new(
-            //     state,
-            //     device,
-            //     state.deferred_pass_target.color_view(),
-            // ),
-            // ui_renderer: UiRenderer::new(state, menu),
             start_time: Utc::now(),
         }
     }
@@ -864,9 +1058,6 @@ impl ClientRenderer {
                             let init_pass_builder =
                                 gfx_state.initial_pass_target().render_pass_builder();
 
-                            let mut init_pass =
-                                encoder.begin_render_pass(&init_pass_builder.descriptor());
-
                             world.update_uniform_buffers(
                                 gfx_state,
                                 queue,
@@ -877,6 +1068,9 @@ impl ClientRenderer {
                                 cvars,
                             );
 
+                            let mut init_pass =
+                                encoder.begin_render_pass(&init_pass_builder.descriptor());
+
                             world.render_pass(
                                 gfx_state,
                                 &mut init_pass,
@@ -886,7 +1080,6 @@ impl ClientRenderer {
                                 cl_state.iter_visible_entities(),
                                 cl_state.iter_particles(),
                                 cl_state.viewmodel_id(),
-                                cvars,
                             );
                         }
 

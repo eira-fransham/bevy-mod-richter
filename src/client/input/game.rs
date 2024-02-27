@@ -500,7 +500,7 @@ impl ToString for BindTarget {
     }
 }
 
-#[derive(Clone, Resource)]
+#[derive(Clone, Resource, Default)]
 pub struct GameInput {
     bindings: HashMap<BindInput, BindTarget>,
     action_states: [bool; ACTION_COUNT],
@@ -510,12 +510,7 @@ pub struct GameInput {
 
 impl GameInput {
     pub fn new() -> GameInput {
-        GameInput {
-            bindings: Default::default(),
-            action_states: Default::default(),
-            mouse_delta: (0.0, 0.0),
-            impulse: 0,
-        }
+        Self::default()
     }
 
     pub fn mouse_delta(&self) -> (f64, f64) {

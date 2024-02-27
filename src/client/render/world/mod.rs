@@ -442,7 +442,6 @@ impl WorldRenderer {
         entities: E,
         particles: P,
         viewmodel_id: usize,
-        cvars: &CvarRegistry,
     ) where
         E: Iterator<Item = &'a ClientEntity>,
         P: Iterator<Item = &'a Particle>,

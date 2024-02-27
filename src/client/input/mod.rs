@@ -33,32 +33,44 @@ use winit::event::{Event, WindowEvent};
 
 use self::game::{BindInput, BindTarget, GameInput};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Resource)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Resource)]
 pub enum InputFocus {
     Game,
+    #[default]
     Console,
     Menu,
 }
 
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowFocusState {
+    #[default]
+    Focused,
+    Unfocused,
+}
+
 // TODO: Make this a component on player?
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct Input {
-    window_focused: bool,
+    window_focused: WindowFocusState,
     focus: InputFocus,
 
     game_input: GameInput,
 }
 
-impl Input {
-    pub fn new(init_focus: InputFocus) -> Input {
-        Input {
-            window_focused: true,
-            focus: init_focus,
+impl Default for Input {
+    fn default() -> Self {
+        let mut out = Self {
+            window_focused: Default::default(),
+            focus: Default::default(),
+            game_input: Default::default(),
+        };
 
-            game_input: GameInput::new(),
-        }
+        out.bind_defaults();
+        out
     }
+}
 
+impl Input {
     pub fn handle_event<T>(
         &mut self,
         menu: &mut Menu,
@@ -70,10 +82,16 @@ impl Input {
             Event::WindowEvent {
                 event: WindowEvent::Focused(focused),
                 ..
-            } => self.window_focused = focused,
+            } => {
+                self.window_focused = if focused {
+                    WindowFocusState::Focused
+                } else {
+                    WindowFocusState::Unfocused
+                }
+            }
 
             _ => {
-                if self.window_focused {
+                if self.window_focused == WindowFocusState::Focused {
                     match self.focus {
                         InputFocus::Game => self.game_input.handle_event(console, event),
                         InputFocus::Console => self::console::handle_event(console, event)?,
@@ -103,7 +121,7 @@ impl Input {
         self.game_input.bind(input, target)
     }
 
-    pub fn bind_defaults(&mut self) {
+    fn bind_defaults(&mut self) {
         self.game_input.bind_defaults();
     }
 

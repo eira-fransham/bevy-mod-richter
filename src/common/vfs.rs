@@ -14,15 +14,19 @@
 // NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-use bevy::prelude::*;
+use bevy::{prelude::*, render::extract_resource::ExtractResource};
 use std::{
     fs::File,
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
     iter,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
-use crate::common::pak::{Pak, PakError};
+use crate::{
+    client::RichterGameSettings,
+    common::pak::{Pak, PakError},
+};
 
 use thiserror::Error;
 
@@ -40,35 +44,25 @@ enum VfsComponent {
     Directory(PathBuf),
 }
 
-#[derive(Debug)]
-enum VfsLoaderComponent {
-    Pak(Handle<Pak>),
-    Directory(PathBuf),
-}
-
-pub struct VfsLoader {
-    components: Vec<VfsLoaderComponent>,
-}
-
-impl VfsLoader {
-    pub fn with_base_dir(
-        asset_server: &AssetServer,
-        base_dir: PathBuf,
-        game: Option<&str>,
-    ) -> Self {
-        todo!()
-    }
-}
-
-#[derive(Debug, Resource)]
+#[derive(Clone, Debug, Resource, ExtractResource)]
 pub struct Vfs {
-    components: Vec<VfsComponent>,
+    components: Vec<Arc<VfsComponent>>,
+}
+
+impl FromWorld for Vfs {
+    fn from_world(world: &mut World) -> Self {
+        if let Some(settings) = world.get_resource::<RichterGameSettings>() {
+            Self::with_base_dir(settings.base_dir.clone(), settings.game.as_deref())
+        } else {
+            Self::new()
+        }
+    }
 }
 
 impl Vfs {
     pub fn new() -> Vfs {
         Vfs {
-            components: Vec::new(),
+            components: Default::default(),
         }
     }
 
@@ -147,7 +141,8 @@ impl Vfs {
         P: AsRef<Path>,
     {
         let path = path.as_ref();
-        self.components.push(VfsComponent::Pak(Pak::new(path)?));
+        self.components
+            .push(VfsComponent::Pak(Pak::new(path)?).into());
         Ok(())
     }
 
@@ -156,7 +151,7 @@ impl Vfs {
         P: AsRef<Path>,
     {
         self.components
-            .push(VfsComponent::Directory(path.as_ref().to_path_buf()));
+            .push(VfsComponent::Directory(path.as_ref().to_path_buf()).into());
         Ok(())
     }
 
@@ -168,7 +163,7 @@ impl Vfs {
 
         // iterate in reverse so later PAKs overwrite earlier ones
         for c in self.components.iter().rev() {
-            match c {
+            match &**c {
                 VfsComponent::Pak(pak) => {
                     if let Ok(f) = pak.open(vp) {
                         return Ok(VirtualFile::PakBacked(Cursor::new(f)));

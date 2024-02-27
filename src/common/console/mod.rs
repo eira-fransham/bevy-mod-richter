@@ -28,9 +28,12 @@ use std::{
 
 use crate::common::parse;
 
-use bevy::ecs::{
-    system::Resource,
-    world::{FromWorld, World},
+use bevy::{
+    ecs::{
+        system::Resource,
+        world::{FromWorld, World},
+    },
+    render::extract_resource::ExtractResource,
 };
 use chrono::{Duration, Utc};
 use imstr::ImString;
@@ -69,7 +72,7 @@ where
 }
 
 /// Stores console commands.
-#[derive(Resource)]
+#[derive(Resource, ExtractResource, Clone, Default)]
 pub struct CmdRegistry {
     cmds: im::HashMap<String, Cmd>,
     names: im::Vector<String>,
@@ -90,11 +93,8 @@ impl From<String> for ExecResult {
 }
 
 impl CmdRegistry {
-    pub fn new(names: impl Iterator<Item = String>) -> CmdRegistry {
-        CmdRegistry {
-            cmds: Default::default(),
-            names: names.collect(),
-        }
+    pub fn new() -> CmdRegistry {
+        Self::default()
     }
 
     /// Registers a new command with the given name.
@@ -222,7 +222,7 @@ struct Cvar {
     default: String,
 }
 
-#[derive(Debug, Resource, Clone)]
+#[derive(Default, Debug, Resource, ExtractResource, Clone)]
 pub struct CvarRegistry {
     cvars: im::HashMap<String, Cvar>,
     names: im::Vector<String>,
@@ -230,10 +230,10 @@ pub struct CvarRegistry {
 
 impl CvarRegistry {
     /// Construct a new empty `CvarRegistry`.
-    pub fn new(names: impl IntoIterator<Item = String>) -> CvarRegistry {
-        CvarRegistry {
+    pub fn new() -> CvarRegistry {
+        Self {
             cvars: Default::default(),
-            names: names.into_iter().collect(),
+            names: Default::default(),
         }
     }
 
@@ -577,7 +577,7 @@ impl ConsoleOutput {
     }
 }
 
-#[derive(Resource, Clone)]
+#[derive(Resource, ExtractResource, Clone)]
 pub struct Console {
     aliases: im::HashMap<String, String>,
 
@@ -789,6 +789,7 @@ impl Console {
         commands.reverse();
 
         while let Some(args) = commands.pop() {
+            dbg!(&args);
             let tail_args: Vec<&str>;
 
             let func = {

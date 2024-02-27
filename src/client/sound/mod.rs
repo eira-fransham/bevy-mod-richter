@@ -19,7 +19,7 @@
 // SOFTWARE.
 
 mod music;
-use bevy::ecs::system::Resource;
+use bevy::{ecs::system::Resource, render::extract_resource::ExtractResource};
 pub use music::MusicPlayer;
 
 use std::{
@@ -265,7 +265,7 @@ impl Channel {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, Clone, ExtractResource)]
 pub struct AudioOut(pub OutputStreamHandle);
 
 #[derive(Clone)]

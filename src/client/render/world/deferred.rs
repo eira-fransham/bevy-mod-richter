@@ -1,7 +1,10 @@
 use std::{mem::size_of, num::NonZeroU64};
 
 use bevy::{
-    ecs::system::Resource,
+    ecs::{
+        system::{Deferred, Resource},
+        world::FromWorld,
+    },
     render::{
         render_resource::{
             BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, TextureView,
@@ -223,6 +226,22 @@ impl Pipeline for DeferredPipeline {
 #[derive(Resource)]
 pub struct DeferredRenderer {
     bind_group: BindGroup,
+}
+
+impl FromWorld for DeferredRenderer {
+    fn from_world(world: &mut bevy::prelude::World) -> Self {
+        let state = world.resource::<GraphicsState>();
+        let device = world.resource::<RenderDevice>();
+
+        DeferredRenderer::new(
+            state,
+            device,
+            state.initial_pass_target.diffuse_view(),
+            state.initial_pass_target.normal_view(),
+            state.initial_pass_target.light_view(),
+            state.initial_pass_target.depth_view(),
+        )
+    }
 }
 
 impl DeferredRenderer {

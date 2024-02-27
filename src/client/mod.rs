@@ -31,17 +31,16 @@ pub mod view;
 
 pub use self::cvars::register_cvars;
 use self::{
-    render::{Fov, RenderTarget},
+    render::{Fov, RichterRenderPlugin},
     sound::AudioOut,
 };
 
 use std::{
-    any::Any,
-    cell::{Ref, RefCell},
     collections::{HashMap, VecDeque},
     io::BufReader,
     net::ToSocketAddrs,
-    rc::Rc,
+    ops::DerefMut,
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -49,13 +48,14 @@ use crate::{
     client::{
         demo::{DemoServer, DemoServerError},
         entity::{ClientEntity, MAX_STATIC_ENTITIES},
-        input::{game::GameInput, Input},
+        input::Input,
         sound::{MusicPlayer, StaticSound},
         state::{ClientState, PlayerInfo},
         trace::{TraceEntity, TraceFrame},
         view::{IdleVars, KickVars, MouseVars, RollVars},
     },
     common::{
+        self,
         console::{CmdRegistry, Console, ConsoleError, CvarRegistry},
         engine,
         model::ModelError,
@@ -70,12 +70,14 @@ use crate::{
 };
 
 use bevy::{
+    app::{Main, Plugin, Startup},
     ecs::{
         query::With,
-        system::{lifetimeless::Read, Commands, Query, Res, ResMut, Resource},
+        system::{In, IntoSystem as _, Query, Res, ResMut, Resource},
         world::{FromWorld, World},
     },
     render::{
+        extract_resource::ExtractResource,
         renderer::{RenderDevice, RenderQueue},
         Extract,
     },
@@ -83,11 +85,11 @@ use bevy::{
     window::{PrimaryWindow, Window},
 };
 use cgmath::Deg;
-use chrono::{Duration, TimeDelta};
+use chrono::Duration;
 use input::InputFocus;
 use menu::Menu;
-use render::{ClientRenderer, GraphicsState, WorldRenderer};
-use rodio::{OutputStream, OutputStreamHandle};
+use render::{GraphicsState, WorldRenderer};
+use rodio::OutputStreamHandle;
 use sound::SoundError;
 use thiserror::Error;
 use view::BobVars;
@@ -107,6 +109,65 @@ const CONSOLE_DIVIDER: &'static str = "\
 \x1E\x1E\x1E\x1E\x1E\x1E\x1E\x1E\
 \x1E\x1E\x1E\x1E\x1E\x1E\x1E\x1F\
 \n\n";
+
+#[derive(Default)]
+pub struct RichterPlugin {
+    pub base_dir: Option<PathBuf>,
+    pub game: Option<String>,
+    pub main_menu: Menu,
+}
+
+#[derive(Clone, Resource, ExtractResource)]
+pub struct RichterGameSettings {
+    pub base_dir: PathBuf,
+    pub game: Option<String>,
+}
+
+fn cvar_error_handler(In(result): In<Result<(), ConsoleError>>) {
+    if let Err(err) = result {
+        println!("encountered an error {:?}", err);
+    }
+}
+
+impl Plugin for RichterPlugin {
+    fn build(&self, app: &mut bevy::prelude::App) {
+        app.insert_resource(RichterGameSettings {
+            base_dir: self
+                .base_dir
+                .clone()
+                .unwrap_or_else(|| common::default_base_dir()),
+            game: self.game.clone(),
+        })
+        .insert_resource(self.main_menu.clone())
+        .init_resource::<Vfs>()
+        .init_resource::<CmdRegistry>()
+        .init_resource::<CvarRegistry>()
+        .init_resource::<Console>()
+        .init_resource::<Input>()
+        .init_resource::<MusicPlayer>()
+        .init_resource::<DemoQueue>()
+        // .init_resource::<GameConnection>()
+        // .add_systems(
+        //     Startup,
+        //     (register_cvars.pipe(cvar_error_handler), init_client),
+        // )
+        // .add_systems(Main, run_console)
+        // .add_systems(
+        //     Main,
+        //     (
+        //         handle_input.pipe(|In(res)| {
+        //             // TODO: Error handling
+        //             let _ = res;
+        //         }),
+        //         frame.pipe(|In(res)| {
+        //             // TODO: Error handling
+        //             let _ = res;
+        //         }),
+        //     ),
+        // )
+        .add_plugins(RichterRenderPlugin);
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum ClientError {
@@ -220,11 +281,12 @@ enum ConnectionState {
 }
 
 /// Possible targets that a client can be connected to.
+#[derive(Clone)]
 enum ConnectionKind {
     /// A regular Quake server.
     Server {
         /// The [`QSocket`](crate::net::QSocket) used to communicate with the server.
-        qsock: QSocket,
+        qsock: (), // QSocket,
 
         /// The client's packet composition buffer.
         compose: Vec<u8>,
@@ -237,13 +299,14 @@ enum ConnectionKind {
 /// A connection to a game server of some kind.
 ///
 /// The exact nature of the connected server is specified by [`ConnectionKind`].
+#[derive(Clone)]
 pub struct Connection {
     state: ClientState,
     conn_state: ConnectionState,
     kind: ConnectionKind,
 }
 
-#[derive(Resource)]
+#[derive(Resource, Clone, ExtractResource, Default)]
 pub struct GameConnection(pub Option<Connection>);
 
 impl GameConnection {
@@ -398,16 +461,17 @@ impl Connection {
 
         let (msg, demo_view_angles, track_override) = match self.kind {
             ConnectionKind::Server { ref mut qsock, .. } => {
-                let msg = qsock.recv_msg(match self.conn_state {
-                    // if we're in the game, don't block waiting for messages
-                    ConnectionState::Connected(_) => BlockingMode::NonBlocking,
+                // let msg = qsock.recv_msg(match self.conn_state {
+                //     // if we're in the game, don't block waiting for messages
+                //     ConnectionState::Connected(_) => BlockingMode::NonBlocking,
 
-                    // otherwise, give the server some time to respond
-                    // TODO: might make sense to make this a future or something
-                    ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::seconds(5)),
-                })?;
+                //     // otherwise, give the server some time to respond
+                //     // TODO: might make sense to make this a future or something
+                //     ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::seconds(5)),
+                // })?;
 
-                (msg, None, None)
+                // (msg, None, None)
+                todo!()
             }
 
             ConnectionKind::Demo(ref mut demo_srv) => {
@@ -892,10 +956,11 @@ impl Connection {
         } = self.kind
         {
             // respond to the server
-            if qsock.can_send() && !compose.is_empty() {
-                qsock.begin_send_msg(&compose)?;
-                compose.clear();
-            }
+            // if qsock.can_send() && !compose.is_empty() {
+            //     qsock.begin_send_msg(&compose)?;
+            //     compose.clear();
+            // }
+            todo!()
         }
 
         // these all require the player entity to have spawned
@@ -918,18 +983,12 @@ impl Connection {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, ExtractResource, Clone, Default)]
 pub struct DemoQueue(pub VecDeque<String>);
 
-pub fn init_client(mut cmds: ResMut<CmdRegistry>) {
+pub fn init_client<C: DerefMut<Target = CmdRegistry>>(mut cmds: C) {
     // TODO
     // commands.init_resource();
-
-    let (stream, handle) = match OutputStream::try_default() {
-        Ok(o) => o,
-        // TODO: proceed without sound and allow configuration in menu
-        Err(_) => Err(ClientError::OutputStream).unwrap(),
-    };
 
     // set up overlay/ui toggles
     cmds.insert_or_replace("toggleconsole", cmd_toggleconsole)
@@ -958,9 +1017,21 @@ pub fn init_client(mut cmds: ResMut<CmdRegistry>) {
         .unwrap();
 }
 
+#[derive(Resource, Default)]
+pub struct TimeHack(pub Time<Virtual>);
+
+impl ExtractResource for TimeHack {
+    type Source = Time<Virtual>;
+    fn extract_resource(source: &Self::Source) -> Self {
+        Self(*source)
+    }
+}
+
 pub fn frame(
-    frame_time: Res<Time<Virtual>>,
+    frame_time: Res<TimeHack>,
     mut gfx_state: ResMut<GraphicsState>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
     cvars: Res<CvarRegistry>,
     vfs: Res<Vfs>,
     mut cmds: ResMut<CmdRegistry>,
@@ -971,6 +1042,7 @@ pub fn frame(
     mut conn: ResMut<GameConnection>,
     output_stream: Res<AudioOut>,
 ) -> Result<(), ClientError> {
+    let frame_time = frame_time.0;
     let conn = &mut conn.0;
     let cl_nolerp = cvars.get_value("cl_nolerp")?;
     let sv_gravity = cvars.get_value("sv_gravity")?;
@@ -981,12 +1053,11 @@ pub fn frame(
 
     let status = match *conn {
         Some(ref mut conn) => conn.frame(
-            // There doesn't seem to be impl From<std::time::Duration> for chrono::Duration
             Duration::from_std(frame_time.delta()).unwrap(),
             &vfs,
             &mut *gfx_state,
-            todo!(),
-            todo!(),
+            &*device,
+            &*queue,
             &mut *cmds,
             &mut *console,
             &mut *music_player,
@@ -1070,8 +1141,25 @@ pub fn frame(
     Ok(())
 }
 
-#[derive(Resource)]
+pub fn run_console(world: &mut World) {
+    let mut console = world.resource::<Console>().clone();
+    console.execute(world);
+    *world.resource_mut::<Console>() = console;
+}
+
+#[derive(Resource, Clone, Copy)]
 pub struct RenderResolution(pub u32, pub u32);
+
+impl FromWorld for RenderResolution {
+    fn from_world(world: &mut World) -> Self {
+        let res = &world
+            .query_filtered::<&Window, With<PrimaryWindow>>()
+            .single(world)
+            .resolution;
+
+        RenderResolution(res.width() as _, res.height() as _)
+    }
+}
 
 pub enum RenderConnectionKind {
     Server,
@@ -1084,82 +1172,94 @@ pub struct RenderState {
     kind: RenderConnectionKind,
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct RenderStateRes(Option<RenderState>);
 
-pub fn extract_world(
-    mut render_conn: ResMut<RenderStateRes>,
-    mut render_cvars: ResMut<CvarRegistry>,
-    mut render_console: ResMut<Console>,
-    mut render_menu: ResMut<Menu>,
+impl ExtractResource for RenderStateRes {
+    type Source = GameConnection;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        Self(source.0.as_ref().map(
+            |Connection {
+                 state,
+                 conn_state,
+                 kind,
+             }| {
+                RenderState {
+                    state: state.clone(),
+                    conn_state: conn_state.clone(),
+                    kind: match kind {
+                        ConnectionKind::Server { .. } => RenderConnectionKind::Server,
+                        ConnectionKind::Demo(_) => RenderConnectionKind::Demo,
+                    },
+                }
+            },
+        ))
+    }
+}
+
+impl ExtractResource for InputFocus {
+    type Source = Input;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        source.focus()
+    }
+}
+
+impl ExtractResource for Fov {
+    type Source = CvarRegistry;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        Self(Deg(source.get_value("fov").unwrap()))
+    }
+}
+
+pub fn extract_resolution(
     mut render_resolution: ResMut<RenderResolution>,
-    mut render_fov: ResMut<Fov>,
-    mut render_input_focus: ResMut<InputFocus>,
-    extracted_vars: Extract<(
-        Res<GameConnection>,
-        Res<CvarRegistry>,
-        Res<Console>,
-        Res<Menu>,
-        Res<Input>,
-        Query<&Window, With<PrimaryWindow>>,
-    )>,
+    extracted_vars: Extract<Query<&Window, With<PrimaryWindow>>>,
 ) {
-    let (conn, cvar_registry, console, menu, input, window) = &*extracted_vars;
+    let window = &*extracted_vars;
 
     let res = &window.single().resolution;
     *render_resolution = RenderResolution(res.width() as _, res.height() as _);
-    render_conn.0 = conn.0.as_ref().map(
-        |Connection {
-             state,
-             conn_state,
-             kind,
-         }| {
-            RenderState {
-                state: state.clone(),
-                conn_state: conn_state.clone(),
-                kind: match kind {
-                    ConnectionKind::Server { .. } => RenderConnectionKind::Server,
-                    ConnectionKind::Demo(_) => RenderConnectionKind::Demo,
-                },
-            }
-        },
-    );
-    *render_cvars = (**cvar_registry).clone();
-    *render_console = (**console).clone();
-    *render_menu = (**menu).clone();
-    *render_input_focus = input.focus();
-    render_fov.0 = Deg(cvar_registry.get_value("fov").unwrap());
 }
 
 pub fn handle_input(
-    //    &mut self,
-    game_input: &mut GameInput,
-    frame_time: Duration,
+    cvars: Res<CvarRegistry>,
+    mut console: ResMut<Console>,
+    mut conn: ResMut<GameConnection>,
+    mut input: ResMut<Input>,
+    frame_time: Res<TimeHack>,
 ) -> Result<(), ClientError> {
-    todo!();
-    // let move_vars = self.move_vars()?;
-    // let mouse_vars = self.mouse_vars()?;
+    let frame_time = frame_time.0;
+    let move_vars = cvars.move_vars()?;
+    let mouse_vars = cvars.mouse_vars()?;
 
-    // match *self.conn.borrow_mut() {
-    //     Some(Connection {
-    //         ref mut state,
-    //         kind: ConnectionKind::Server { ref mut qsock, .. },
-    //         ..
-    //     }) => {
-    //         let move_cmd = state.handle_input(game_input, frame_time, move_vars, mouse_vars);
-    //         // TODO: arrayvec here
-    //         let mut msg = Vec::new();
-    //         move_cmd.serialize(&mut msg)?;
-    //         qsock.send_msg_unreliable(&msg)?;
+    match conn.0 {
+        Some(Connection {
+            ref mut state,
+            kind: ConnectionKind::Server { ref mut qsock, .. },
+            ..
+        }) => {
+            let move_cmd = state.handle_input(
+                input.game_input_mut().unwrap(),
+                Duration::from_std(frame_time.delta()).unwrap(),
+                move_vars,
+                mouse_vars,
+            );
+            // TODO: arrayvec here
+            let mut msg = Vec::new();
+            move_cmd.serialize(&mut msg)?;
+            // qsock.send_msg_unreliable(&msg)?;
 
-    //         // clear mouse and impulse
-    //         game_input.refresh();
-    //     }
+            // clear mouse and impulse
+            input.game_input_mut().unwrap().refresh(&mut *console);
+        }
 
-    //     _ => (),
-    // }
+        _ => (),
+    }
 
-    // Ok(())
+    Ok(())
 }
 
 trait CvarsExt {
@@ -1347,7 +1447,7 @@ where
     Ok(Connection {
         state: ClientState::new(output_stream),
         kind: ConnectionKind::Server {
-            qsock,
+            qsock: todo!(),
             compose: Vec::new(),
         },
         conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
@@ -1500,6 +1600,8 @@ fn cmd_startdemos(args: &[&str], world: &mut World) -> String {
     input.set_focus(InputFocus::Game);
 
     conn.0 = Some(new_conn);
+
+    dbg!(conn.0.is_some());
 
     String::new()
 }

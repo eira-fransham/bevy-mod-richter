@@ -1,7 +1,7 @@
 use std::{mem::size_of, num::NonZeroU64};
 
 use bevy::{
-    ecs::system::Resource,
+    ecs::{system::Resource, world::FromWorld},
     render::{
         render_resource::{BindGroup, BindGroupLayout, Buffer, RenderPipeline},
         renderer::{RenderDevice, RenderQueue},
@@ -176,6 +176,15 @@ impl Pipeline for PostProcessPipeline {
 #[derive(Resource)]
 pub struct PostProcessRenderer {
     bind_group: BindGroup,
+}
+
+impl FromWorld for PostProcessRenderer {
+    fn from_world(world: &mut bevy::prelude::World) -> Self {
+        let state = world.resource::<GraphicsState>();
+        let device = world.resource::<RenderDevice>();
+
+        PostProcessRenderer::new(state, device, state.deferred_pass_target.color_view())
+    }
 }
 
 impl PostProcessRenderer {

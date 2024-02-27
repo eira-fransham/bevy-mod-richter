@@ -20,9 +20,7 @@
 
 mod item;
 
-use std::cell::Cell;
-
-use bevy::ecs::system::Resource;
+use bevy::{ecs::system::Resource, render::extract_resource::ExtractResource};
 use failure::Error;
 
 use crate::common::host::Control;
@@ -30,9 +28,10 @@ use crate::common::host::Control;
 use self::item::Action;
 pub use self::item::{Enum, EnumItem, Item, Slider, TextField, Toggle};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Default, Clone, Copy, Debug)]
 pub enum MenuState {
     /// Menu is inactive.
+    #[default]
     Inactive,
 
     /// Menu is active. `index` indicates the currently selected element.
@@ -42,7 +41,7 @@ pub enum MenuState {
     InSubMenu { index: usize },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 /// Specifies how the menu body should be rendered.
 pub enum MenuBodyView {
     /// The menu body is rendered using a predefined bitmap.
@@ -51,10 +50,11 @@ pub enum MenuBodyView {
         path: imstr::ImString,
     },
     /// The menu body is rendered dynamically based on its contents.
+    #[default]
     Dynamic,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct MenuView {
     pub draw_plaque: bool,
     pub title_path: String,
@@ -78,7 +78,7 @@ impl MenuView {
     }
 }
 
-#[derive(Debug, Resource, Clone)]
+#[derive(Default, Debug, Resource, ExtractResource, Clone)]
 pub struct Menu {
     items: im::Vector<NamedMenuItem>,
     state: MenuState,

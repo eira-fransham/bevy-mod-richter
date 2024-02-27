@@ -5,11 +5,11 @@ use std::{
 
 use crate::{client::sound::SoundError, common::vfs::Vfs};
 
-use bevy::ecs::system::Resource;
+use bevy::{ecs::system::Resource, render::extract_resource::ExtractResource};
 use rodio::{Decoder, OutputStreamHandle, Sink, Source};
 
 /// Plays music tracks.
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct MusicPlayer {
     playing: Option<String>,
     sink: Option<Sink>,

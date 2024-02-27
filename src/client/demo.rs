@@ -27,6 +27,7 @@ pub enum DemoServerError {
     Net(#[from] NetError),
 }
 
+#[derive(Clone)]
 struct DemoMessage {
     view_angles: Vector3<Deg<f32>>,
     msg_range: Range<usize>,
@@ -51,6 +52,7 @@ impl<'a> DemoMessageView<'a> {
 }
 
 /// A server that yields commands from a demo file.
+#[derive(Clone)]
 pub struct DemoServer {
     track_override: Option<u32>,
 
