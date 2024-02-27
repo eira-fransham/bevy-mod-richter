@@ -12,6 +12,7 @@ use super::IntermissionKind;
 use cgmath::{Angle as _, Deg, InnerSpace as _, Vector3, Zero as _};
 use chrono::Duration;
 
+#[derive(Clone)]
 pub struct View {
     // entity "holding" the camera
     entity_id: usize,

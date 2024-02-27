@@ -22,6 +22,7 @@ use std::cell::{Ref, RefMut};
 
 use crate::common::{console::CvarRegistry, engine};
 
+use bevy::ecs::system::ResMut;
 use chrono::{DateTime, Duration, Utc};
 use winit::{
     event::{Event, WindowEvent},
@@ -37,9 +38,6 @@ pub trait Program: Sized {
     ) -> Control;
 
     fn frame(&mut self, frame_duration: Duration);
-    fn shutdown(&mut self);
-    fn cvars(&self) -> Ref<CvarRegistry>;
-    fn cvars_mut(&self) -> RefMut<CvarRegistry>;
 }
 
 pub struct Host<P>
@@ -58,25 +56,14 @@ pub enum Control {
     Exit,
 }
 
+pub fn init_host(mut cvars: ResMut<CvarRegistry>) {
+    cvars.register_archive("host_maxfps", "72").unwrap();
+}
+
 impl<P> Host<P>
 where
     P: Program,
 {
-    pub fn new(program: P) -> Host<P> {
-        let init_time = Utc::now();
-        program
-            .cvars_mut()
-            .register_archive("host_maxfps", "72")
-            .unwrap();
-
-        Host {
-            program,
-            init_time,
-            prev_frame_time: init_time,
-            prev_frame_duration: Duration::zero(),
-        }
-    }
-
     pub fn handle_event<T>(
         &mut self,
         event: Event<T>,
@@ -90,7 +77,7 @@ where
             } => Control::Exit,
 
             Event::AboutToWait => {
-                self.frame();
+                // self.frame();
                 Control::Continue
             }
             Event::Suspended | Event::Resumed => Control::Continue,
@@ -113,35 +100,24 @@ where
         &mut self.program
     }
 
-    pub fn frame(&mut self) {
-        // TODO: make sure this doesn't cause weirdness with e.g. leap seconds
-        let new_frame_time = Utc::now();
-        self.prev_frame_duration = new_frame_time.signed_duration_since(self.prev_frame_time);
+    // pub fn frame(&mut self) {
+    //     // TODO: make sure this doesn't cause weirdness with e.g. leap seconds
+    //     let new_frame_time = Utc::now();
+    //     self.prev_frame_duration = new_frame_time.signed_duration_since(self.prev_frame_time);
 
-        // if the time elapsed since the last frame is too low, don't run this one yet
-        let prev_frame_duration = self.prev_frame_duration;
-        if !self.check_frame_duration(prev_frame_duration) {
-            // avoid busy waiting if we're running at a really high framerate
-            std::thread::sleep(std::time::Duration::from_millis(1));
-            return;
-        }
+    //     // if the time elapsed since the last frame is too low, don't run this one yet
+    //     let prev_frame_duration = self.prev_frame_duration;
+    //     if !self.check_frame_duration(prev_frame_duration) {
+    //         // avoid busy waiting if we're running at a really high framerate
+    //         std::thread::sleep(std::time::Duration::from_millis(1));
+    //         return;
+    //     }
 
-        // we're running this frame, so update the frame time
-        self.prev_frame_time = new_frame_time;
+    //     // we're running this frame, so update the frame time
+    //     self.prev_frame_time = new_frame_time;
 
-        self.program.frame(self.prev_frame_duration);
-    }
-
-    // Returns whether enough time has elapsed to run the next frame.
-    fn check_frame_duration(&mut self, frame_duration: Duration) -> bool {
-        let host_maxfps = self
-            .program
-            .cvars()
-            .get_value("host_maxfps")
-            .unwrap_or(72.0);
-        let min_frame_duration = engine::duration_from_f32(1.0 / host_maxfps);
-        frame_duration >= min_frame_duration
-    }
+    //     self.program.frame(self.prev_frame_duration);
+    // }
 
     pub fn uptime(&self) -> Duration {
         self.prev_frame_time.signed_duration_since(self.init_time)

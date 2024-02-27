@@ -18,13 +18,25 @@
 //! Quake PAK archive manipulation.
 
 use std::{
-    collections::{hash_map::Iter, HashMap},
+    collections::{hash_map::Iter, BTreeSet, HashMap},
     fs,
     io::{self, Read, Seek, SeekFrom},
-    path::Path,
+    mem,
+    ops::Range,
+    path::{Path, PathBuf},
 };
 
-use byteorder::{LittleEndian, ReadBytesExt};
+use bevy::{
+    asset::{
+        io::{AssetReader, AssetReaderError, PathStream, Reader},
+        Asset, AssetLoader, LoadContext,
+    },
+    reflect::TypePath,
+    utils::BoxedFuture,
+};
+use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
+use futures::{AsyncRead, AsyncReadExt as _, AsyncSeek, AsyncSeekExt as _};
+use memmap2::{Mmap, MmapOptions};
 use thiserror::Error;
 
 const PAK_MAGIC: [u8; 4] = [b'P', b'A', b'C', b'K'];
@@ -49,12 +61,141 @@ pub enum PakError {
     #[error("Non-UTF-8 file name: {0}")]
     NonUtf8FileName(#[from] std::string::FromUtf8Error),
     #[error("No such file in PAK archive: {0}")]
-    NoSuchFile(String),
+    NoSuchFile(PathBuf),
+}
+
+#[derive(Debug, Clone)]
+enum PakEntry {
+    // Range in the memmap
+    File(Range<usize>),
+    // TODO: Maybe we don't need to allocate as many elements?
+    Directory(Box<[PathBuf]>),
+}
+
+#[derive(Debug)]
+enum PakBacking {
+    Mmap(Mmap),
+    Memory(Box<[u8]>),
+}
+
+impl From<Mmap> for PakBacking {
+    fn from(value: Mmap) -> Self {
+        Self::Mmap(value)
+    }
+}
+
+impl From<Box<[u8]>> for PakBacking {
+    fn from(value: Box<[u8]>) -> Self {
+        Self::Memory(value)
+    }
+}
+
+impl AsRef<[u8]> for PakBacking {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Mmap(mmap) => mmap.as_ref(),
+            Self::Memory(mem) => mem.as_ref(),
+        }
+    }
 }
 
 /// An open Pak archive.
-#[derive(Debug)]
-pub struct Pak(HashMap<String, Box<[u8]>>);
+#[derive(Asset, TypePath, Debug)]
+pub struct Pak {
+    memory: PakBacking,
+    entries: HashMap<PathBuf, PakEntry>,
+}
+
+#[derive(Default)]
+struct PakLoader;
+
+impl AssetLoader for PakLoader {
+    type Asset = Pak;
+    type Settings = ();
+    type Error = PakError;
+
+    fn load<'a>(
+        &'a self,
+        reader: &'a mut Reader,
+        _settings: &'a (),
+        _load_context: &'a mut LoadContext,
+    ) -> BoxedFuture<'a, Result<Self::Asset, Self::Error>> {
+        Box::pin(async move {
+            let mut data = Vec::new();
+
+            reader.read_to_end(&mut data).await?;
+
+            Pak::read(data.into_boxed_slice())
+        })
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["pak", "PAK"]
+    }
+}
+
+impl AssetReader for Pak {
+    fn read<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> BoxedFuture<'a, Result<Box<Reader<'a>>, AssetReaderError>> {
+        Box::pin(async move {
+            match self.entries.get(path) {
+                Some(PakEntry::File(range)) => Ok(Box::new(futures::io::Cursor::new(
+                    &self.memory.as_ref()[range.clone()],
+                )) as _),
+                None | Some(PakEntry::Directory(..)) => {
+                    Err(AssetReaderError::NotFound(path.to_path_buf()))
+                }
+            }
+        })
+    }
+
+    fn read_meta<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> BoxedFuture<'a, Result<Box<Reader<'a>>, AssetReaderError>> {
+        self.read(path)
+    }
+
+    fn read_directory<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> BoxedFuture<'a, Result<Box<PathStream>, AssetReaderError>> {
+        Box::pin(async move {
+            let entry = self
+                .entries
+                .get(path)
+                .ok_or_else(|| AssetReaderError::NotFound(path.to_owned()))?;
+            let dir_entries = if let PakEntry::Directory(entries) = entry {
+                Some(entries)
+            } else {
+                None
+            };
+            let iter = dir_entries
+                .into_iter()
+                .map(AsRef::as_ref)
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter();
+            Ok(Box::new(futures::stream::iter(iter)) as Box<PathStream>)
+        })
+    }
+
+    fn is_directory<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> BoxedFuture<'a, Result<bool, AssetReaderError>> {
+        Box::pin(async move {
+            match self.entries.get(path) {
+                Some(PakEntry::Directory(..)) => Ok(true),
+                Some(PakEntry::File(..)) => Ok(false),
+                None => Err(AssetReaderError::NotFound(path.to_path_buf())),
+            }
+        })
+    }
+}
 
 impl Pak {
     // TODO: rename to from_path or similar
@@ -64,21 +205,27 @@ impl Pak {
     {
         debug!("Opening {}", path.as_ref().to_str().unwrap());
 
-        let mut infile = fs::File::open(path)?;
+        Self::read(unsafe { MmapOptions::new().map(&fs::File::open(path)?)? })
+    }
+
+    fn read<B: Into<PakBacking>>(bytes: B) -> Result<Self, PakError> {
+        let bytes = bytes.into();
+        let mut reader = io::Cursor::new(bytes.as_ref());
+
         let mut magic = [0u8; 4];
-        infile.read(&mut magic)?;
+        reader.read_exact(&mut magic)?;
 
         if magic != PAK_MAGIC {
             Err(PakError::InvalidMagicNumber(magic))?;
         }
 
         // Locate the file table
-        let table_offset = match infile.read_i32::<LittleEndian>()? {
+        let table_offset = match reader.read_i32::<LittleEndian>()? {
             o if o <= 0 => Err(PakError::InvalidTableOffset(o))?,
             o => o as u32,
         };
 
-        let table_size = match infile.read_i32::<LittleEndian>()? {
+        let table_size = match reader.read_i32::<LittleEndian>()? {
             s if s <= 0 || s as usize % PAK_ENTRY_SIZE != 0 => Err(PakError::InvalidTableSize(s))?,
             s => s as u32,
         };
@@ -87,17 +234,17 @@ impl Pak {
 
         for i in 0..(table_size as usize / PAK_ENTRY_SIZE) {
             let entry_offset = table_offset as u64 + (i * PAK_ENTRY_SIZE) as u64;
-            infile.seek(SeekFrom::Start(entry_offset))?;
+            reader.seek(SeekFrom::Start(entry_offset))?;
 
             let mut path_bytes = [0u8; 56];
-            infile.read(&mut path_bytes)?;
+            reader.read_exact(&mut path_bytes)?;
 
-            let file_offset = match infile.read_i32::<LittleEndian>()? {
+            let file_offset = match reader.read_i32::<LittleEndian>()? {
                 o if o <= 0 => Err(PakError::InvalidFileOffset(o))?,
                 o => o as u32,
             };
 
-            let file_size = match infile.read_i32::<LittleEndian>()? {
+            let file_size = match reader.read_i32::<LittleEndian>()? {
                 s if s <= 0 => Err(PakError::InvalidFileSize(s))?,
                 s => s as u32,
             };
@@ -109,17 +256,41 @@ impl Pak {
                     String::from_utf8_lossy(&path_bytes).into_owned(),
                 ))?;
             let path = String::from_utf8(path_bytes[0..last].to_vec())?;
-            infile.seek(SeekFrom::Start(file_offset as u64))?;
 
-            let mut data: Vec<u8> = Vec::with_capacity(file_size as usize);
-            (&mut infile)
-                .take(file_size as u64)
-                .read_to_end(&mut data)?;
-
-            map.insert(path, data.into_boxed_slice());
+            map.insert(
+                PathBuf::from(path),
+                PakEntry::File(file_offset as usize..(file_offset + file_size) as usize),
+            );
         }
 
-        Ok(Pak(map))
+        let keys = map.keys().cloned().collect::<Box<[_]>>();
+
+        for path in &keys[..] {
+            let mut path: &Path = path.as_ref();
+            while let Some(parent) = path.parent() {
+                map.insert(parent.to_owned(), PakEntry::Directory(Default::default()));
+                path = parent;
+            }
+        }
+
+        let keys = map.keys().cloned().collect::<Box<[_]>>();
+
+        for (path, entry) in &mut map {
+            if let PakEntry::Directory(inner) = entry {
+                *inner = keys
+                    .iter()
+                    .filter(|k| path != *k && k.starts_with(path))
+                    .map(|p| p.to_path_buf())
+                    .collect();
+            }
+        }
+
+        map.shrink_to_fit();
+
+        Ok(Pak {
+            memory: bytes,
+            entries: map,
+        })
     }
 
     /// Opens a file in the file tree for reading.
@@ -136,16 +307,28 @@ impl Pak {
     /// ```
     pub fn open<S>(&self, path: S) -> Result<&[u8], PakError>
     where
-        S: AsRef<str>,
+        S: AsRef<Path>,
     {
         let path = path.as_ref();
-        self.0
+        self.entries
             .get(path)
-            .map(|s| s.as_ref())
+            .and_then(|s| {
+                if let PakEntry::File(range) = s {
+                    Some(&self.memory.as_ref()[range.clone()])
+                } else {
+                    None
+                }
+            })
             .ok_or(PakError::NoSuchFile(path.to_owned()))
     }
 
-    pub fn iter<'a>(&self) -> Iter<String, impl AsRef<[u8]>> {
-        self.0.iter()
+    pub fn iter(&self) -> impl Iterator<Item = (&Path, &[u8])> + '_ {
+        self.entries.iter().filter_map(move |(path, e)| {
+            if let PakEntry::File(range) = e {
+                Some((path.as_ref(), &self.memory.as_ref()[range.clone()]))
+            } else {
+                None
+            }
+        })
     }
 }

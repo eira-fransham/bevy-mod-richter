@@ -31,12 +31,12 @@ pub fn build_main_menu() -> Result<Menu, Error> {
         .add_submenu("Multiplayer", build_menu_mp()?)
         .add_submenu("Options", build_menu_options()?)
         .add_action("Help/Ordering", Box::new(|| ()))
-        .add_action::<_, Box<dyn Fn() -> Control>>("Quit", Box::new(|| Control::Exit))
+        .add_action::<_, Box<dyn Fn() -> Control + Send + Sync>>("Quit", Box::new(|| Control::Exit))
         .build(MenuView {
             draw_plaque: true,
-            title_path: "gfx/ttl_main.lmp".to_string(),
+            title_path: "gfx/ttl_main.lmp".into(),
             body: MenuBodyView::Predefined {
-                path: "gfx/mainmenu.lmp".to_string(),
+                path: "gfx/mainmenu.lmp".into(),
             },
         }))
 }
@@ -48,9 +48,9 @@ fn build_menu_sp() -> Result<Menu, Error> {
         // .add_submenu("Save", unimplemented!())
         .build(MenuView {
             draw_plaque: true,
-            title_path: "gfx/ttl_sgl.lmp".to_string(),
+            title_path: "gfx/ttl_sgl.lmp".into(),
             body: MenuBodyView::Predefined {
-                path: "gfx/sp_menu.lmp".to_string(),
+                path: "gfx/sp_menu.lmp".into(),
             },
         }))
 }
@@ -62,9 +62,9 @@ fn build_menu_mp() -> Result<Menu, Error> {
         // .add_submenu("Setup", unimplemented!())
         .build(MenuView {
             draw_plaque: true,
-            title_path: "gfx/p_multi.lmp".to_string(),
+            title_path: "gfx/p_multi.lmp".into(),
             body: MenuBodyView::Predefined {
-                path: "gfx/mp_menu.lmp".to_string(),
+                path: "gfx/mp_menu.lmp".into(),
             },
         }))
 }
@@ -75,9 +75,9 @@ fn build_menu_mp_join() -> Result<Menu, Error> {
         // .add_textbox // description
         .build(MenuView {
             draw_plaque: true,
-            title_path: "gfx/p_multi.lmp".to_string(),
+            title_path: "gfx/p_multi.lmp".into(),
             body: MenuBodyView::Predefined {
-                path: "gfx/mp_menu.lmp".to_string(),
+                path: "gfx/mp_menu.lmp".into(),
             },
         }))
 }
@@ -98,7 +98,7 @@ fn build_menu_mp_join_tcp() -> Result<Menu, Error> {
         .add_toggle("placeholder", false, Box::new(|_| ()))
         .build(MenuView {
             draw_plaque: true,
-            title_path: "gfx/p_multi.lmp".to_string(),
+            title_path: "gfx/p_multi.lmp".into(),
             body: MenuBodyView::Dynamic,
         }))
 }
@@ -121,7 +121,7 @@ fn build_menu_options() -> Result<Menu, Error> {
         // .add_submenu("Video options", unimplemented!())
         .build(MenuView {
             draw_plaque: true,
-            title_path: "gfx/p_option.lmp".to_string(),
+            title_path: "gfx/p_option.lmp".into(),
             body: MenuBodyView::Dynamic,
         }))
 }

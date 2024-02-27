@@ -29,6 +29,7 @@ use crate::common::{
     parse,
 };
 
+use bevy::ecs::system::Resource;
 use failure::Error;
 use smol_str::SmolStr;
 use strum::IntoEnumIterator;
@@ -499,23 +500,21 @@ impl ToString for BindTarget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Resource)]
 pub struct GameInput {
-    console: Rc<RefCell<Console>>,
-    bindings: Rc<RefCell<HashMap<BindInput, BindTarget>>>,
-    action_states: Rc<RefCell<[bool; ACTION_COUNT]>>,
+    bindings: HashMap<BindInput, BindTarget>,
+    action_states: [bool; ACTION_COUNT],
     mouse_delta: (f64, f64),
-    impulse: Rc<Cell<u8>>,
+    impulse: u8,
 }
 
 impl GameInput {
-    pub fn new(console: Rc<RefCell<Console>>) -> GameInput {
+    pub fn new() -> GameInput {
         GameInput {
-            console,
-            bindings: Rc::new(RefCell::new(HashMap::new())),
-            action_states: Rc::new(RefCell::new([false; ACTION_COUNT])),
+            bindings: Default::default(),
+            action_states: Default::default(),
             mouse_delta: (0.0, 0.0),
-            impulse: Rc::new(Cell::new(0)),
+            impulse: 0,
         }
     }
 
@@ -524,7 +523,7 @@ impl GameInput {
     }
 
     pub fn impulse(&self) -> u8 {
-        self.impulse.get()
+        self.impulse
     }
 
     /// Bind the default controls.
@@ -621,9 +620,7 @@ impl GameInput {
         I: Into<BindInput>,
         T: Into<BindTarget>,
     {
-        self.bindings
-            .borrow_mut()
-            .insert(input.into(), target.into())
+        self.bindings.insert(input.into(), target.into())
     }
 
     /// Return the `BindTarget` that `input` is bound to, or `None` if `input` is not present.
@@ -631,10 +628,10 @@ impl GameInput {
     where
         I: Into<BindInput>,
     {
-        self.bindings.borrow().get(&input.into()).map(|t| t.clone())
+        self.bindings.get(&input.into()).map(|t| t.clone())
     }
 
-    pub fn handle_event<T>(&mut self, outer_event: Event<T>) {
+    pub fn handle_event<T>(&mut self, console: &mut Console, outer_event: Event<T>) {
         let (input, state): (BindInput, _) = match outer_event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::KeyboardInput {
@@ -665,20 +662,20 @@ impl GameInput {
             _ => return,
         };
 
-        self.handle_input(input, state);
+        self.handle_input(console, input, state);
     }
 
-    pub fn handle_input<I>(&mut self, input: I, state: ElementState)
+    pub fn handle_input<I>(&mut self, console: &mut Console, input: I, state: ElementState)
     where
         I: Into<BindInput>,
     {
         let bind_input = input.into();
 
         // debug!("handle input {:?}: {:?}", &bind_input, state);
-        if let Some(target) = self.bindings.borrow().get(&bind_input) {
+        if let Some(target) = self.bindings.get(&bind_input) {
             match *target {
                 BindTarget::Action { trigger, action } => {
-                    self.action_states.borrow_mut()[action as usize] = state == trigger;
+                    self.action_states[action as usize] = state == trigger;
                     debug!(
                         "{}{}",
                         if state == trigger { '+' } else { '-' },
@@ -688,7 +685,7 @@ impl GameInput {
 
                 BindTarget::ConsoleInput { ref text } => {
                     if state == ElementState::Pressed {
-                        self.console.borrow_mut().append_text(text);
+                        console.append_text(text);
                     }
                 }
             }
@@ -696,7 +693,7 @@ impl GameInput {
     }
 
     pub fn action_state(&self, action: Action) -> bool {
-        self.action_states.borrow()[action as usize]
+        self.action_states[action as usize]
     }
 
     // TODO: roll actions into a loop
@@ -704,10 +701,10 @@ impl GameInput {
         let states = [("+", true), ("-", false)];
         for action in Action::iter() {
             for (state_str, state_bool) in states.iter().cloned() {
-                let action_states = self.action_states.clone();
                 let cmd_name = format!("{}{}", state_str, action.to_string());
-                cmds.insert_or_replace(&cmd_name, move |_| {
-                    action_states.borrow_mut()[action as usize] = state_bool;
+                cmds.insert_or_replace(&cmd_name, move |_, world| {
+                    let mut game_input = world.resource_mut::<GameInput>();
+                    game_input.action_states[action as usize] = state_bool;
                     String::new()
                 })
                 .unwrap();
@@ -715,13 +712,13 @@ impl GameInput {
         }
 
         // "bind"
-        let bindings = self.bindings.clone();
-        cmds.insert_or_replace("bind", move |args| {
+        cmds.insert_or_replace("bind", move |args, world| {
+            let mut game_input = world.resource_mut::<GameInput>();
             match args.len() {
                 // bind (key)
                 // queries what (key) is bound to, if anything
                 1 => match BindInput::from_str(args[0]) {
-                    Ok(i) => match bindings.borrow().get(&i) {
+                    Ok(i) => match game_input.bindings.get(&i) {
                         Some(t) => format!("\"{}\" = \"{}\"", i.to_string(), t.to_string()),
                         None => format!("\"{}\" is not bound", i.to_string()),
                     },
@@ -733,7 +730,7 @@ impl GameInput {
                 2 => match BindInput::from_str(args[0]) {
                     Ok(input) => match BindTarget::from_str(args[1]) {
                         Ok(target) => {
-                            bindings.borrow_mut().insert(input.clone(), target);
+                            game_input.bindings.insert(input.clone(), target);
                             debug!("Bound {:?} to {:?}", input, args[1]);
                             String::new()
                         }
@@ -751,10 +748,10 @@ impl GameInput {
         .unwrap();
 
         // "unbindall"
-        let bindings = self.bindings.clone();
-        cmds.insert_or_replace("unbindall", move |args| match args.len() {
+        cmds.insert_or_replace("unbindall", move |args, world| match args.len() {
             0 => {
-                let _ = bindings.replace(HashMap::new());
+                let mut game_input = world.resource_mut::<GameInput>();
+                game_input.bindings = HashMap::new();
                 String::new()
             }
             _ => "unbindall: delete all keybindings".to_owned(),
@@ -762,13 +759,13 @@ impl GameInput {
         .unwrap();
 
         // "impulse"
-        let impulse = self.impulse.clone();
-        cmds.insert_or_replace("impulse", move |args| {
+        cmds.insert_or_replace("impulse", move |args, world| {
             println!("args: {}", args.len());
             match args.len() {
                 1 => match u8::from_str(args[0]) {
                     Ok(i) => {
-                        impulse.set(i);
+                        let mut game_input = world.resource_mut::<GameInput>();
+                        game_input.impulse = i;
                         String::new()
                     }
                     Err(_) => "Impulse must be a number between 0 and 255".to_owned(),
@@ -781,19 +778,19 @@ impl GameInput {
     }
 
     // must be called every frame!
-    pub fn refresh(&mut self) {
-        self.clear_mouse();
+    pub fn refresh(&mut self, console: &mut Console) {
+        self.clear_mouse(console);
         self.clear_impulse();
     }
 
-    fn clear_mouse(&mut self) {
-        self.handle_input(MouseWheel::Up, ElementState::Released);
-        self.handle_input(MouseWheel::Down, ElementState::Released);
+    fn clear_mouse(&mut self, console: &mut Console) {
+        self.handle_input(console, MouseWheel::Up, ElementState::Released);
+        self.handle_input(console, MouseWheel::Down, ElementState::Released);
         self.mouse_delta = (0.0, 0.0);
     }
 
     fn clear_impulse(&mut self) {
-        self.impulse.set(0);
+        self.impulse = 0;
     }
 }
 

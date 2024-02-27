@@ -14,7 +14,7 @@
 // NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
+use bevy::prelude::*;
 use std::{
     fs::File,
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
@@ -41,6 +41,26 @@ enum VfsComponent {
 }
 
 #[derive(Debug)]
+enum VfsLoaderComponent {
+    Pak(Handle<Pak>),
+    Directory(PathBuf),
+}
+
+pub struct VfsLoader {
+    components: Vec<VfsLoaderComponent>,
+}
+
+impl VfsLoader {
+    pub fn with_base_dir(
+        asset_server: &AssetServer,
+        base_dir: PathBuf,
+        game: Option<&str>,
+    ) -> Self {
+        todo!()
+    }
+}
+
+#[derive(Debug, Resource)]
 pub struct Vfs {
     components: Vec<VfsComponent>,
 }

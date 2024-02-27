@@ -28,53 +28,46 @@ use winit::{
     keyboard::{Key, NamedKey},
 };
 
-pub struct MenuInput {
-    menu: Rc<RefCell<Menu>>,
-    console: Rc<RefCell<Console>>,
-}
-
-impl MenuInput {
-    pub fn new(menu: Rc<RefCell<Menu>>, console: Rc<RefCell<Console>>) -> MenuInput {
-        MenuInput { menu, console }
-    }
-
-    pub fn handle_event<T>(&self, event: Event<T>) -> Result<Control, Error> {
-        match event {
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            logical_key: Key::Named(key),
-                            state: ElementState::Pressed,
-                            ..
-                        },
-                    ..
-                } => match key {
-                    NamedKey::Escape => {
-                        if self.menu.borrow().at_root() {
-                            self.console.borrow().append_text("togglemenu");
-                        } else {
-                            self.menu.borrow().back()?;
-                        }
+pub fn handle_event<T>(
+    menu: &mut Menu,
+    console: &mut Console,
+    event: Event<T>,
+) -> Result<Control, Error> {
+    match event {
+        Event::WindowEvent { event, .. } => match event {
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Named(key),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => match key {
+                NamedKey::Escape => {
+                    if menu.at_root() {
+                        console.append_text("togglemenu");
+                    } else {
+                        menu.back()?;
                     }
+                }
 
-                    NamedKey::ArrowUp => self.menu.borrow().prev()?,
-                    NamedKey::ArrowDown => self.menu.borrow().next()?,
-                    NamedKey::Enter => {
-                        return self.menu.borrow().activate();
-                    }
-                    NamedKey::ArrowLeft => self.menu.borrow().left()?,
-                    NamedKey::ArrowRight => self.menu.borrow().right()?,
-
-                    _ => (),
-                },
+                NamedKey::ArrowUp => menu.prev()?,
+                NamedKey::ArrowDown => menu.next()?,
+                NamedKey::Enter => {
+                    return menu.activate();
+                }
+                NamedKey::ArrowLeft => menu.left()?,
+                NamedKey::ArrowRight => menu.right()?,
 
                 _ => (),
             },
 
             _ => (),
-        }
+        },
 
-        Ok(Control::Continue)
+        _ => (),
     }
+
+    Ok(Control::Continue)
 }

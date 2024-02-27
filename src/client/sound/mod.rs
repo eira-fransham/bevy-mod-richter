@@ -19,11 +19,14 @@
 // SOFTWARE.
 
 mod music;
+use bevy::ecs::system::Resource;
 pub use music::MusicPlayer;
 
 use std::{
     cell::{Cell, RefCell},
     io::{self, BufReader, Cursor, Read},
+    iter,
+    sync::Arc,
 };
 
 use crate::common::vfs::{Vfs, VfsError};
@@ -54,44 +57,44 @@ pub enum SoundError {
 /// Data needed for sound spatialization.
 ///
 /// This struct is updated every frame.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Listener {
-    origin: Cell<Vector3<f32>>,
-    left_ear: Cell<Vector3<f32>>,
-    right_ear: Cell<Vector3<f32>>,
+    origin: Vector3<f32>,
+    left_ear: Vector3<f32>,
+    right_ear: Vector3<f32>,
 }
 
 impl Listener {
     pub fn new() -> Listener {
         Listener {
-            origin: Cell::new(Vector3::new(0.0, 0.0, 0.0)),
-            left_ear: Cell::new(Vector3::new(0.0, 0.0, 0.0)),
-            right_ear: Cell::new(Vector3::new(0.0, 0.0, 0.0)),
+            origin: Vector3::new(0.0, 0.0, 0.0),
+            left_ear: Vector3::new(0.0, 0.0, 0.0),
+            right_ear: Vector3::new(0.0, 0.0, 0.0),
         }
     }
 
     pub fn origin(&self) -> Vector3<f32> {
-        self.origin.get()
+        self.origin
     }
 
     pub fn left_ear(&self) -> Vector3<f32> {
-        self.left_ear.get()
+        self.left_ear
     }
 
     pub fn right_ear(&self) -> Vector3<f32> {
-        self.right_ear.get()
+        self.right_ear
     }
 
-    pub fn set_origin(&self, new_origin: Vector3<f32>) {
-        self.origin.set(new_origin);
+    pub fn set_origin(&mut self, new_origin: Vector3<f32>) {
+        self.origin = new_origin;
     }
 
-    pub fn set_left_ear(&self, new_origin: Vector3<f32>) {
-        self.left_ear.set(new_origin);
+    pub fn set_left_ear(&mut self, new_origin: Vector3<f32>) {
+        self.left_ear = new_origin;
     }
 
-    pub fn set_right_ear(&self, new_origin: Vector3<f32>) {
-        self.right_ear.set(new_origin);
+    pub fn set_right_ear(&mut self, new_origin: Vector3<f32>) {
+        self.right_ear = new_origin;
     }
 
     pub fn attenuate(
@@ -100,16 +103,42 @@ impl Listener {
         base_volume: f32,
         attenuation: f32,
     ) -> f32 {
-        let decay = (emitter_origin - self.origin.get()).magnitude()
-            * attenuation
-            * DISTANCE_ATTENUATION_FACTOR;
+        let decay =
+            (emitter_origin - self.origin).magnitude() * attenuation * DISTANCE_ATTENUATION_FACTOR;
         let volume = ((1.0 - decay) * base_volume).max(0.0);
         volume
     }
 }
 
+type SourceInner = Buffered<SamplesConverter<Decoder<Cursor<Vec<u8>>>, f32>>;
 #[derive(Clone)]
-pub struct AudioSource(Buffered<SamplesConverter<Decoder<Cursor<Vec<u8>>>, f32>>);
+pub struct AudioSource(Arc<SourceInner>);
+
+impl Iterator for AudioSource {
+    type Item = <SourceInner as Iterator>::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Arc::make_mut(&mut self.0).next()
+    }
+}
+
+impl Source for AudioSource {
+    fn current_frame_len(&self) -> Option<usize> {
+        self.0.current_frame_len()
+    }
+
+    fn channels(&self) -> u16 {
+        self.0.channels()
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.0.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        self.0.total_duration()
+    }
+}
 
 impl AudioSource {
     pub fn load<S>(vfs: &Vfs, name: S) -> Result<AudioSource, SoundError>
@@ -126,20 +155,20 @@ impl AudioSource {
             .convert_samples()
             .buffered();
 
-        Ok(AudioSource(src))
+        Ok(AudioSource(src.into()))
     }
 }
 
 pub struct StaticSound {
     origin: Vector3<f32>,
-    sink: RefCell<Sink>,
+    sink: Sink,
     volume: f32,
     attenuation: f32,
 }
 
 impl StaticSound {
     pub fn new(
-        stream: &OutputStreamHandle,
+        stream: OutputStreamHandle,
         origin: Vector3<f32>,
         src: AudioSource,
         volume: f32,
@@ -148,116 +177,115 @@ impl StaticSound {
     ) -> StaticSound {
         // TODO: handle PlayError once PR accepted
         let sink = Sink::try_new(&stream).unwrap();
-        let infinite = src.0.clone().repeat_infinite();
+        let infinite = src.repeat_infinite();
         sink.append(infinite);
         sink.set_volume(listener.attenuate(origin, volume, attenuation));
 
         StaticSound {
             origin,
-            sink: RefCell::new(sink),
+            sink,
             volume,
             attenuation,
         }
     }
 
-    pub fn update(&self, listener: &Listener) {
-        let sink = self.sink.borrow_mut();
-
-        sink.set_volume(listener.attenuate(self.origin, self.volume, self.attenuation));
+    pub fn update(&mut self, listener: &Listener) {
+        self.sink
+            .set_volume(listener.attenuate(self.origin, self.volume, self.attenuation));
     }
 }
 
 /// Represents a single audio channel, capable of playing one sound at a time.
 pub struct Channel {
-    stream: OutputStreamHandle,
-    sink: RefCell<Option<Sink>>,
-    master_vol: Cell<f32>,
-    attenuation: Cell<f32>,
+    sink: Option<Sink>,
+    master_vol: f32,
+    attenuation: f32,
 }
 
 impl Channel {
     /// Create a new `Channel` backed by the given `Device`.
-    pub fn new(stream: OutputStreamHandle) -> Channel {
+    pub fn new() -> Channel {
         Channel {
-            stream,
-            sink: RefCell::new(None),
-            master_vol: Cell::new(0.0),
-            attenuation: Cell::new(0.0),
+            sink: None,
+            master_vol: 0.0,
+            attenuation: 0.0,
         }
     }
 
     /// Play a new sound on this channel, cutting off any sound that was previously playing.
     pub fn play(
-        &self,
+        &mut self,
         src: AudioSource,
         ent_pos: Vector3<f32>,
         listener: &Listener,
         volume: f32,
         attenuation: f32,
+        stream: OutputStreamHandle,
     ) {
-        self.master_vol.set(volume);
-        self.attenuation.set(attenuation);
+        self.master_vol = volume;
+        self.attenuation = attenuation;
 
         // stop the old sound
-        self.sink.replace(None);
+        self.sink = None;
 
         // start the new sound
-        let new_sink = Sink::try_new(&self.stream).unwrap();
-        new_sink.append(src.0);
-        new_sink.set_volume(listener.attenuate(
-            ent_pos,
-            self.master_vol.get(),
-            self.attenuation.get(),
-        ));
+        let new_sink = Sink::try_new(&stream).unwrap();
+        new_sink.append(src);
+        new_sink.set_volume(listener.attenuate(ent_pos, self.master_vol, self.attenuation));
 
-        self.sink.replace(Some(new_sink));
+        self.sink = Some(new_sink);
     }
 
-    pub fn update(&self, ent_pos: Vector3<f32>, listener: &Listener) {
-        if let Some(ref sink) = *self.sink.borrow_mut() {
+    pub fn update(&mut self, ent_pos: Vector3<f32>, listener: &Listener) {
+        let replace_sink = if let Some(sink) = &mut self.sink {
             // attenuate using quake coordinates since distance is the same either way
-            sink.set_volume(listener.attenuate(
-                ent_pos,
-                self.master_vol.get(),
-                self.attenuation.get(),
-            ));
+            sink.set_volume(listener.attenuate(ent_pos, self.master_vol, self.attenuation));
+            sink.empty()
+        } else {
+            false
         };
+
+        // if the sink isn't in use, free it
+        if replace_sink {
+            self.sink = None;
+        }
     }
 
     /// Stop the sound currently playing on this channel, if there is one.
-    pub fn stop(&self) {
-        self.sink.replace(None);
+    pub fn stop(&mut self) {
+        self.sink = None;
     }
 
     /// Returns whether or not this `Channel` is currently in use.
     pub fn in_use(&self) -> bool {
-        let replace_sink;
-        match *self.sink.borrow() {
-            Some(ref sink) => replace_sink = sink.empty(),
-            None => return false,
-        }
-
-        // if the sink isn't in use, free it
-        if replace_sink {
-            self.sink.replace(None);
-            false
-        } else {
-            true
+        match &self.sink {
+            Some(sink) => sink.empty(),
+            None => false,
         }
     }
 }
 
+#[derive(Resource)]
+pub struct AudioOut(pub OutputStreamHandle);
+
+#[derive(Clone)]
 pub struct EntityChannel {
     start_time: Duration,
     // if None, sound is associated with a temp entity
     ent_id: Option<usize>,
     ent_channel: i8,
-    channel: Channel,
+    channel: Arc<Channel>,
 }
 
 impl EntityChannel {
     pub fn channel(&self) -> &Channel {
         &self.channel
+    }
+
+    pub fn channel_mut(&mut self) -> &mut Channel {
+        // TODO: We only wrap this in an arc so we can send render state to the render thread
+        //       for pipelined rendering - the audio data should never actually be shared
+        Arc::get_mut(&mut self.channel).expect("This should never actually be shared!")
     }
 
     pub fn entity_id(&self) -> Option<usize> {
@@ -269,23 +297,21 @@ impl EntityChannel {
     }
 }
 
+#[derive(Clone)]
 pub struct EntityMixer {
-    stream: OutputStreamHandle,
-    // TODO: replace with an array once const type parameters are implemented
-    channels: Box<[Option<EntityChannel>]>,
+    channels: im::Vector<Option<EntityChannel>>,
+    // TODO: This should always be passed down from `World`, but right now everything is too
+    //       monolithic to make that possible
+    output_stream: OutputStreamHandle,
 }
 
 impl EntityMixer {
-    pub fn new(stream: OutputStreamHandle) -> EntityMixer {
-        let mut channel_vec = Vec::new();
-
-        for _ in 0..MAX_ENTITY_CHANNELS {
-            channel_vec.push(None);
-        }
+    pub fn new(output_stream: OutputStreamHandle) -> EntityMixer {
+        let channels = iter::repeat_n(None, MAX_ENTITY_CHANNELS).collect();
 
         EntityMixer {
-            stream,
-            channels: channel_vec.into_boxed_slice(),
+            channels,
+            output_stream,
         }
     }
 
@@ -341,14 +367,21 @@ impl EntityMixer {
         listener: &Listener,
     ) {
         let chan_id = self.find_free_channel(ent_id, ent_channel);
-        let new_channel = Channel::new(self.stream.clone());
+        let mut new_channel = Channel::new();
 
-        new_channel.play(src.clone(), origin, listener, volume, attenuation);
+        new_channel.play(
+            src,
+            origin,
+            listener,
+            volume,
+            attenuation,
+            self.output_stream.clone(),
+        );
         self.channels[chan_id] = Some(EntityChannel {
             start_time: time,
             ent_id,
             ent_channel,
-            channel: new_channel,
+            channel: new_channel.into(),
         })
     }
 
@@ -359,7 +392,7 @@ impl EntityMixer {
             .filter_map(|chan| chan.as_mut())
             .filter(|c| c.entity_id() == ent_id && c.channel_id() == ent_channel);
         for c in matching_channels {
-            c.channel().stop()
+            c.channel_mut().stop()
         }
     }
 
@@ -367,7 +400,7 @@ impl EntityMixer {
         self.channels.iter().filter_map(|e| e.as_ref())
     }
 
-    pub fn stream(&self) -> OutputStreamHandle {
-        self.stream.clone()
+    pub fn iter_entity_channels_mut(&mut self) -> impl Iterator<Item = &mut EntityChannel> {
+        self.channels.iter_mut().filter_map(|e| e.as_mut())
     }
 }

@@ -1,12 +1,17 @@
 use std::{
     cell::{Cell, RefCell},
     marker::PhantomData,
-    mem::{align_of, size_of},
+    mem::{self, align_of, size_of},
     rc::Rc,
+    sync::Arc,
 };
 
 use crate::common::util::{any_as_bytes, Pod};
 
+use bevy::render::{
+    render_resource::Buffer,
+    renderer::{RenderDevice, RenderQueue},
+};
 use failure::Error;
 
 // minimum limit is 16384:
@@ -54,13 +59,13 @@ where
 {
     // keeps track of how many blocks are allocated so we know whether we can
     // clear the buffer or not
-    _rc: RefCell<Rc<()>>,
+    _rc: Arc<()>,
 
     // represents the data in the buffer, which we don't actually own
     _phantom: PhantomData<T>,
 
-    inner: wgpu::Buffer,
-    allocated: Cell<u64>,
+    inner: Buffer,
+    allocated: u64,
     update_buf: Vec<u8>,
 }
 
@@ -68,7 +73,7 @@ impl<T> DynamicUniformBuffer<T>
 where
     T: Pod,
 {
-    pub fn new<'b>(device: &'b wgpu::Device) -> DynamicUniformBuffer<T> {
+    pub fn new(device: &RenderDevice) -> DynamicUniformBuffer<T> {
         // TODO: is this something we can enforce at compile time?
         assert!(align_of::<T>() % DYNAMIC_UNIFORM_BUFFER_ALIGNMENT == 0);
 
@@ -83,10 +88,10 @@ where
         update_buf.resize(DYNAMIC_UNIFORM_BUFFER_SIZE as usize, 0);
 
         DynamicUniformBuffer {
-            _rc: RefCell::new(Rc::new(())),
+            _rc: Arc::new(()),
             _phantom: PhantomData,
             inner,
-            allocated: Cell::new(0),
+            allocated: 0,
             update_buf,
         }
     }
@@ -102,7 +107,7 @@ where
     /// specified initial value.
     #[must_use]
     pub fn allocate(&mut self, val: T) -> DynamicUniformBufferBlock<T> {
-        let allocated = self.allocated.get();
+        let allocated = self.allocated;
         let size = self.block_size().get();
         trace!(
             "Allocating dynamic uniform block (allocated: {})",
@@ -116,10 +121,10 @@ where
         }
 
         let addr = allocated;
-        self.allocated.set(allocated + size);
+        self.allocated = allocated + size;
 
         let block = DynamicUniformBufferBlock {
-            _rc: self._rc.borrow().clone(),
+            _rc: self._rc.clone(),
             _phantom: PhantomData,
             addr,
         };
@@ -139,22 +144,22 @@ where
     ///
     /// Returns an error if the buffer is currently mapped or there are
     /// outstanding allocated blocks.
-    pub fn clear(&self) -> Result<(), Error> {
-        let out = self._rc.replace(Rc::new(()));
-        match Rc::try_unwrap(out) {
+    pub fn clear(&mut self) -> Result<(), Error> {
+        let out = mem::take(&mut self._rc);
+        match Arc::try_unwrap(out) {
             // no outstanding blocks
             Ok(()) => {
-                self.allocated.set(0);
+                self.allocated = 0;
                 Ok(())
             }
             Err(rc) => {
-                let _ = self._rc.replace(rc);
+                let _ = mem::replace(&mut self._rc, rc);
                 bail!("Can't clear uniform buffer: there are outstanding references to allocated blocks.");
             }
         }
     }
 
-    pub fn flush(&self, queue: &wgpu::Queue) {
+    pub fn flush(&self, queue: &RenderQueue) {
         queue.write_buffer(&self.inner, 0, &self.update_buf);
     }
 
@@ -166,7 +171,7 @@ where
 /// An address into a dynamic uniform buffer.
 #[derive(Debug)]
 pub struct DynamicUniformBufferBlock<T> {
-    _rc: Rc<()>,
+    _rc: Arc<()>,
     _phantom: PhantomData<T>,
 
     addr: wgpu::BufferAddress,
@@ -179,7 +184,7 @@ impl<T> DynamicUniformBufferBlock<T> {
 }
 
 pub fn clear_and_rewrite<T>(
-    queue: &wgpu::Queue,
+    queue: &RenderQueue,
     buffer: &mut DynamicUniformBuffer<T>,
     blocks: &mut Vec<DynamicUniformBufferBlock<T>>,
     uniforms: &[T],

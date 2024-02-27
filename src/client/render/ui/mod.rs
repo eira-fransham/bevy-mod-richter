@@ -22,9 +22,13 @@ use crate::{
             Extent2d, GraphicsState,
         },
     },
-    common::{console::Console, util::any_slice_as_bytes},
+    common::{console::Console, util::any_slice_as_bytes, vfs::Vfs},
 };
 
+use bevy::{
+    ecs::system::Resource,
+    render::renderer::{RenderDevice, RenderQueue},
+};
 use cgmath::{Matrix4, Vector2};
 use chrono::Duration;
 
@@ -88,6 +92,7 @@ pub enum UiState<'a> {
     },
 }
 
+#[derive(Resource)]
 pub struct UiRenderer {
     console_renderer: ConsoleRenderer,
     menu_renderer: MenuRenderer,
@@ -97,25 +102,32 @@ pub struct UiRenderer {
 }
 
 impl UiRenderer {
-    pub fn new(state: &GraphicsState, menu: &Menu) -> UiRenderer {
+    pub fn new(
+        state: &GraphicsState,
+        vfs: &Vfs,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        menu: &Menu,
+    ) -> UiRenderer {
         UiRenderer {
-            console_renderer: ConsoleRenderer::new(state),
-            menu_renderer: MenuRenderer::new(state, menu),
-            hud_renderer: HudRenderer::new(state),
-            glyph_renderer: GlyphRenderer::new(state),
-            quad_renderer: QuadRenderer::new(state),
+            console_renderer: ConsoleRenderer::new(state, vfs, device, queue),
+            menu_renderer: MenuRenderer::new(state, vfs, device, queue, menu),
+            hud_renderer: HudRenderer::new(state, vfs, device, queue),
+            glyph_renderer: GlyphRenderer::new(state, device, queue),
+            quad_renderer: QuadRenderer::new(state, device),
         }
     }
 
-    pub fn render_pass<'pass>(
-        &'pass self,
-        state: &'pass GraphicsState,
-        pass: &mut wgpu::RenderPass<'pass>,
+    pub fn render_pass<'this, 'a>(
+        &'this self,
+        state: &'this GraphicsState,
+        queue: &'a RenderQueue,
+        pass: &'a mut wgpu::RenderPass<'this>,
         target_size: Extent2d,
         time: Duration,
-        ui_state: &UiState<'pass>,
-        quad_commands: &'pass mut Vec<QuadRendererCommand<'pass>>,
-        glyph_commands: &'pass mut Vec<GlyphRendererCommand>,
+        ui_state: &'a UiState<'this>,
+        quad_commands: &'a mut Vec<QuadRendererCommand<'this>>,
+        glyph_commands: &'a mut Vec<GlyphRendererCommand>,
     ) {
         let (hud_state, overlay) = match ui_state {
             UiState::Title { overlay } => (None, Some(overlay)),
@@ -152,8 +164,8 @@ impl UiRenderer {
         }
 
         self.quad_renderer
-            .record_draw(state, pass, target_size, quad_commands);
+            .record_draw(state, queue, pass, quad_commands);
         self.glyph_renderer
-            .record_draw(state, pass, target_size, glyph_commands);
+            .record_draw(state, queue, pass, target_size, glyph_commands);
     }
 }

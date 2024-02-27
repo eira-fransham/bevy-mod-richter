@@ -20,7 +20,7 @@
 
 use crate::common::console::{ConsoleError, CvarRegistry};
 
-pub fn register_cvars(cvars: &CvarRegistry) -> Result<(), ConsoleError> {
+pub fn register_cvars(cvars: &mut CvarRegistry) -> Result<(), ConsoleError> {
     cvars.register("cl_anglespeedkey", "1.5")?;
     cvars.register_archive("cl_backspeed", "200")?;
     cvars.register("cl_bob", "0.02")?;

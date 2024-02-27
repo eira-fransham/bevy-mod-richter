@@ -1,5 +1,14 @@
 use std::{mem::size_of, num::NonZeroU64};
 
+use bevy::{
+    ecs::system::Resource,
+    render::{
+        render_resource::{
+            BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, TextureView,
+        },
+        renderer::{RenderDevice, RenderQueue},
+    },
+};
 use cgmath::{Matrix4, SquareMatrix as _, Vector3, Zero as _};
 
 use crate::{
@@ -29,22 +38,21 @@ pub struct DeferredUniforms {
 }
 
 pub struct DeferredPipeline {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    uniform_buffer: wgpu::Buffer,
+    pipeline: RenderPipeline,
+    bind_group_layouts: Vec<BindGroupLayout>,
+    uniform_buffer: Buffer,
 }
 
 impl DeferredPipeline {
     pub fn new(
-        device: &wgpu::Device,
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
         sample_count: u32,
     ) -> DeferredPipeline {
         let (pipeline, bind_group_layouts) =
             DeferredPipeline::create(device, compiler, &[], sample_count, ());
 
-        use wgpu::util::DeviceExt as _;
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let uniform_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: unsafe {
                 any_as_bytes(&DeferredUniforms {
@@ -69,12 +77,12 @@ impl DeferredPipeline {
 
     pub fn rebuild(
         &mut self,
-        device: &wgpu::Device,
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
         sample_count: u32,
     ) {
-        let layout_refs: Vec<_> = self.bind_group_layouts.iter().collect();
-        let pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, ());
+        let layout_refs = self.bind_group_layouts.iter();
+        let pipeline = Self::recreate(device, compiler, layout_refs, sample_count, ());
         self.pipeline = pipeline;
     }
 
@@ -82,7 +90,7 @@ impl DeferredPipeline {
         &self.pipeline
     }
 
-    pub fn bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+    pub fn bind_group_layouts(&self) -> &[BindGroupLayout] {
         &self.bind_group_layouts
     }
 
@@ -173,11 +181,8 @@ impl Pipeline for DeferredPipeline {
         "deferred"
     }
 
-    fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
-        vec![wgpu::BindGroupLayoutDescriptor {
-            label: Some("deferred bind group"),
-            entries: BIND_GROUP_LAYOUT_ENTRIES,
-        }]
+    fn bind_group_layout_descriptors() -> Vec<Vec<BindGroupLayoutEntry>> {
+        vec![BIND_GROUP_LAYOUT_ENTRIES.to_owned()]
     }
 
     fn vertex_shader() -> &'static str {
@@ -215,76 +220,78 @@ impl Pipeline for DeferredPipeline {
     }
 }
 
+#[derive(Resource)]
 pub struct DeferredRenderer {
-    bind_group: wgpu::BindGroup,
+    bind_group: BindGroup,
 }
 
 impl DeferredRenderer {
     fn create_bind_group(
         state: &GraphicsState,
-        diffuse_buffer: &wgpu::TextureView,
-        normal_buffer: &wgpu::TextureView,
-        light_buffer: &wgpu::TextureView,
-        depth_buffer: &wgpu::TextureView,
-    ) -> wgpu::BindGroup {
-        state
-            .device()
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("deferred bind group"),
-                layout: &state.deferred_pipeline().bind_group_layouts()[0],
-                entries: &[
-                    // sampler
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
-                    },
-                    // sampler
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(state.nearest_sampler()),
-                    },
-                    // diffuse buffer
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(diffuse_buffer),
-                    },
-                    // normal buffer
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(normal_buffer),
-                    },
-                    // light buffer
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::TextureView(light_buffer),
-                    },
-                    // depth buffer
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::TextureView(depth_buffer),
-                    },
-                    // uniform buffer
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: state.deferred_pipeline().uniform_buffer(),
-                            offset: 0,
-                            size: None,
-                        }),
-                    },
-                ],
-            })
+        device: &RenderDevice,
+        diffuse_buffer: &TextureView,
+        normal_buffer: &TextureView,
+        light_buffer: &TextureView,
+        depth_buffer: &TextureView,
+    ) -> BindGroup {
+        device.create_bind_group(
+            Some("deferred bind group"),
+            &state.deferred_pipeline().bind_group_layouts()[0],
+            &[
+                // sampler
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
+                },
+                // sampler
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(state.nearest_sampler()),
+                },
+                // diffuse buffer
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(diffuse_buffer),
+                },
+                // normal buffer
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(normal_buffer),
+                },
+                // light buffer
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(light_buffer),
+                },
+                // depth buffer
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(depth_buffer),
+                },
+                // uniform buffer
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: state.deferred_pipeline().uniform_buffer(),
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+            ],
+        )
     }
 
     pub fn new(
         state: &GraphicsState,
-        diffuse_buffer: &wgpu::TextureView,
-        normal_buffer: &wgpu::TextureView,
-        light_buffer: &wgpu::TextureView,
-        depth_buffer: &wgpu::TextureView,
+        device: &RenderDevice,
+        diffuse_buffer: &TextureView,
+        normal_buffer: &TextureView,
+        light_buffer: &TextureView,
+        depth_buffer: &TextureView,
     ) -> DeferredRenderer {
         let bind_group = Self::create_bind_group(
             state,
+            device,
             diffuse_buffer,
             normal_buffer,
             light_buffer,
@@ -297,13 +304,15 @@ impl DeferredRenderer {
     pub fn rebuild(
         &mut self,
         state: &GraphicsState,
-        diffuse_buffer: &wgpu::TextureView,
-        normal_buffer: &wgpu::TextureView,
-        light_buffer: &wgpu::TextureView,
-        depth_buffer: &wgpu::TextureView,
+        device: &RenderDevice,
+        diffuse_buffer: &TextureView,
+        normal_buffer: &TextureView,
+        light_buffer: &TextureView,
+        depth_buffer: &TextureView,
     ) {
         self.bind_group = Self::create_bind_group(
             state,
+            device,
             diffuse_buffer,
             normal_buffer,
             light_buffer,
@@ -311,24 +320,28 @@ impl DeferredRenderer {
         );
     }
 
-    pub fn update_uniform_buffers(&self, state: &GraphicsState, uniforms: DeferredUniforms) {
-        // update color shift
-        state
-            .queue()
-            .write_buffer(state.deferred_pipeline().uniform_buffer(), 0, unsafe {
-                any_as_bytes(&uniforms)
-            });
-    }
-
-    pub fn record_draw<'pass>(
-        &'pass self,
-        state: &'pass GraphicsState,
-        pass: &mut wgpu::RenderPass<'pass>,
+    pub fn update_uniform_buffers(
+        &self,
+        state: &GraphicsState,
+        queue: &RenderQueue,
         uniforms: DeferredUniforms,
     ) {
-        self.update_uniform_buffers(state, uniforms);
+        // update color shift
+        queue.write_buffer(state.deferred_pipeline().uniform_buffer(), 0, unsafe {
+            any_as_bytes(&uniforms)
+        });
+    }
+
+    pub fn record_draw<'this, 'a>(
+        &'this self,
+        state: &'this GraphicsState,
+        queue: &'a RenderQueue,
+        pass: &'a mut wgpu::RenderPass<'this>,
+        uniforms: DeferredUniforms,
+    ) {
+        self.update_uniform_buffers(state, queue, uniforms);
         pass.set_pipeline(state.deferred_pipeline().pipeline());
-        pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
+        pass.set_vertex_buffer(0, *state.quad_pipeline().vertex_buffer().slice(..));
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..6, 0..1);
     }

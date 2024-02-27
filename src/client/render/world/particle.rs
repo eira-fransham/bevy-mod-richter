@@ -16,6 +16,13 @@ use crate::{
     common::{math::Angles, util::any_slice_as_bytes},
 };
 
+use bevy::render::{
+    render_resource::{
+        BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Sampler, Texture,
+        TextureView,
+    },
+    renderer::{RenderDevice, RenderQueue},
+};
 use bumpalo::Bump;
 use cgmath::Matrix4;
 
@@ -43,19 +50,19 @@ const PARTICLE_TEXTURE_PIXELS: [u8; 64] = [
 ];
 
 pub struct ParticlePipeline {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    vertex_buffer: wgpu::Buffer,
-    sampler: wgpu::Sampler,
-    textures: Vec<wgpu::Texture>,
-    texture_views: Vec<wgpu::TextureView>,
-    bind_group: wgpu::BindGroup,
+    pipeline: RenderPipeline,
+    bind_group_layouts: Vec<BindGroupLayout>,
+    vertex_buffer: Buffer,
+    sampler: Sampler,
+    textures: Vec<Texture>,
+    texture_views: Vec<TextureView>,
+    bind_group: BindGroup,
 }
 
 impl ParticlePipeline {
     pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &RenderDevice,
+        queue: &RenderQueue,
         compiler: &mut shaderc::Compiler,
         sample_count: u32,
         palette: &Palette,
@@ -63,8 +70,7 @@ impl ParticlePipeline {
         let (pipeline, bind_group_layouts) =
             ParticlePipeline::create(device, compiler, &[], sample_count, ());
 
-        use wgpu::util::DeviceExt as _;
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let vertex_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: unsafe { any_slice_as_bytes(&VERTICES) },
             usage: wgpu::BufferUsages::VERTEX,
@@ -83,7 +89,7 @@ impl ParticlePipeline {
             ..Default::default()
         });
 
-        let textures: Vec<wgpu::Texture> = (0..128)
+        let textures: Vec<_> = (0..128)
             .map(|i| {
                 let mut pixels = PARTICLE_TEXTURE_PIXELS;
 
@@ -108,16 +114,16 @@ impl ParticlePipeline {
                 )
             })
             .collect();
-        let texture_views: Vec<wgpu::TextureView> = textures
+        let texture_views: Vec<_> = textures
             .iter()
             .map(|t| t.create_view(&Default::default()))
             .collect();
-        let texture_view_refs = texture_views.iter().collect::<Vec<_>>();
+        let texture_view_refs = texture_views.iter().map(|t| &**t).collect::<Vec<_>>();
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("particle bind group"),
-            layout: &bind_group_layouts[0],
-            entries: &[
+        let bind_group = device.create_bind_group(
+            Some("particle bind group"),
+            &bind_group_layouts[0],
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Sampler(&sampler),
@@ -127,7 +133,7 @@ impl ParticlePipeline {
                     resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs[..]),
                 },
             ],
-        });
+        );
 
         ParticlePipeline {
             pipeline,
@@ -142,24 +148,23 @@ impl ParticlePipeline {
 
     pub fn rebuild(
         &mut self,
-        device: &wgpu::Device,
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
         sample_count: u32,
     ) {
-        let layout_refs: Vec<_> = self.bind_group_layouts.iter().collect();
-        self.pipeline =
-            ParticlePipeline::recreate(device, compiler, &layout_refs, sample_count, ());
+        let layout_refs = self.bind_group_layouts.iter();
+        self.pipeline = ParticlePipeline::recreate(device, compiler, layout_refs, sample_count, ());
     }
 
-    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+    pub fn pipeline(&self) -> &RenderPipeline {
         &self.pipeline
     }
 
-    pub fn bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+    pub fn bind_group_layouts(&self) -> &[BindGroupLayout] {
         &self.bind_group_layouts
     }
 
-    pub fn vertex_buffer(&self) -> &wgpu::Buffer {
+    pub fn vertex_buffer(&self) -> &Buffer {
         &self.vertex_buffer
     }
 
@@ -175,7 +180,7 @@ impl ParticlePipeline {
         use PushConstantUpdate::*;
 
         pass.set_pipeline(self.pipeline());
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        pass.set_vertex_buffer(0, *self.vertex_buffer.slice(..));
         pass.set_bind_group(0, &self.bind_group, &[]);
 
         // face toward camera
@@ -281,13 +286,10 @@ impl Pipeline for ParticlePipeline {
 
     // NOTE: if any of the binding indices are changed, they must also be changed in
     // the corresponding shaders and the BindGroupLayout generation functions.
-    fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
+    fn bind_group_layout_descriptors() -> Vec<Vec<BindGroupLayoutEntry>> {
         vec![
             // group 0
-            wgpu::BindGroupLayoutDescriptor {
-                label: Some("particle bind group layout"),
-                entries: BIND_GROUP_LAYOUT_ENTRIES,
-            },
+            BIND_GROUP_LAYOUT_ENTRIES.to_owned(),
         ]
     }
 

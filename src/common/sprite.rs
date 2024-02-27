@@ -36,13 +36,13 @@ pub enum SpriteKind {
     ViewPlaneParallelOriented = 4,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SpriteModel {
     kind: SpriteKind,
     max_width: usize,
     max_height: usize,
     radius: f32,
-    frames: Vec<SpriteFrame>,
+    frames: im::Vector<SpriteFrame>,
 }
 
 impl SpriteModel {
@@ -70,23 +70,23 @@ impl SpriteModel {
         self.kind
     }
 
-    pub fn frames(&self) -> &[SpriteFrame] {
-        &self.frames
+    pub fn frames(&self) -> impl Iterator<Item = &SpriteFrame> {
+        self.frames.iter()
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SpriteFrame {
     Static {
         frame: SpriteSubframe,
     },
     Animated {
-        subframes: Vec<SpriteSubframe>,
-        durations: Vec<Duration>,
+        subframes: im::Vector<SpriteSubframe>,
+        durations: im::Vector<Duration>,
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SpriteSubframe {
     width: u32,
     height: u32,
@@ -94,7 +94,7 @@ pub struct SpriteSubframe {
     down: f32,
     left: f32,
     right: f32,
-    indexed: Vec<u8>,
+    indexed: Box<[u8]>,
 }
 
 impl SpriteSubframe {
@@ -165,95 +165,92 @@ where
 
     let _sync_type = SyncType::from_i32(reader.read_i32::<LittleEndian>().unwrap()).unwrap();
 
-    let mut frames = Vec::with_capacity(frame_count);
+    let frames = (0..frame_count)
+        .map(|i| {
+            let frame_kind_int = reader.read_i32::<LittleEndian>().unwrap();
 
-    for i in 0..frame_count {
-        let frame_kind_int = reader.read_i32::<LittleEndian>().unwrap();
-
-        // TODO: substitute out this magic number
-        if frame_kind_int == 0 {
-            let origin_x = reader.read_i32::<LittleEndian>().unwrap();
-            let origin_z = reader.read_i32::<LittleEndian>().unwrap();
-
-            let width = match reader.read_i32::<LittleEndian>().unwrap() {
-                w if w < 0 => panic!("Negative frame width ({})", w),
-                w => w,
-            };
-
-            let height = match reader.read_i32::<LittleEndian>().unwrap() {
-                h if h < 0 => panic!("Negative frame height ({})", h),
-                h => h,
-            };
-
-            debug!("Frame {}: width = {} height = {}", i, width, height);
-
-            let index_count = (width * height) as usize;
-            let mut indices = Vec::with_capacity(index_count);
-            for _ in 0..index_count as usize {
-                indices.push(reader.read_u8().unwrap());
-            }
-
-            frames.push(SpriteFrame::Static {
-                frame: SpriteSubframe {
-                    width: width as u32,
-                    height: height as u32,
-                    up: origin_z as f32,
-                    down: (origin_z - height) as f32,
-                    left: origin_x as f32,
-                    right: (width + origin_x) as f32,
-                    indexed: indices,
-                },
-            });
-        } else {
-            let subframe_count = match reader.read_i32::<LittleEndian>().unwrap() {
-                c if c < 0 => panic!("Negative subframe count ({}) in frame {}", c, i),
-                c => c as usize,
-            };
-
-            let mut durations = Vec::with_capacity(subframe_count);
-            for _ in 0..subframe_count {
-                durations.push(engine::duration_from_f32(
-                    reader.read_f32::<LittleEndian>().unwrap(),
-                ));
-            }
-
-            let mut subframes = Vec::with_capacity(subframe_count);
-            for _ in 0..subframe_count {
+            // TODO: substitute out this magic number
+            if frame_kind_int == 0 {
                 let origin_x = reader.read_i32::<LittleEndian>().unwrap();
                 let origin_z = reader.read_i32::<LittleEndian>().unwrap();
 
                 let width = match reader.read_i32::<LittleEndian>().unwrap() {
-                    w if w < 0 => panic!("Negative subframe width ({}) in frame {}", w, i),
+                    w if w < 0 => panic!("Negative frame width ({})", w),
                     w => w,
                 };
 
                 let height = match reader.read_i32::<LittleEndian>().unwrap() {
-                    h if h < 0 => panic!("Negative subframe height ({}) in frame {}", h, i),
+                    h if h < 0 => panic!("Negative frame height ({})", h),
                     h => h,
                 };
 
-                let index_count = (width * height) as usize;
-                let mut indices = Vec::with_capacity(index_count);
-                for _ in 0..index_count as usize {
-                    indices.push(reader.read_u8().unwrap());
-                }
+                debug!("Frame {}: width = {} height = {}", i, width, height);
 
-                subframes.push(SpriteSubframe {
-                    width: width as u32,
-                    height: height as u32,
-                    up: origin_z as f32,
-                    down: (origin_z - height) as f32,
-                    left: origin_x as f32,
-                    right: (width + origin_x) as f32,
-                    indexed: indices,
-                });
+                let index_count = (width * height) as usize;
+                let indices = (0..index_count as usize)
+                    .map(|_| reader.read_u8().unwrap())
+                    .collect();
+
+                SpriteFrame::Static {
+                    frame: SpriteSubframe {
+                        width: width as u32,
+                        height: height as u32,
+                        up: origin_z as f32,
+                        down: (origin_z - height) as f32,
+                        left: origin_x as f32,
+                        right: (width + origin_x) as f32,
+                        indexed: indices,
+                    },
+                }
+            } else {
+                let subframe_count = match reader.read_i32::<LittleEndian>().unwrap() {
+                    c if c < 0 => panic!("Negative subframe count ({}) in frame {}", c, i),
+                    c => c as usize,
+                };
+
+                let durations = (0..subframe_count)
+                    .map(|_| engine::duration_from_f32(reader.read_f32::<LittleEndian>().unwrap()))
+                    .collect();
+
+                let subframes = (0..subframe_count)
+                    .map(|_| {
+                        let origin_x = reader.read_i32::<LittleEndian>().unwrap();
+                        let origin_z = reader.read_i32::<LittleEndian>().unwrap();
+
+                        let width = match reader.read_i32::<LittleEndian>().unwrap() {
+                            w if w < 0 => panic!("Negative subframe width ({}) in frame {}", w, i),
+                            w => w,
+                        };
+
+                        let height = match reader.read_i32::<LittleEndian>().unwrap() {
+                            h if h < 0 => panic!("Negative subframe height ({}) in frame {}", h, i),
+                            h => h,
+                        };
+
+                        let index_count = (width * height) as usize;
+                        let indices = (0..index_count as usize)
+                            .map(|_| reader.read_u8().unwrap())
+                            .collect();
+
+                        SpriteSubframe {
+                            width: width as u32,
+                            height: height as u32,
+                            up: origin_z as f32,
+                            down: (origin_z - height) as f32,
+                            left: origin_x as f32,
+                            right: (width + origin_x) as f32,
+                            indexed: indices,
+                        }
+                    })
+                    .collect();
+
+                SpriteFrame::Animated {
+                    durations,
+                    subframes,
+                }
             }
-            frames.push(SpriteFrame::Animated {
-                durations,
-                subframes,
-            });
-        }
-    }
+        })
+        .collect();
 
     SpriteModel {
         kind,

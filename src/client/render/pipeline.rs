@@ -20,12 +20,18 @@
 
 use std::mem::size_of;
 
+use bevy::render::{
+    render_resource::{BindGroupLayout, BindGroupLayoutDescriptor, RenderPipeline},
+    renderer::RenderDevice,
+};
+use wgpu::{core::binding_model::BindGroup, BindGroupLayoutEntry};
+
 use crate::common::util::{any_as_bytes, Pod};
 
 /// The `Pipeline` trait, which allows render pipelines to be defined more-or-less declaratively.
 
 fn create_shader<S>(
-    device: &wgpu::Device,
+    device: &RenderDevice,
     compiler: &mut shaderc::Compiler,
     name: S,
     kind: shaderc::ShaderKind,
@@ -73,7 +79,7 @@ pub trait Pipeline {
     fn name() -> &'static str;
 
     /// The `BindGroupLayoutDescriptor`s describing the bindings used in the pipeline.
-    fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>>;
+    fn bind_group_layout_descriptors() -> Vec<Vec<BindGroupLayoutEntry>>;
 
     /// The GLSL source of the pipeline's vertex shader.
     fn vertex_shader() -> &'static str;
@@ -178,18 +184,18 @@ pub trait Pipeline {
     /// created from this pipeline's `bind_group_layout_descriptors()` method when creating the
     /// `RenderPipeline`. This permits the reuse of `BindGroupLayout`s between pipelines.
     fn create(
-        device: &wgpu::Device,
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
-        bind_group_layout_prefix: &[wgpu::BindGroupLayout],
+        bind_group_layout_prefix: &[BindGroupLayout],
         sample_count: u32,
         args: Self::Args,
-    ) -> (wgpu::RenderPipeline, Vec<wgpu::BindGroupLayout>) {
+    ) -> (RenderPipeline, Vec<BindGroupLayout>) {
         Self::validate_push_constant_types(device.limits());
 
         info!("Creating {} pipeline", Self::name());
         let bind_group_layouts = Self::bind_group_layout_descriptors()
             .iter()
-            .map(|desc| device.create_bind_group_layout(desc))
+            .map(|desc| device.create_bind_group_layout(None, desc))
             .collect::<Vec<_>>();
         info!(
             "{} layouts in prefix | {} specific to pipeline",
@@ -202,6 +208,7 @@ pub trait Pipeline {
             let layouts: Vec<&wgpu::BindGroupLayout> = bind_group_layout_prefix
                 .iter()
                 .chain(bind_group_layouts.iter())
+                .map(BindGroupLayout::value)
                 .collect();
             info!("{} layouts total", layouts.len());
             let ranges = Self::push_constant_ranges();
@@ -259,18 +266,21 @@ pub trait Pipeline {
     /// Reconstructs the pipeline using its original bind group layouts and a new sample count.
     ///
     /// Pipelines must be reconstructed when the MSAA sample count is changed.
-    fn recreate(
-        device: &wgpu::Device,
+    fn recreate<'a, I: IntoIterator<Item = &'a BindGroupLayout>>(
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
-        bind_group_layouts: &[&wgpu::BindGroupLayout],
+        bind_group_layouts: I,
         sample_count: u32,
         args: Self::Args,
-    ) -> wgpu::RenderPipeline {
+    ) -> RenderPipeline {
         Self::validate_push_constant_types(device.limits());
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some(&format!("{} pipeline layout", Self::name())),
-            bind_group_layouts,
+            bind_group_layouts: &bind_group_layouts
+                .into_iter()
+                .map(BindGroupLayout::value)
+                .collect::<Vec<_>>(),
             push_constant_ranges: &[
                 Self::vertex_push_constant_range(),
                 Self::fragment_push_constant_range(),

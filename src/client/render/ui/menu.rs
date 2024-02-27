@@ -12,9 +12,10 @@ use crate::{
             GraphicsState,
         },
     },
-    common::wad::QPic,
+    common::{vfs::Vfs, wad::QPic},
 };
 
+use bevy::render::renderer::{RenderDevice, RenderQueue};
 use chrono::Duration;
 
 // original minimum Quake resolution
@@ -54,7 +55,13 @@ pub struct MenuRenderer {
 }
 
 impl MenuRenderer {
-    pub fn new(state: &GraphicsState, menu: &Menu) -> MenuRenderer {
+    pub fn new(
+        state: &GraphicsState,
+        vfs: &Vfs,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        menu: &Menu,
+    ) -> MenuRenderer {
         let mut tex_names = std::collections::HashSet::new();
         tex_names.insert("gfx/qplaque.lmp".to_string());
         tex_names.extend((1..=6).into_iter().map(|i| format!("gfx/menudot{}.lmp", i)));
@@ -83,7 +90,9 @@ impl MenuRenderer {
                         name.clone(),
                         QuadTexture::from_qpic(
                             state,
-                            &QPic::load(state.vfs().open(&name).unwrap()).unwrap(),
+                            device,
+                            queue,
+                            &QPic::load(vfs.open(&name).unwrap()).unwrap(),
                         ),
                     )
                 })
@@ -244,15 +253,15 @@ impl MenuRenderer {
         self.cmd_draw_glyph(SLIDER_HANDLE, handle_x, y, scale, glyph_cmds);
     }
 
-    fn cmd_draw_body_dynamic(
+    fn cmd_draw_body_dynamic<'a, I: Iterator<Item = &'a NamedMenuItem>>(
         &self,
-        items: &[NamedMenuItem],
+        items: I,
         cursor_pos: usize,
         time: Duration,
         scale: f32,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
     ) {
-        for (item_id, item) in items.iter().enumerate() {
+        for (item_id, item) in items.enumerate() {
             let y = MENU_HEIGHT - 32 - (GLYPH_HEIGHT * item_id) as i32;
             let x = 16 + 24 * GLYPH_WIDTH as i32;
             self.cmd_draw_item_name(x, y, item.name(), scale, glyph_cmds);
@@ -317,7 +326,7 @@ impl MenuRenderer {
             }
             MenuBodyView::Dynamic => {
                 self.cmd_draw_body_dynamic(
-                    &active_menu.items(),
+                    active_menu.items(),
                     cursor_pos,
                     time,
                     scale,

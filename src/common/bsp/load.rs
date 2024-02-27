@@ -20,6 +20,7 @@ use std::{
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     mem::size_of,
     rc::Rc,
+    sync::Arc,
 };
 
 use crate::common::{
@@ -469,7 +470,7 @@ where
     for _ in 0..plane_count {
         planes.push(read_hyperplane(&mut reader)?);
     }
-    let planes_rc = Rc::new(planes.into_boxed_slice());
+    let planes_rc = Arc::new(planes.into_boxed_slice());
 
     table.check_end_position(&mut reader, BspFileSectionId::Planes)?;
 
@@ -811,7 +812,7 @@ where
         });
     }
 
-    let collision_nodes_rc = Rc::new(collision_nodes.into_boxed_slice());
+    let collision_nodes_rc = Arc::new(collision_nodes.into_boxed_slice());
 
     let hull_1 = BspCollisionHull {
         planes: planes_rc.clone(),
@@ -1002,7 +1003,7 @@ where
             ],
         })
     }
-    let render_as_collision_nodes_rc = Rc::new(render_as_collision_nodes.into_boxed_slice());
+    let render_as_collision_nodes_rc = Arc::new(render_as_collision_nodes.into_boxed_slice());
 
     let hull_0 = BspCollisionHull {
         planes: planes_rc.clone(),
@@ -1013,7 +1014,7 @@ where
         maxs: Vector3::new(0.0, 0.0, 0.0),
     };
 
-    let bsp_data = Rc::new(BspData {
+    let bsp_data = Arc::new(BspData {
         planes: planes_rc.clone(),
         textures: textures.into_boxed_slice(),
         vertices: vertices.into_boxed_slice(),

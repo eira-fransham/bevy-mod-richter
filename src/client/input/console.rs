@@ -15,8 +15,6 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, rc::Rc};
-
 use crate::common::console::Console;
 
 use failure::Error;
@@ -25,47 +23,37 @@ use winit::{
     keyboard::{Key, NamedKey},
 };
 
-pub struct ConsoleInput {
-    console: Rc<RefCell<Console>>,
-}
-
-impl ConsoleInput {
-    pub fn new(console: Rc<RefCell<Console>>) -> ConsoleInput {
-        ConsoleInput { console }
-    }
-
-    pub fn handle_event<T>(&self, event: Event<T>) -> Result<(), Error> {
-        match event {
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            logical_key: key,
-                            state: ElementState::Pressed,
-                            ..
-                        },
-                    ..
-                } => match key.as_ref() {
-                    Key::Named(NamedKey::ArrowUp) => self.console.borrow_mut().history_up(),
-                    Key::Named(NamedKey::ArrowDown) => self.console.borrow_mut().history_down(),
-                    Key::Named(NamedKey::ArrowLeft) => self.console.borrow_mut().cursor_left(),
-                    Key::Named(NamedKey::ArrowRight) => self.console.borrow_mut().cursor_right(),
-                    Key::Named(NamedKey::Enter) => self.console.borrow_mut().send_char('\r'),
-                    Key::Character("`") => self.console.borrow_mut().append_text("toggleconsole"),
-                    Key::Character(c) => {
-                        for c in c.chars() {
-                            self.console.borrow_mut().send_char(c);
-                        }
+pub fn handle_event<T>(console: &mut Console, event: Event<T>) -> Result<(), Error> {
+    match event {
+        Event::WindowEvent { event, .. } => match event {
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: key,
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => match key.as_ref() {
+                Key::Named(NamedKey::ArrowUp) => console.history_up(),
+                Key::Named(NamedKey::ArrowDown) => console.history_down(),
+                Key::Named(NamedKey::ArrowLeft) => console.cursor_left(),
+                Key::Named(NamedKey::ArrowRight) => console.cursor_right(),
+                Key::Named(NamedKey::Enter) => console.send_char('\r'),
+                Key::Character("`") => console.append_text("toggleconsole"),
+                Key::Character(c) => {
+                    for c in c.chars() {
+                        console.send_char(c);
                     }
-                    _ => (),
-                },
-
+                }
                 _ => (),
             },
 
             _ => (),
-        }
+        },
 
-        Ok(())
+        _ => (),
     }
+
+    Ok(())
 }

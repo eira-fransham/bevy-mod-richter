@@ -20,6 +20,8 @@
 
 pub mod particle;
 
+use std::mem;
+
 use crate::common::{
     alloc::LinkedSlab,
     engine,
@@ -35,7 +37,7 @@ pub const MAX_BEAMS: usize = 24;
 pub const MAX_TEMP_ENTITIES: usize = 64;
 pub const MAX_STATIC_ENTITIES: usize = 128;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClientEntity {
     pub force_link: bool,
     pub baseline: EntityState,
@@ -268,28 +270,29 @@ impl Light {
 }
 
 /// A set of active dynamic lights.
+#[derive(Clone)]
 pub struct Lights {
-    slab: LinkedSlab<Light>,
+    lights: im::Vector<Light>,
 }
 
 impl Lights {
     /// Create an empty set of lights with the given capacity.
     pub fn with_capacity(capacity: usize) -> Lights {
         Lights {
-            slab: LinkedSlab::with_capacity(capacity),
+            lights: Default::default(),
         }
     }
 
     /// Return a reference to the light with the given key, or `None` if no
     /// such light exists.
     pub fn get(&self, key: usize) -> Option<&Light> {
-        self.slab.get(key)
+        self.lights.get(key)
     }
 
     /// Return a mutable reference to the light with the given key, or `None`
     /// if no such light exists.
     pub fn get_mut(&mut self, key: usize) -> Option<&mut Light> {
-        self.slab.get_mut(key)
+        self.lights.get_mut(key)
     }
 
     /// Insert a new light into the set of lights.
@@ -300,25 +303,36 @@ impl Lights {
     /// the light will be overwritten with the new value.
     pub fn insert(&mut self, time: Duration, desc: LightDesc, key: Option<usize>) -> usize {
         if let Some(k) = key {
-            if let Some(key_light) = self.slab.get_mut(k) {
+            if let Some(key_light) = self.lights.get_mut(k) {
                 *key_light = Light::from_desc(time, desc);
                 return k;
             }
         }
 
-        self.slab.insert(Light::from_desc(time, desc))
+        self.lights.push_back(Light::from_desc(time, desc));
+        self.lights.len() - 1
     }
 
     /// Return an iterator over the active lights.
     pub fn iter(&self) -> impl Iterator<Item = &Light> {
-        self.slab.iter()
+        self.lights.iter()
     }
 
     /// Updates the set of dynamic lights for the specified time.
     ///
     /// This will deallocate any lights which have outlived their time-to-live.
     pub fn update(&mut self, time: Duration) {
-        self.slab.retain(|_, light| light.retain(time));
+        let lights = mem::take(&mut self.lights)
+            .into_iter()
+            .filter_map(|mut light| {
+                if light.retain(time) {
+                    Some(light)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        self.lights = lights;
     }
 }
 

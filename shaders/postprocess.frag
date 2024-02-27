@@ -128,5 +128,5 @@ void main() {
     final = color_shifted;
   }
 
-  color_attachment = vec4(pow(final.rgb, vec3(postprocess_uniforms.inv_gamma)), in_color.a);
+  color_attachment = vec4(clamp(pow(final.rgb, vec3(postprocess_uniforms.inv_gamma)), vec3(0.), vec3(1.)), in_color.a);
 }

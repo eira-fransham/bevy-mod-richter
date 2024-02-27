@@ -17,6 +17,8 @@
 
 #![deny(unused_must_use)]
 #![feature(extract_if, iter_repeat_n)]
+// TODO: Is this necessary?
+#![recursion_limit = "256"]
 
 #[macro_use]
 extern crate bitflags;

@@ -19,8 +19,6 @@ pub mod console;
 pub mod game;
 pub mod menu;
 
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{
     client::menu::Menu,
     common::{
@@ -29,48 +27,44 @@ use crate::{
     },
 };
 
+use bevy::ecs::system::Resource;
 use failure::Error;
 use winit::event::{Event, WindowEvent};
 
-use self::{
-    console::ConsoleInput,
-    game::{BindInput, BindTarget, GameInput},
-    menu::MenuInput,
-};
+use self::game::{BindInput, BindTarget, GameInput};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Resource)]
 pub enum InputFocus {
     Game,
     Console,
     Menu,
 }
 
+// TODO: Make this a component on player?
+#[derive(Resource)]
 pub struct Input {
     window_focused: bool,
     focus: InputFocus,
 
     game_input: GameInput,
-    console_input: ConsoleInput,
-    menu_input: MenuInput,
 }
 
 impl Input {
-    pub fn new(
-        init_focus: InputFocus,
-        console: Rc<RefCell<Console>>,
-        menu: Rc<RefCell<Menu>>,
-    ) -> Input {
+    pub fn new(init_focus: InputFocus) -> Input {
         Input {
             window_focused: true,
             focus: init_focus,
 
-            game_input: GameInput::new(console.clone()),
-            console_input: ConsoleInput::new(console.clone()),
-            menu_input: MenuInput::new(menu.clone(), console.clone()),
+            game_input: GameInput::new(),
         }
     }
 
-    pub fn handle_event<T>(&mut self, event: Event<T>) -> Result<Control, Error> {
+    pub fn handle_event<T>(
+        &mut self,
+        menu: &mut Menu,
+        console: &mut Console,
+        event: Event<T>,
+    ) -> Result<Control, Error> {
         match event {
             // we're polling for hardware events, so we have to check window focus ourselves
             Event::WindowEvent {
@@ -81,9 +75,9 @@ impl Input {
             _ => {
                 if self.window_focused {
                     match self.focus {
-                        InputFocus::Game => self.game_input.handle_event(event),
-                        InputFocus::Console => self.console_input.handle_event(event)?,
-                        InputFocus::Menu => return self.menu_input.handle_event(event),
+                        InputFocus::Game => self.game_input.handle_event(console, event),
+                        InputFocus::Console => self::console::handle_event(console, event)?,
+                        InputFocus::Menu => return self::menu::handle_event(menu, console, event),
                     }
                 }
             }

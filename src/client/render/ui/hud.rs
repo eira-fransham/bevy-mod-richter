@@ -15,11 +15,13 @@ use crate::{
     common::{
         console::Console,
         net::{ClientStat, ItemFlags},
+        vfs::Vfs,
         wad::QPic,
     },
 };
 
 use arrayvec::ArrayVec;
+use bevy::render::renderer::{RenderDevice, RenderQueue};
 use chrono::Duration;
 use num::FromPrimitive as _;
 use strum::IntoEnumIterator as _;
@@ -195,7 +197,12 @@ pub struct HudRenderer {
 
 impl HudRenderer {
     /// Construct a new `HudRenderer`.
-    pub fn new(state: &GraphicsState) -> HudRenderer {
+    pub fn new(
+        state: &GraphicsState,
+        vfs: &Vfs,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) -> HudRenderer {
         use HudTextureId::*;
         let mut ids = Vec::new();
 
@@ -251,7 +258,7 @@ impl HudRenderer {
         for id in ids.into_iter() {
             debug!("Opening {}", id);
             let qpic = state.gfx_wad().open_qpic(id.to_string()).unwrap();
-            let texture = QuadTexture::from_qpic(state, &qpic);
+            let texture = QuadTexture::from_qpic(state, device, queue, &qpic);
             textures.insert(id, texture);
         }
 
@@ -259,8 +266,8 @@ impl HudRenderer {
         let ids = vec![Complete, Intermission];
         for id in ids.into_iter() {
             debug!("Opening {}", id);
-            let qpic = QPic::load(state.vfs().open(&format!("{}", id)).unwrap()).unwrap();
-            textures.insert(id, QuadTexture::from_qpic(state, &qpic));
+            let qpic = QPic::load(vfs.open(&format!("{}", id)).unwrap()).unwrap();
+            textures.insert(id, QuadTexture::from_qpic(state, device, queue, &qpic));
         }
 
         HudRenderer { textures }
@@ -670,9 +677,9 @@ impl HudRenderer {
 
                 let output = console.output();
                 for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
-                    for (chr_id, chr) in line.into_iter().enumerate() {
+                    for (chr_id, chr) in line.chars().enumerate() {
                         glyph_cmds.push(GlyphRendererCommand::Glyph {
-                            glyph_id: *chr as u8,
+                            glyph_id: chr as u8,
                             position: ScreenPosition::Relative {
                                 anchor: Anchor::TOP_LEFT,
                                 x_ofs: 8 * chr_id as i32,
@@ -695,9 +702,9 @@ impl HudRenderer {
                 // TODO: dedup this code
                 let output = console.output();
                 for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
-                    for (chr_id, chr) in line.into_iter().enumerate() {
+                    for (chr_id, chr) in line.chars().enumerate() {
                         glyph_cmds.push(GlyphRendererCommand::Glyph {
-                            glyph_id: *chr as u8,
+                            glyph_id: chr as u8,
                             position: ScreenPosition::Relative {
                                 anchor: Anchor::TOP_LEFT,
                                 x_ofs: 8 * chr_id as i32,

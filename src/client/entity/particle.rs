@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::ops::RangeInclusive;
+use std::{mem, ops::RangeInclusive};
 
 use crate::{
     client::ClientEntity,
@@ -222,9 +222,10 @@ pub enum TrailKind {
 ///
 /// Space for new particles is allocated from an internal [`Slab`](slab::Slab) of fixed
 /// size.
+#[derive(Clone)]
 pub struct Particles {
     // allocation pool
-    slab: LinkedSlab<Particle>,
+    particles: im::Vector<Particle>,
 
     // random number generator
     rng: SmallRng,
@@ -243,12 +244,11 @@ impl Particles {
             static ref VELOCITY_DISTRIBUTION: Uniform<f32> = Uniform::new(0.0, 2.56);
         }
 
-        let slab = LinkedSlab::with_capacity(capacity.min(MAX_PARTICLES));
         let rng = SmallRng::from_entropy();
         let angle_velocities = [Vector3::zero(); VERTEX_NORMAL_COUNT];
 
         let mut particles = Particles {
-            slab,
+            particles: Default::default(),
             rng,
             angle_velocities,
         };
@@ -265,22 +265,22 @@ impl Particles {
     // the original engine ignores new particles if at capacity, but it's not ideal
     pub fn insert(&mut self, particle: Particle) -> bool {
         // check capacity
-        if self.slab.len() == self.slab.capacity() {
+        if self.particles.len() == MIN_PARTICLES {
             return false;
         }
 
         // insert it
-        self.slab.insert(particle);
+        self.particles.push_back(particle);
         true
     }
 
     /// Clears all particles.
     pub fn clear(&mut self) {
-        self.slab.clear();
+        self.particles.clear();
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Particle> {
-        self.slab.iter()
+        self.particles.iter()
     }
 
     /// Update all live particles, deleting any that are expired.
@@ -289,8 +289,16 @@ impl Particles {
     /// function's return value indicates whether the particle should be retained
     /// or not.
     pub fn update(&mut self, time: Duration, frame_time: Duration, sv_gravity: f32) {
-        self.slab
-            .retain(|_, particle| particle.update(time, frame_time, sv_gravity));
+        self.particles = mem::take(&mut self.particles)
+            .into_iter()
+            .filter_map(|mut particle| {
+                if particle.update(time, frame_time, sv_gravity) {
+                    Some(particle)
+                } else {
+                    None
+                }
+            })
+            .collect();
     }
 
     fn scatter(&mut self, origin: Vector3<f32>, scatter_distr: &Uniform<f32>) -> Vector3<f32> {

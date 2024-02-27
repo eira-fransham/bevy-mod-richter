@@ -249,16 +249,16 @@ pub enum Keyframe {
     Animated(AnimatedKeyframe),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AliasModel {
     origin: Vector3<f32>,
     radius: f32,
     texture_width: u32,
     texture_height: u32,
-    textures: Box<[Texture]>,
-    texcoords: Box<[Texcoord]>,
-    polygons: Box<[IndexedPolygon]>,
-    keyframes: Box<[Keyframe]>,
+    textures: im::Vector<Texture>,
+    texcoords: im::Vector<Texcoord>,
+    polygons: im::Vector<IndexedPolygon>,
+    keyframes: im::Vector<Keyframe>,
     flags: ModelFlags,
 }
 
@@ -279,20 +279,20 @@ impl AliasModel {
         self.texture_height
     }
 
-    pub fn textures(&self) -> &[Texture] {
-        &self.textures
+    pub fn textures(&self) -> impl Iterator<Item = &Texture> {
+        self.textures.iter()
     }
 
-    pub fn texcoords(&self) -> &[Texcoord] {
-        &self.texcoords
+    pub fn texcoords(&self) -> impl Iterator<Item = &Texcoord> {
+        self.texcoords.iter()
     }
 
-    pub fn polygons(&self) -> &[IndexedPolygon] {
-        &self.polygons
+    pub fn polygons(&self) -> impl Iterator<Item = &IndexedPolygon> {
+        self.polygons.iter()
     }
 
-    pub fn keyframes(&self) -> &[Keyframe] {
-        &self.keyframes
+    pub fn keyframes(&self) -> impl Iterator<Item = &Keyframe> {
+        self.keyframes.iter()
     }
 
     pub fn flags(&self) -> ModelFlags {
@@ -377,154 +377,105 @@ where
         "Misaligned read on MDL header"
     );
 
-    let mut textures: Vec<Texture> = Vec::with_capacity(texture_count as usize);
-
-    for _ in 0..texture_count {
-        // TODO: add a TextureKind type
-        let texture = match reader.read_i32::<LittleEndian>()? {
-            // Static
-            0 => {
-                let mut indices: Vec<u8> =
-                    Vec::with_capacity((texture_width * texture_height) as usize);
-                (&mut reader)
-                    .take((texture_width * texture_height) as u64)
-                    .read_to_end(&mut indices)?;
-                Texture::Static(StaticTexture {
-                    indices: indices.into_boxed_slice(),
-                })
-            }
-
-            // Animated
-            1 => {
-                // TODO: sanity check this value
-                let texture_frame_count = reader.read_i32::<LittleEndian>()? as usize;
-
-                let mut durations = Vec::with_capacity(texture_frame_count);
-                for _ in 0..texture_frame_count {
-                    durations.push(engine::duration_from_f32(
-                        reader.read_f32::<LittleEndian>()?,
-                    ));
-                }
-
-                let mut frames = Vec::with_capacity(texture_frame_count);
-                for frame_id in 0..texture_frame_count {
+    let textures = (0..texture_count)
+        .map(|_| {
+            // TODO: add a TextureKind type
+            let texture = match reader.read_i32::<LittleEndian>()? {
+                // Static
+                0 => {
                     let mut indices: Vec<u8> =
                         Vec::with_capacity((texture_width * texture_height) as usize);
                     (&mut reader)
                         .take((texture_width * texture_height) as u64)
                         .read_to_end(&mut indices)?;
-                    frames.push(AnimatedTextureFrame {
-                        duration: durations[frame_id as usize],
+                    Texture::Static(StaticTexture {
                         indices: indices.into_boxed_slice(),
-                    });
+                    })
                 }
 
-                Texture::Animated(AnimatedTexture {
-                    frames: frames.into_boxed_slice(),
-                })
+                // Animated
+                1 => {
+                    // TODO: sanity check this value
+                    let texture_frame_count = reader.read_i32::<LittleEndian>()? as usize;
+
+                    let mut durations = Vec::with_capacity(texture_frame_count);
+                    for _ in 0..texture_frame_count {
+                        durations.push(engine::duration_from_f32(
+                            reader.read_f32::<LittleEndian>()?,
+                        ));
+                    }
+
+                    let mut frames = Vec::with_capacity(texture_frame_count);
+                    for frame_id in 0..texture_frame_count {
+                        let mut indices: Vec<u8> =
+                            Vec::with_capacity((texture_width * texture_height) as usize);
+                        (&mut reader)
+                            .take((texture_width * texture_height) as u64)
+                            .read_to_end(&mut indices)?;
+                        frames.push(AnimatedTextureFrame {
+                            duration: durations[frame_id as usize],
+                            indices: indices.into_boxed_slice(),
+                        });
+                    }
+
+                    Texture::Animated(AnimatedTexture {
+                        frames: frames.into_boxed_slice(),
+                    })
+                }
+
+                k => Err(MdlFileError::InvalidTextureKind(k))?,
+            };
+
+            Ok(texture)
+        })
+        .collect::<Result<_, MdlFileError>>()?;
+
+    let texcoords = (0..vertex_count)
+        .map(|_| {
+            let is_on_seam = match reader.read_i32::<LittleEndian>()? {
+                0 => false,
+                0x20 => true,
+                x => Err(MdlFileError::InvalidSeamFlag(x))?,
+            };
+
+            let s = reader.read_i32::<LittleEndian>()?;
+            let t = reader.read_i32::<LittleEndian>()?;
+            if s < 0 || t < 0 {
+                Err(MdlFileError::InvalidTexcoord([s, t]))?;
             }
 
-            k => Err(MdlFileError::InvalidTextureKind(k))?,
-        };
+            Ok(Texcoord {
+                is_on_seam,
+                s: s as u32,
+                t: t as u32,
+            })
+        })
+        .collect::<Result<_, MdlFileError>>()?;
 
-        textures.push(texture);
-    }
+    let polygons = (0..poly_count)
+        .map(|_| {
+            let faces_front = match reader.read_i32::<LittleEndian>()? {
+                0 => false,
+                1 => true,
+                x => Err(MdlFileError::InvalidFrontFacing(x))?,
+            };
 
-    let mut texcoords = Vec::with_capacity(vertex_count as usize);
-    for _ in 0..vertex_count {
-        let is_on_seam = match reader.read_i32::<LittleEndian>()? {
-            0 => false,
-            0x20 => true,
-            x => Err(MdlFileError::InvalidSeamFlag(x))?,
-        };
-
-        let s = reader.read_i32::<LittleEndian>()?;
-        let t = reader.read_i32::<LittleEndian>()?;
-        if s < 0 || t < 0 {
-            Err(MdlFileError::InvalidTexcoord([s, t]))?;
-        }
-
-        texcoords.push(Texcoord {
-            is_on_seam,
-            s: s as u32,
-            t: t as u32,
-        });
-    }
-
-    let mut polygons = Vec::with_capacity(poly_count as usize);
-    for _ in 0..poly_count {
-        let faces_front = match reader.read_i32::<LittleEndian>()? {
-            0 => false,
-            1 => true,
-            x => Err(MdlFileError::InvalidFrontFacing(x))?,
-        };
-
-        let mut indices = [0; 3];
-        for i in 0..3 {
-            indices[i] = reader.read_i32::<LittleEndian>()? as u32;
-        }
-
-        polygons.push(IndexedPolygon {
-            faces_front,
-            indices,
-        });
-    }
-
-    let mut keyframes: Vec<Keyframe> = Vec::with_capacity(keyframe_count as usize);
-    for _ in 0..keyframe_count {
-        keyframes.push(match reader.read_i32::<LittleEndian>()? {
-            0 => {
-                let min = read_vertex(&mut reader, scale, origin)?;
-                reader.read_u8()?; // discard vertex normal
-                let max = read_vertex(&mut reader, scale, origin)?;
-                reader.read_u8()?; // discard vertex normal
-
-                let name = {
-                    let mut bytes: [u8; 16] = [0; 16];
-                    reader.read(&mut bytes)?;
-                    let len = bytes
-                        .iter()
-                        .position(|b| *b == 0)
-                        .ok_or(MdlFileError::KeyframeNameTooLong(bytes))?;
-                    String::from_utf8(bytes[0..(len + 1)].to_vec())?
-                };
-
-                debug!("Keyframe name: {}", name);
-
-                let mut vertices: Vec<Vector3<f32>> = Vec::with_capacity(vertex_count as usize);
-                for _ in 0..vertex_count {
-                    vertices.push(read_vertex(&mut reader, scale, origin)?);
-                    reader.read_u8()?; // discard vertex normal
-                }
-
-                Keyframe::Static(StaticKeyframe {
-                    name,
-                    min,
-                    max,
-                    vertices: vertices.into_boxed_slice(),
-                })
+            let mut indices = [0; 3];
+            for i in 0..3 {
+                indices[i] = reader.read_i32::<LittleEndian>()? as u32;
             }
 
-            1 => {
-                let subframe_count = match reader.read_i32::<LittleEndian>()? {
-                    s if s <= 0 => panic!("Invalid subframe count: {}", s),
-                    s => s,
-                };
+            Ok(IndexedPolygon {
+                faces_front,
+                indices,
+            })
+        })
+        .collect::<Result<_, MdlFileError>>()?;
 
-                let abs_min = read_vertex(&mut reader, scale, origin)?;
-                reader.read_u8()?; // discard vertex normal
-                let abs_max = read_vertex(&mut reader, scale, origin)?;
-                reader.read_u8()?; // discard vertex normal
-
-                let mut durations = Vec::new();
-                for _ in 0..subframe_count {
-                    durations.push(engine::duration_from_f32(
-                        reader.read_f32::<LittleEndian>()?,
-                    ));
-                }
-
-                let mut subframes = Vec::new();
-                for subframe_id in 0..subframe_count {
+    let keyframes = (0..keyframe_count)
+        .map(|_| {
+            Ok(match reader.read_i32::<LittleEndian>()? {
+                0 => {
                     let min = read_vertex(&mut reader, scale, origin)?;
                     reader.read_u8()?; // discard vertex normal
                     let max = read_vertex(&mut reader, scale, origin)?;
@@ -540,7 +491,7 @@ where
                         String::from_utf8(bytes[0..(len + 1)].to_vec())?
                     };
 
-                    debug!("Frame name: {}", name);
+                    debug!("Keyframe name: {}", name);
 
                     let mut vertices: Vec<Vector3<f32>> = Vec::with_capacity(vertex_count as usize);
                     for _ in 0..vertex_count {
@@ -548,25 +499,78 @@ where
                         reader.read_u8()?; // discard vertex normal
                     }
 
-                    subframes.push(AnimatedKeyframeFrame {
+                    Keyframe::Static(StaticKeyframe {
+                        name,
                         min,
                         max,
-                        name,
-                        duration: durations[subframe_id as usize],
                         vertices: vertices.into_boxed_slice(),
                     })
                 }
 
-                Keyframe::Animated(AnimatedKeyframe {
-                    min: abs_min,
-                    max: abs_max,
-                    frames: subframes.into_boxed_slice(),
-                })
-            }
+                1 => {
+                    let subframe_count = match reader.read_i32::<LittleEndian>()? {
+                        s if s <= 0 => panic!("Invalid subframe count: {}", s),
+                        s => s,
+                    };
 
-            x => panic!("Bad frame kind value: {}", x),
-        });
-    }
+                    let abs_min = read_vertex(&mut reader, scale, origin)?;
+                    reader.read_u8()?; // discard vertex normal
+                    let abs_max = read_vertex(&mut reader, scale, origin)?;
+                    reader.read_u8()?; // discard vertex normal
+
+                    let mut durations = Vec::new();
+                    for _ in 0..subframe_count {
+                        durations.push(engine::duration_from_f32(
+                            reader.read_f32::<LittleEndian>()?,
+                        ));
+                    }
+
+                    let mut subframes = Vec::new();
+                    for subframe_id in 0..subframe_count {
+                        let min = read_vertex(&mut reader, scale, origin)?;
+                        reader.read_u8()?; // discard vertex normal
+                        let max = read_vertex(&mut reader, scale, origin)?;
+                        reader.read_u8()?; // discard vertex normal
+
+                        let name = {
+                            let mut bytes: [u8; 16] = [0; 16];
+                            reader.read(&mut bytes)?;
+                            let len = bytes
+                                .iter()
+                                .position(|b| *b == 0)
+                                .ok_or(MdlFileError::KeyframeNameTooLong(bytes))?;
+                            String::from_utf8(bytes[0..(len + 1)].to_vec())?
+                        };
+
+                        debug!("Frame name: {}", name);
+
+                        let mut vertices: Vec<Vector3<f32>> =
+                            Vec::with_capacity(vertex_count as usize);
+                        for _ in 0..vertex_count {
+                            vertices.push(read_vertex(&mut reader, scale, origin)?);
+                            reader.read_u8()?; // discard vertex normal
+                        }
+
+                        subframes.push(AnimatedKeyframeFrame {
+                            min,
+                            max,
+                            name,
+                            duration: durations[subframe_id as usize],
+                            vertices: vertices.into_boxed_slice(),
+                        })
+                    }
+
+                    Keyframe::Animated(AnimatedKeyframe {
+                        min: abs_min,
+                        max: abs_max,
+                        frames: subframes.into_boxed_slice(),
+                    })
+                }
+
+                x => panic!("Bad frame kind value: {}", x),
+            })
+        })
+        .collect::<Result<_, MdlFileError>>()?;
 
     if reader.seek(SeekFrom::Current(0))? != reader.seek(SeekFrom::End(0))? {
         panic!("Misaligned read on MDL file");
@@ -577,10 +581,10 @@ where
         radius,
         texture_width: texture_width as u32,
         texture_height: texture_height as u32,
-        textures: textures.into_boxed_slice(),
-        texcoords: texcoords.into_boxed_slice(),
-        polygons: polygons.into_boxed_slice(),
-        keyframes: keyframes.into_boxed_slice(),
+        textures,
+        texcoords,
+        polygons,
+        keyframes,
         flags,
     })
 }

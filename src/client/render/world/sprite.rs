@@ -11,26 +11,35 @@ use crate::{
     },
 };
 
+use bevy::{
+    ecs::component::Component,
+    render::{
+        render_resource::{
+            BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
+            TextureView,
+        },
+        renderer::{RenderDevice, RenderQueue},
+    },
+};
 use chrono::Duration;
 
 pub struct SpritePipeline {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    vertex_buffer: wgpu::Buffer,
+    pipeline: RenderPipeline,
+    bind_group_layouts: Vec<BindGroupLayout>,
+    vertex_buffer: Buffer,
 }
 
 impl SpritePipeline {
     pub fn new(
-        device: &wgpu::Device,
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
-        world_bind_group_layouts: &[wgpu::BindGroupLayout],
+        world_bind_group_layouts: &[BindGroupLayout],
         sample_count: u32,
     ) -> SpritePipeline {
         let (pipeline, bind_group_layouts) =
             SpritePipeline::create(device, compiler, world_bind_group_layouts, sample_count, ());
 
-        use wgpu::util::DeviceExt as _;
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let vertex_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: unsafe { any_slice_as_bytes(&VERTICES) },
             usage: wgpu::BufferUsages::VERTEX,
@@ -45,27 +54,26 @@ impl SpritePipeline {
 
     pub fn rebuild(
         &mut self,
-        device: &wgpu::Device,
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
-        world_bind_group_layouts: &[wgpu::BindGroupLayout],
+        world_bind_group_layouts: &[BindGroupLayout],
         sample_count: u32,
     ) {
-        let layout_refs: Vec<_> = world_bind_group_layouts
+        let layout_refs = world_bind_group_layouts
             .iter()
-            .chain(self.bind_group_layouts.iter())
-            .collect();
-        self.pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, ());
+            .chain(self.bind_group_layouts.iter());
+        self.pipeline = Self::recreate(device, compiler, layout_refs, sample_count, ());
     }
 
-    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+    pub fn pipeline(&self) -> &RenderPipeline {
         &self.pipeline
     }
 
-    pub fn bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+    pub fn bind_group_layouts(&self) -> &[BindGroupLayout] {
         &self.bind_group_layouts
     }
 
-    pub fn vertex_buffer(&self) -> &wgpu::Buffer {
+    pub fn vertex_buffer(&self) -> &Buffer {
         &self.vertex_buffer
     }
 }
@@ -103,25 +111,22 @@ impl Pipeline for SpritePipeline {
 
     // NOTE: if any of the binding indices are changed, they must also be changed in
     // the corresponding shaders and the BindGroupLayout generation functions.
-    fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
+    fn bind_group_layout_descriptors() -> Vec<Vec<BindGroupLayoutEntry>> {
         vec![
             // group 2: updated per-texture
-            wgpu::BindGroupLayoutDescriptor {
-                label: Some("sprite per-texture chain bind group"),
-                entries: &[
-                    // diffuse texture, updated once per face
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            multisampled: false,
-                        },
-                        count: None,
+            vec![
+                // diffuse texture, updated once per face
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        multisampled: false,
                     },
-                ],
-            },
+                    count: None,
+                },
+            ],
         ]
     }
 
@@ -195,50 +200,58 @@ pub const VERTICES: [SpriteVertex; 6] = [
 
 enum Frame {
     Static {
-        diffuse: wgpu::Texture,
-        diffuse_view: wgpu::TextureView,
-        bind_group: wgpu::BindGroup,
+        diffuse: Texture,
+        diffuse_view: TextureView,
+        bind_group: BindGroup,
     },
     Animated {
-        diffuses: Vec<wgpu::Texture>,
-        diffuse_views: Vec<wgpu::TextureView>,
-        bind_groups: Vec<wgpu::BindGroup>,
+        diffuses: Vec<Texture>,
+        diffuse_views: Vec<TextureView>,
+        bind_groups: Vec<BindGroup>,
         total_duration: Duration,
-        durations: Vec<Duration>,
+        durations: im::Vector<Duration>,
     },
 }
 
 impl Frame {
-    fn new(state: &GraphicsState, sframe: &SpriteFrame) -> Frame {
+    fn new(
+        state: &GraphicsState,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        sframe: &SpriteFrame,
+    ) -> Frame {
         fn convert_subframe(
             state: &GraphicsState,
+            device: &RenderDevice,
+            queue: &RenderQueue,
             subframe: &SpriteSubframe,
-        ) -> (wgpu::Texture, wgpu::TextureView, wgpu::BindGroup) {
+        ) -> (Texture, TextureView, BindGroup) {
             let (diffuse_data, _fullbright_data) = state.palette.translate(subframe.indexed());
             let diffuse = state.create_texture(
+                device,
+                queue,
                 None,
                 subframe.width(),
                 subframe.height(),
                 &TextureData::Diffuse(diffuse_data),
             );
             let diffuse_view = diffuse.create_view(&Default::default());
-            let bind_group = state
-                .device()
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: None,
-                    layout: &state.sprite_pipeline().bind_group_layouts()
-                        [BindGroupLayoutId::PerTexture as usize - 2],
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&diffuse_view),
-                    }],
-                });
+            let bind_group = device.create_bind_group(
+                None,
+                &state.sprite_pipeline().bind_group_layouts()
+                    [BindGroupLayoutId::PerTexture as usize - 2],
+                &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_view),
+                }],
+            );
             (diffuse, diffuse_view, bind_group)
         }
 
         match sframe {
             SpriteFrame::Static { frame } => {
-                let (diffuse, diffuse_view, bind_group) = convert_subframe(state, frame);
+                let (diffuse, diffuse_view, bind_group) =
+                    convert_subframe(state, device, queue, frame);
 
                 Frame::Static {
                     diffuse,
@@ -258,7 +271,8 @@ impl Frame {
                 let _ = subframes
                     .iter()
                     .map(|subframe| {
-                        let (diffuse, diffuse_view, bind_group) = convert_subframe(state, subframe);
+                        let (diffuse, diffuse_view, bind_group) =
+                            convert_subframe(state, device, queue, subframe);
                         diffuses.push(diffuse);
                         diffuse_views.push(diffuse_view);
                         bind_groups.push(bind_group);
@@ -301,17 +315,22 @@ impl Frame {
     }
 }
 
+#[derive(Component)]
 pub struct SpriteRenderer {
     kind: SpriteKind,
     frames: Vec<Frame>,
 }
 
 impl SpriteRenderer {
-    pub fn new(state: &GraphicsState, sprite: &SpriteModel) -> SpriteRenderer {
+    pub fn new(
+        state: &GraphicsState,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        sprite: &SpriteModel,
+    ) -> SpriteRenderer {
         let frames = sprite
             .frames()
-            .iter()
-            .map(|f| Frame::new(state, f))
+            .map(|f| Frame::new(state, device, queue, f))
             .collect();
 
         SpriteRenderer {
@@ -328,7 +347,7 @@ impl SpriteRenderer {
         time: Duration,
     ) {
         pass.set_pipeline(state.sprite_pipeline().pipeline());
-        pass.set_vertex_buffer(0, state.sprite_pipeline().vertex_buffer().slice(..));
+        pass.set_vertex_buffer(0, *state.sprite_pipeline().vertex_buffer().slice(..));
         pass.set_bind_group(
             BindGroupLayoutId::PerTexture as u32,
             self.frames[frame_id].animate(time),

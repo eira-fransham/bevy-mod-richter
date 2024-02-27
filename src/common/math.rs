@@ -20,6 +20,7 @@
 
 use std::{cmp::Ordering, convert::Into, ops::Neg};
 
+use bevy::reflect::Reflect;
 use cgmath::{Angle, Deg, InnerSpace, Matrix3, Matrix4, Vector2, Vector3, Zero};
 
 trait CoordSys {}
@@ -276,7 +277,7 @@ pub fn clamp_deg(val: Deg<f32>, min: Deg<f32>, max: Deg<f32>) -> Deg<f32> {
     };
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Reflect)]
 pub enum HyperplaneSide {
     Positive = 0,
     Negative = 1,
@@ -304,14 +305,14 @@ impl HyperplaneSide {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Reflect)]
 /// The intersection of a line or segment and a plane at a point.
 pub struct PointIntersection {
     // percentage of distance between start and end where crossover occurred
     ratio: f32,
 
     // crossover point
-    point: Vector3<f32>,
+    point: [f32; 3],
 
     // plane crossed over
     plane: Hyperplane,
@@ -323,7 +324,7 @@ impl PointIntersection {
     }
 
     pub fn point(&self) -> Vector3<f32> {
-        self.point
+        self.point.into()
     }
 
     pub fn plane(&self) -> &Hyperplane {
@@ -331,12 +332,12 @@ impl PointIntersection {
     }
 }
 
-#[derive(Debug)]
 /// The intersection of a line or line segment with a plane.
 ///
 /// A true mathematical representation would account for lines or segments contained entirely within
 /// the plane, but here a distance of 0.0 is considered Positive. Thus, lines or segments contained
 /// by the plane are considered to be `NoIntersection(Positive)`.
+#[derive(Debug, Reflect)]
 pub enum LinePlaneIntersect {
     /// The line or line segment never intersects with the plane.
     NoIntersection(HyperplaneSide),
@@ -345,20 +346,20 @@ pub enum LinePlaneIntersect {
     PointIntersection(PointIntersection),
 }
 
-#[derive(Copy, Clone, Debug, FromPrimitive)]
+#[derive(Copy, Clone, Debug, FromPrimitive, Reflect)]
 pub enum Axis {
     X = 0,
     Y = 1,
     Z = 2,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Reflect)]
 enum Alignment {
     Axis(Axis),
-    Normal(Vector3<f32>),
+    Normal([f32; 3]),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Reflect)]
 pub struct Hyperplane {
     alignment: Alignment,
     dist: f32,
@@ -374,7 +375,7 @@ impl Neg for Hyperplane {
                 n[a as usize] = -1.0;
                 n
             }
-            Alignment::Normal(n) => -n,
+            Alignment::Normal(n) => -Vector3::from(n),
         };
 
         Hyperplane::new(normal, -self.dist)
@@ -431,7 +432,7 @@ impl Hyperplane {
     /// is aligned along an axis.
     pub fn from_normal(normal: Vector3<f32>, dist: f32) -> Hyperplane {
         Hyperplane {
-            alignment: Alignment::Normal(normal.normalize()),
+            alignment: Alignment::Normal(normal.normalize().into()),
             dist,
         }
     }
@@ -444,7 +445,7 @@ impl Hyperplane {
                 Axis::Y => Vector3::unit_y(),
                 Axis::Z => Vector3::unit_z(),
             },
-            Alignment::Normal(normal) => normal,
+            Alignment::Normal(normal) => normal.into(),
         }
     }
 
@@ -452,7 +453,7 @@ impl Hyperplane {
     pub fn point_dist(&self, point: Vector3<f32>) -> f32 {
         match self.alignment {
             Alignment::Axis(a) => point[a as usize] - self.dist,
-            Alignment::Normal(n) => point.dot(n) - self.dist,
+            Alignment::Normal(n) => point.dot(n.into()) - self.dist,
         }
     }
 
@@ -462,7 +463,7 @@ impl Hyperplane {
     pub fn point_side(&self, point: Vector3<f32>) -> HyperplaneSide {
         let point_dist_greater = match self.alignment {
             Alignment::Axis(a) => point[a as usize] >= self.dist,
-            Alignment::Normal(n) => point.dot(n) - self.dist >= 0.0,
+            Alignment::Normal(n) => point.dot(n.into()) - self.dist >= 0.0,
         };
 
         match point_dist_greater {
@@ -505,7 +506,7 @@ impl Hyperplane {
 
         LinePlaneIntersect::PointIntersection(PointIntersection {
             ratio,
-            point,
+            point: point.into(),
             plane,
         })
     }

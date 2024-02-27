@@ -7,6 +7,10 @@ use std::{
     rc::Rc,
 };
 
+use bevy::{
+    ecs::world::World,
+    render::{render_resource::Buffer, renderer::RenderDevice},
+};
 use richter::client::render::Extent2d;
 
 use chrono::Utc;
@@ -17,21 +21,20 @@ const BYTES_PER_PIXEL: u32 = 4;
 ///
 /// This function returns a boxed closure which sets the `screenshot_path`
 /// argument to `Some` when called.
-pub fn cmd_screenshot(screenshot_path: Rc<RefCell<Option<PathBuf>>>) -> impl Fn(&[&str]) -> String {
-    move |args| {
-        let path = match args.len() {
-            // TODO: make default path configurable
-            0 => PathBuf::from(format!("richter-{}.png", Utc::now().format("%FT%H-%M-%S"))),
-            1 => PathBuf::from(args[0]),
-            _ => {
-                log::error!("Usage: screenshot [PATH]");
-                return "Usage: screenshot [PATH]".to_owned();
-            }
-        };
+pub fn cmd_screenshot(args: &[&str], world: &mut World) -> String {
+    let screenshot_path: &mut Option<PathBuf> = todo!();
+    let path = match args.len() {
+        // TODO: make default path configurable
+        0 => PathBuf::from(format!("richter-{}.png", Utc::now().format("%FT%H-%M-%S"))),
+        1 => PathBuf::from(args[0]),
+        _ => {
+            log::error!("Usage: screenshot [PATH]");
+            return "Usage: screenshot [PATH]".to_owned();
+        }
+    };
 
-        screenshot_path.replace(Some(path));
-        String::new()
-    }
+    *screenshot_path = Some(path);
+    String::new()
 }
 
 pub struct Capture {
@@ -42,13 +45,13 @@ pub struct Capture {
     row_width: u32,
 
     // mappable buffer
-    buffer: wgpu::Buffer,
+    buffer: Buffer,
 
     data: Option<Box<[u8]>>,
 }
 
 impl Capture {
-    pub fn new(device: &wgpu::Device, capture_size: Extent2d) -> Capture {
+    pub fn new(device: &RenderDevice, capture_size: Extent2d) -> Capture {
         // bytes_per_row must be a multiple of 256
         // 4 bytes per pixel, so width must be multiple of 64
         let row_width = (capture_size.width + 63) / 64 * 64;
@@ -80,14 +83,14 @@ impl Capture {
                 layout: wgpu::ImageDataLayout {
                     offset: 0,
                     bytes_per_row: Some(self.row_width * BYTES_PER_PIXEL),
-                    rows_per_image: None,
+                    rows_per_image: Some(self.capture_size.height),
                 },
             },
             self.capture_size.into(),
         );
     }
 
-    pub fn read_texture(&mut self, device: &wgpu::Device) {
+    pub fn read_texture(&mut self, device: &RenderDevice) {
         if self.data.is_some() {
             return;
         }
@@ -126,7 +129,7 @@ impl Capture {
         self.data.as_deref()
     }
 
-    pub fn write_to_file<P>(&mut self, device: &wgpu::Device, path: P)
+    pub fn write_to_file<P>(&mut self, device: &RenderDevice, path: P)
     where
         P: AsRef<Path>,
     {

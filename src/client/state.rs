@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, iter, rc::Rc, sync::Arc};
 
 use super::view::BobVars;
 use crate::{
@@ -45,45 +45,49 @@ const CACHED_SOUND_NAMES: &[&'static str] = &[
     "wizard/hit.wav",
 ];
 
+#[derive(Clone)]
 pub struct PlayerInfo {
-    pub name: String,
+    pub name: imstr::ImString,
     pub frags: i32,
     pub colors: PlayerColor,
     // translations: [u8; VID_GRADES],
 }
 
+// TODO: We clone this into the render world but this is inefficient
+//       e.g., none of the elements related to sound need to be accessed from the renderer
 // client information regarding the current level
+#[derive(Clone)]
 pub struct ClientState {
     // local rng
     rng: SmallRng,
 
     // model precache
-    pub models: Vec<Model>,
+    pub models: im::Vector<Model>,
     // name-to-id map
-    pub model_names: HashMap<String, usize>,
+    pub model_names: im::HashMap<String, usize>,
 
     // audio source precache
-    pub sounds: Vec<AudioSource>,
+    pub sounds: im::Vector<AudioSource>,
 
     // sounds that are always needed even if not in precache
-    cached_sounds: HashMap<String, AudioSource>,
+    cached_sounds: im::HashMap<String, AudioSource>,
 
     // ambient sounds (infinite looping, static position)
-    pub static_sounds: Vec<StaticSound>,
+    pub static_sounds: im::Vector<Arc<StaticSound>>,
 
     // entities and entity-like things
-    pub entities: Vec<ClientEntity>,
-    pub static_entities: Vec<ClientEntity>,
-    pub temp_entities: Vec<ClientEntity>,
+    pub entities: im::Vector<ClientEntity>,
+    pub static_entities: im::Vector<ClientEntity>,
+    pub temp_entities: im::Vector<ClientEntity>,
     // dynamic point lights
-    pub lights: Lights,
+    pub lights: Arc<Lights>,
     // lightning bolts and grappling hook cable
     pub beams: [Option<Beam>; MAX_BEAMS],
     // particle effects
-    pub particles: Particles,
+    pub particles: Arc<Particles>,
 
     // visible entities, rebuilt per-frame
-    pub visible_entity_ids: Vec<usize>,
+    pub visible_entity_ids: im::Vector<usize>,
 
     pub light_styles: HashMap<u8, String>,
 
@@ -101,7 +105,7 @@ pub struct ClientState {
     pub items: ItemFlags,
     pub item_get_time: [Duration; net::MAX_ITEMS],
     pub face_anim_time: Duration,
-    pub color_shifts: [Rc<RefCell<ColorShift>>; 4],
+    pub color_shifts: [ColorShift; 4],
     pub view: View,
 
     pub msg_velocity: [Vector3<f32>; 2],
@@ -120,22 +124,22 @@ pub struct ClientState {
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(stream: OutputStreamHandle) -> ClientState {
+    pub fn new(output_stream: OutputStreamHandle) -> ClientState {
         ClientState {
             rng: SmallRng::from_entropy(),
-            models: vec![Model::none()],
-            model_names: HashMap::new(),
-            sounds: Vec::new(),
-            cached_sounds: HashMap::new(),
-            static_sounds: Vec::new(),
-            entities: Vec::new(),
-            static_entities: Vec::new(),
-            temp_entities: Vec::new(),
-            lights: Lights::with_capacity(MAX_LIGHTS),
+            models: iter::once(Model::none()).collect(),
+            model_names: Default::default(),
+            sounds: Default::default(),
+            cached_sounds: Default::default(),
+            static_sounds: Default::default(),
+            entities: Default::default(),
+            static_entities: Default::default(),
+            temp_entities: Default::default(),
+            lights: Lights::with_capacity(MAX_LIGHTS).into(),
             beams: [None; MAX_BEAMS],
-            particles: Particles::with_capacity(MAX_PARTICLES),
-            visible_entity_ids: Vec::new(),
-            light_styles: HashMap::new(),
+            particles: Particles::with_capacity(MAX_PARTICLES).into(),
+            visible_entity_ids: Default::default(),
+            light_styles: Default::default(),
             stats: [0; MAX_STATS],
             max_players: 0,
             player_info: Default::default(),
@@ -144,24 +148,7 @@ impl ClientState {
             lerp_factor: 0.0,
             items: ItemFlags::empty(),
             item_get_time: [Duration::zero(); net::MAX_ITEMS],
-            color_shifts: [
-                Rc::new(RefCell::new(ColorShift {
-                    dest_color: [0; 3],
-                    percent: 0,
-                })),
-                Rc::new(RefCell::new(ColorShift {
-                    dest_color: [0; 3],
-                    percent: 0,
-                })),
-                Rc::new(RefCell::new(ColorShift {
-                    dest_color: [0; 3],
-                    percent: 0,
-                })),
-                Rc::new(RefCell::new(ColorShift {
-                    dest_color: [0; 3],
-                    percent: 0,
-                })),
-            ],
+            color_shifts: Default::default(),
             view: View::new(),
             face_anim_time: Duration::zero(),
             msg_velocity: [Vector3::zero(), Vector3::zero()],
@@ -171,22 +158,21 @@ impl ClientState {
             intermission: None,
             start_time: Duration::zero(),
             completion_time: None,
-            mixer: EntityMixer::new(stream),
+            mixer: EntityMixer::new(output_stream),
             listener: Listener::new(),
         }
     }
 
-    pub fn from_server_info(
+    pub fn from_server_info<SName: AsRef<str>>(
         vfs: &Vfs,
-        stream: OutputStreamHandle,
         max_clients: u8,
         model_precache: Vec<String>,
-        sound_precache: Vec<String>,
+        sound_precache: Vec<SName>,
+        output_stream: OutputStreamHandle,
     ) -> Result<ClientState, ClientError> {
         // TODO: validate submodel names
-        let mut models = Vec::with_capacity(model_precache.len());
-        models.push(Model::none());
-        let mut model_names = HashMap::new();
+        let mut models: im::Vector<_> = iter::once(Model::none()).collect();
+        let mut model_names = im::HashMap::new();
         for mod_name in model_precache {
             // BSPs can have more than one model
             if mod_name.ends_with(".bsp") {
@@ -195,31 +181,35 @@ impl ClientState {
                 for bmodel in brush_models.drain(..) {
                     let id = models.len();
                     let name = bmodel.name().to_owned();
-                    models.push(bmodel);
+                    models.push_back(bmodel);
                     model_names.insert(name, id);
                 }
             } else if !mod_name.starts_with("*") {
                 // model names starting with * are loaded from the world BSP
                 debug!("Loading model {}", mod_name);
                 let id = models.len();
-                models.push(Model::load(vfs, &mod_name)?);
+                models.push_back(Model::load(vfs, &mod_name)?);
                 model_names.insert(mod_name, id);
             }
 
             // TODO: send keepalive message?
         }
 
-        let mut sounds = vec![AudioSource::load(&vfs, "misc/null.wav")?];
-        for ref snd_name in sound_precache {
-            debug!("Loading sound {}: {}", sounds.len(), snd_name);
-            sounds.push(AudioSource::load(vfs, snd_name)?);
-            // TODO: send keepalive message?
-        }
+        let sounds = iter::once("misc/null.wav")
+            .chain(sound_precache.iter().map(AsRef::as_ref))
+            .enumerate()
+            .map(|(i, snd_name)| {
+                debug!("Loading sound {}: {}", i, snd_name);
 
-        let mut cached_sounds = HashMap::new();
-        for name in CACHED_SOUND_NAMES {
-            cached_sounds.insert(name.to_string(), AudioSource::load(vfs, name)?);
-        }
+                Ok(AudioSource::load(vfs, snd_name)?)
+                // TODO: send keepalive message?
+            })
+            .collect::<Result<_, ClientError>>()?;
+
+        let cached_sounds = CACHED_SOUND_NAMES
+            .iter()
+            .map(|name| Ok((name.to_string(), AudioSource::load(vfs, *name)?.into())))
+            .collect::<Result<_, ClientError>>()?;
 
         Ok(ClientState {
             models,
@@ -227,7 +217,7 @@ impl ClientState {
             sounds,
             cached_sounds,
             max_players: max_clients as usize,
-            ..ClientState::new(stream)
+            ..ClientState::new(output_stream)
         })
     }
 
@@ -382,13 +372,13 @@ impl ClientState {
             }
 
             if ent.effects.contains(EntityEffects::BRIGHT_FIELD) {
-                self.particles.create_entity_field(self.time, ent);
+                Arc::make_mut(&mut self.particles).create_entity_field(self.time, ent);
             }
 
             // TODO: factor out EntityEffects->LightDesc mapping
             if ent.effects.contains(EntityEffects::MUZZLE_FLASH) {
                 // TODO: angle and move origin to muzzle
-                ent.light_id = Some(self.lights.insert(
+                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin + Vector3::new(0.0, 0.0, 16.0),
@@ -402,7 +392,7 @@ impl ClientState {
             }
 
             if ent.effects.contains(EntityEffects::BRIGHT_LIGHT) {
-                ent.light_id = Some(self.lights.insert(
+                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
@@ -416,7 +406,7 @@ impl ClientState {
             }
 
             if ent.effects.contains(EntityEffects::DIM_LIGHT) {
-                ent.light_id = Some(self.lights.insert(
+                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
@@ -439,7 +429,7 @@ impl ClientState {
             } else if model.has_flag(ModelFlags::TRACER2) {
                 Some(TrailKind::TracerRed)
             } else if model.has_flag(ModelFlags::ROCKET) {
-                ent.light_id = Some(self.lights.insert(
+                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
@@ -461,14 +451,19 @@ impl ClientState {
 
             // if the entity leaves a trail, generate it
             if let Some(kind) = trail_kind {
-                self.particles
-                    .create_trail(self.time, prev_origin, ent.origin, kind, false);
+                Arc::make_mut(&mut self.particles).create_trail(
+                    self.time,
+                    prev_origin,
+                    ent.origin,
+                    kind,
+                    false,
+                );
             }
 
             // don't render the player model
             if self.view.entity_id() != ent_id {
                 // mark entity for rendering
-                self.visible_entity_ids.push(ent_id);
+                self.visible_entity_ids.push_back(ent_id);
             }
 
             // enable lerp for next frame
@@ -479,7 +474,7 @@ impl ClientState {
         for ent in self.static_entities.iter_mut() {
             if ent.effects.contains(EntityEffects::BRIGHT_LIGHT) {
                 debug!("spawn bright light on static entity");
-                ent.light_id = Some(self.lights.insert(
+                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
@@ -494,7 +489,7 @@ impl ClientState {
 
             if ent.effects.contains(EntityEffects::DIM_LIGHT) {
                 debug!("spawn dim light on static entity");
-                ent.light_id = Some(self.lights.insert(
+                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
@@ -545,7 +540,7 @@ impl ClientState {
                         Vector3::new(pitch, yaw, Deg(ANGLE_DISTRIBUTION.sample(&mut self.rng)));
 
                     if self.temp_entities.len() < MAX_TEMP_ENTITIES {
-                        self.temp_entities.push(ent);
+                        self.temp_entities.push_back(ent);
                     } else {
                         warn!("too many temp entities!");
                     }
@@ -690,7 +685,7 @@ impl ClientState {
         self.face_anim_time = self.time + Duration::milliseconds(200);
 
         let dmg_factor = (armor + health).min(20) as f32 / 2.0;
-        let mut cshift = self.color_shifts[ColorShiftCode::Damage as usize].borrow_mut();
+        let mut cshift = self.color_shifts[ColorShiftCode::Damage as usize];
         cshift.percent += 3 * dmg_factor as i32;
         cshift.percent = cshift.percent.clamp(0, 150);
 
@@ -756,16 +751,17 @@ impl ClientState {
         }
 
         // spawn intermediate entities (uninitialized)
-        for i in self.entities.len()..id {
+        self.entities.extend((self.entities.len()..id).map(|i| {
             debug!("Spawning uninitialized entity with ID {}", i);
-            self.entities.push(ClientEntity::uninitialized());
-        }
+            ClientEntity::uninitialized()
+        }));
 
         debug!(
             "Spawning entity with id {} from baseline {:?}",
             id, baseline
         );
-        self.entities.push(ClientEntity::from_baseline(baseline));
+        self.entities
+            .push_back(ClientEntity::from_baseline(baseline));
 
         Ok(())
     }
@@ -858,7 +854,7 @@ impl ClientState {
                             _ => unreachable!(),
                         };
 
-                        self.particles.create_projectile_impact(
+                        Arc::make_mut(&mut self.particles).create_projectile_impact(
                             self.time,
                             *origin,
                             Vector3::zero(),
@@ -881,8 +877,8 @@ impl ClientState {
                     }
 
                     Explosion => {
-                        self.particles.create_explosion(self.time, *origin);
-                        self.lights.insert(
+                        Arc::make_mut(&mut self.particles).create_explosion(self.time, *origin);
+                        Arc::make_mut(&mut self.lights).insert(
                             self.time,
                             LightDesc {
                                 origin: *origin,
@@ -913,12 +909,12 @@ impl ClientState {
                         color_start,
                         color_len,
                     } => {
-                        self.particles.create_color_explosion(
+                        Arc::make_mut(&mut self.particles).create_color_explosion(
                             self.time,
                             *origin,
                             (*color_start)..=(*color_start + *color_len - 1),
                         );
-                        self.lights.insert(
+                        Arc::make_mut(&mut self.lights).insert(
                             self.time,
                             LightDesc {
                                 origin: *origin,
@@ -946,7 +942,8 @@ impl ClientState {
                     }
 
                     TarExplosion => {
-                        self.particles.create_spawn_explosion(self.time, *origin);
+                        Arc::make_mut(&mut self.particles)
+                            .create_spawn_explosion(self.time, *origin);
 
                         self.mixer.start_sound(
                             self.cached_sounds
@@ -963,8 +960,11 @@ impl ClientState {
                         );
                     }
 
-                    LavaSplash => self.particles.create_lava_splash(self.time, *origin),
-                    Teleport => self.particles.create_teleporter_warp(self.time, *origin),
+                    LavaSplash => {
+                        Arc::make_mut(&mut self.particles).create_lava_splash(self.time, *origin)
+                    }
+                    Teleport => Arc::make_mut(&mut self.particles)
+                        .create_teleporter_warp(self.time, *origin),
                 }
             }
 
@@ -1036,7 +1036,7 @@ impl ClientState {
         }
     }
 
-    pub fn update_listener(&self) {
+    pub fn update_listener(&mut self) {
         // TODO: update to self.view_origin()
         let view_origin = self.entities[self.view.entity_id()].origin;
         let world_translate = Matrix4::from_translation(view_origin);
@@ -1054,23 +1054,27 @@ impl ClientState {
         self.listener.set_right_ear(right);
     }
 
-    pub fn update_sound_spatialization(&self) {
+    pub fn update_sound_spatialization(&mut self) {
         self.update_listener();
 
         // update entity sounds
-        for e_channel in self.mixer.iter_entity_channels() {
+        for e_channel in self.mixer.iter_entity_channels_mut() {
             if let Some(ent_id) = e_channel.entity_id() {
                 if e_channel.channel().in_use() {
                     e_channel
-                        .channel()
+                        .channel_mut()
                         .update(self.entities[ent_id].origin, &self.listener);
                 }
             }
         }
 
         // update static sounds
-        for ss in self.static_sounds.iter() {
-            ss.update(&self.listener);
+        for ss in self.static_sounds.iter_mut() {
+            // TODO: Split sound into a non-cloneable struct - we only allow it to be cloned as we need
+            //       to send render data to the render thread for pipelined rendering
+            Arc::get_mut(ss)
+                .expect("This should never actually be shared!")
+                .update(&self.listener);
         }
     }
 
@@ -1090,40 +1094,38 @@ impl ClientState {
         let float_time = engine::duration_to_f32(frame_time);
 
         // set color for leaf contents
-        self.color_shifts[ColorShiftCode::Contents as usize].replace(
-            match self.view_leaf_contents()? {
-                bsp::BspLeafContents::Empty => ColorShift {
-                    dest_color: [0, 0, 0],
-                    percent: 0,
-                },
-                bsp::BspLeafContents::Lava => ColorShift {
-                    dest_color: [255, 80, 0],
-                    percent: 150,
-                },
-                bsp::BspLeafContents::Slime => ColorShift {
-                    dest_color: [0, 25, 5],
-                    percent: 150,
-                },
-                _ => ColorShift {
-                    dest_color: [130, 80, 50],
-                    percent: 128,
-                },
+        self.color_shifts[ColorShiftCode::Contents as usize] = match self.view_leaf_contents()? {
+            bsp::BspLeafContents::Empty => ColorShift {
+                dest_color: [0, 0, 0],
+                percent: 0,
             },
-        );
+            bsp::BspLeafContents::Lava => ColorShift {
+                dest_color: [255, 80, 0],
+                percent: 150,
+            },
+            bsp::BspLeafContents::Slime => ColorShift {
+                dest_color: [0, 25, 5],
+                percent: 150,
+            },
+            _ => ColorShift {
+                dest_color: [130, 80, 50],
+                percent: 128,
+            },
+        };
 
         // decay damage and item pickup shifts
         // always decay at least 1 "percent" (actually 1/255)
         // TODO: make percent an actual percent ([0.0, 1.0])
-        let mut dmg_shift = self.color_shifts[ColorShiftCode::Damage as usize].borrow_mut();
+        let dmg_shift = &mut self.color_shifts[ColorShiftCode::Damage as usize];
         dmg_shift.percent -= ((float_time * 150.0) as i32).max(1);
         dmg_shift.percent = dmg_shift.percent.max(0);
 
-        let mut bonus_shift = self.color_shifts[ColorShiftCode::Bonus as usize].borrow_mut();
+        let bonus_shift = &mut self.color_shifts[ColorShiftCode::Bonus as usize];
         bonus_shift.percent -= ((float_time * 100.0) as i32).max(1);
         bonus_shift.percent = bonus_shift.percent.max(0);
 
         // set power-up overlay
-        self.color_shifts[ColorShiftCode::Powerup as usize].replace(
+        self.color_shifts[ColorShiftCode::Powerup as usize] =
             if self.items.contains(ItemFlags::QUAD) {
                 ColorShift {
                     dest_color: [0, 0, 255],
@@ -1149,8 +1151,7 @@ impl ClientState {
                     dest_color: [0, 0, 0],
                     percent: 0,
                 }
-            },
-        );
+            };
 
         Ok(())
     }
@@ -1196,8 +1197,8 @@ impl ClientState {
         Ok(())
     }
 
-    pub fn models(&self) -> &[Model] {
-        &self.models
+    pub fn models(&self) -> impl Iterator<Item = &Model> {
+        self.models.iter()
     }
 
     pub fn viewmodel_id(&self) -> usize {
@@ -1207,7 +1208,7 @@ impl ClientState {
         }
     }
 
-    pub fn iter_visible_entities(&self) -> impl Iterator<Item = &ClientEntity> + Clone {
+    pub fn iter_visible_entities(&self) -> impl Iterator<Item = &ClientEntity> {
         self.visible_entity_ids
             .iter()
             .map(move |i| &self.entities[*i])
@@ -1311,7 +1312,7 @@ impl ClientState {
 
     pub fn color_shift(&self) -> [f32; 4] {
         self.color_shifts.iter().fold([0.0; 4], |accum, elem| {
-            let elem_a = elem.borrow().percent as f32 / 255.0 / 2.0;
+            let elem_a = elem.percent as f32 / 255.0 / 2.0;
             if elem_a == 0.0 {
                 return accum;
             }
@@ -1322,7 +1323,7 @@ impl ClientState {
             let mut out = [0.0; 4];
             for i in 0..3 {
                 out[i] = accum[i] * (1.0 - color_factor)
-                    + elem.borrow().dest_color[i] as f32 / 255.0 * color_factor;
+                    + elem.dest_color[i] as f32 / 255.0 * color_factor;
             }
             out[3] = out_a.min(1.0).max(0.0);
             out

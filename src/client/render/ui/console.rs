@@ -7,9 +7,10 @@ use crate::{
         },
         GraphicsState,
     },
-    common::{console::Console, engine, wad::QPic},
+    common::{console::Console, engine, vfs::Vfs, wad::QPic},
 };
 
+use bevy::render::renderer::{RenderDevice, RenderQueue};
 use chrono::Duration;
 
 const PAD_LEFT: i32 = GLYPH_WIDTH as i32;
@@ -19,10 +20,17 @@ pub struct ConsoleRenderer {
 }
 
 impl ConsoleRenderer {
-    pub fn new(state: &GraphicsState) -> ConsoleRenderer {
+    pub fn new(
+        state: &GraphicsState,
+        vfs: &Vfs,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+    ) -> ConsoleRenderer {
         let conback = QuadTexture::from_qpic(
             state,
-            &QPic::load(state.vfs().open("gfx/conback.lmp").unwrap()).unwrap(),
+            device,
+            queue,
+            &QPic::load(vfs.open("gfx/conback.lmp").unwrap()).unwrap(),
         );
 
         ConsoleRenderer { conback }
@@ -75,7 +83,7 @@ impl ConsoleRenderer {
         });
         let input_text = console.get_string();
         glyph_cmds.push(GlyphRendererCommand::Text {
-            text: input_text,
+            text: input_text.to_owned(),
             position: ScreenPosition::Relative {
                 anchor: console_anchor,
                 x_ofs: PAD_LEFT + GLYPH_WIDTH as i32,
@@ -105,21 +113,21 @@ impl ConsoleRenderer {
                 break;
             }
 
-            for (chr_id, chr) in line.iter().enumerate() {
+            for (chr_id, chr) in line.chars().enumerate() {
                 let position = ScreenPosition::Relative {
                     anchor: console_anchor,
                     x_ofs: PAD_LEFT + (1 + chr_id * GLYPH_WIDTH) as i32,
                     y_ofs: ((line_id + 1) * GLYPH_HEIGHT) as i32,
                 };
 
-                let c = if *chr as u32 > std::u8::MAX as u32 {
+                let c = if chr as u32 > std::u8::MAX as u32 {
                     warn!(
                         "char \"{}\" (U+{:4}) cannot be displayed in the console",
-                        *chr, *chr as u32
+                        chr, chr as u32
                     );
                     '?'
                 } else {
-                    *chr
+                    chr
                 };
 
                 glyph_cmds.push(GlyphRendererCommand::Glyph {

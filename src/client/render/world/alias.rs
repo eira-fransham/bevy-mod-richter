@@ -11,20 +11,29 @@ use crate::{
     },
 };
 
+use bevy::{
+    ecs::component::Component,
+    render::{
+        render_resource::{
+            BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, TextureView,
+        },
+        renderer::{RenderDevice, RenderQueue},
+    },
+};
 use cgmath::{InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
 use failure::Error;
 
 pub struct AliasPipeline {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    pipeline: RenderPipeline,
+    bind_group_layouts: Vec<BindGroupLayout>,
 }
 
 impl AliasPipeline {
     pub fn new(
-        device: &wgpu::Device,
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
-        world_bind_group_layouts: &[wgpu::BindGroupLayout],
+        world_bind_group_layouts: &[BindGroupLayout],
         sample_count: u32,
     ) -> AliasPipeline {
         let (pipeline, bind_group_layouts) =
@@ -38,23 +47,22 @@ impl AliasPipeline {
 
     pub fn rebuild(
         &mut self,
-        device: &wgpu::Device,
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
-        world_bind_group_layouts: &[wgpu::BindGroupLayout],
+        world_bind_group_layouts: &[BindGroupLayout],
         sample_count: u32,
     ) {
-        let layout_refs: Vec<_> = world_bind_group_layouts
+        let layout_refs = world_bind_group_layouts
             .iter()
-            .chain(self.bind_group_layouts.iter())
-            .collect();
-        self.pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, ());
+            .chain(self.bind_group_layouts.iter());
+        self.pipeline = Self::recreate(device, compiler, layout_refs, sample_count, ());
     }
 
-    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+    pub fn pipeline(&self) -> &RenderPipeline {
         &self.pipeline
     }
 
-    pub fn bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+    pub fn bind_group_layouts(&self) -> &[BindGroupLayout] {
         &self.bind_group_layouts
     }
 }
@@ -99,25 +107,22 @@ impl Pipeline for AliasPipeline {
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/alias.frag"))
     }
 
-    fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
+    fn bind_group_layout_descriptors() -> Vec<Vec<BindGroupLayoutEntry>> {
         vec![
             // group 2: updated per-texture
-            wgpu::BindGroupLayoutDescriptor {
-                label: Some("brush per-texture chain bind group"),
-                entries: &[
-                    // diffuse texture, updated once per face
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            multisampled: false,
-                        },
-                        count: None,
+            vec![
+                // diffuse texture, updated once per face
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        multisampled: false,
                     },
-                ],
-            },
+                    count: None,
+                },
+            ],
         ]
     }
 
@@ -193,14 +198,14 @@ impl Keyframe {
 
 enum Texture {
     Static {
-        diffuse_texture: wgpu::Texture,
-        diffuse_view: wgpu::TextureView,
-        bind_group: wgpu::BindGroup,
+        diffuse_texture: bevy::render::render_resource::Texture,
+        diffuse_view: TextureView,
+        bind_group: BindGroup,
     },
     Animated {
-        diffuse_textures: Vec<wgpu::Texture>,
-        diffuse_views: Vec<wgpu::TextureView>,
-        bind_groups: Vec<wgpu::BindGroup>,
+        diffuse_textures: Vec<bevy::render::render_resource::Texture>,
+        diffuse_views: Vec<TextureView>,
+        bind_groups: Vec<BindGroup>,
         total_duration: Duration,
         durations: Vec<Duration>,
     },
@@ -211,11 +216,10 @@ impl Texture {
         match self {
             Texture::Static { ref bind_group, .. } => bind_group,
             Texture::Animated {
-                diffuse_textures,
-                diffuse_views,
                 bind_groups,
                 total_duration,
                 durations,
+                ..
             } => {
                 let mut time_ms = time.num_milliseconds() % total_duration.num_milliseconds();
 
@@ -232,14 +236,20 @@ impl Texture {
     }
 }
 
+#[derive(Component)]
 pub struct AliasRenderer {
     keyframes: Vec<Keyframe>,
     textures: Vec<Texture>,
-    vertex_buffer: wgpu::Buffer,
+    vertex_buffer: Buffer,
 }
 
 impl AliasRenderer {
-    pub fn new(state: &GraphicsState, alias_model: &AliasModel) -> Result<AliasRenderer, Error> {
+    pub fn new(
+        state: &GraphicsState,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        alias_model: &AliasModel,
+    ) -> Result<AliasRenderer, Error> {
         let mut vertices = Vec::new();
         let mut keyframes = Vec::new();
 
@@ -255,7 +265,7 @@ impl AliasRenderer {
                         for (i, index) in polygon.indices().iter().enumerate() {
                             tri[i] = static_keyframe.vertices()[*index as usize].into();
 
-                            let texcoord = &alias_model.texcoords()[*index as usize];
+                            let texcoord = &alias_model.texcoords().nth(*index as usize).unwrap();
                             let s = if !polygon.faces_front() && texcoord.is_on_seam() {
                                 (texcoord.s() + w / 2) as f32 + 0.5
                             } else {
@@ -296,7 +306,8 @@ impl AliasRenderer {
                             for (i, index) in polygon.indices().iter().enumerate() {
                                 tri[i] = frame.vertices()[*index as usize].into();
 
-                                let texcoord = &alias_model.texcoords()[*index as usize];
+                                let texcoord =
+                                    &alias_model.texcoords().nth(*index as usize).unwrap();
                                 let s = if !polygon.faces_front() && texcoord.is_on_seam() {
                                     (texcoord.s() + w / 2) as f32 + 0.5
                                 } else {
@@ -330,35 +341,36 @@ impl AliasRenderer {
             }
         }
 
-        use wgpu::util::DeviceExt as _;
-        let vertex_buffer = state
-            .device()
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: unsafe { any_slice_as_bytes(vertices.as_slice()) },
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        let vertex_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: unsafe { any_slice_as_bytes(vertices.as_slice()) },
+            usage: wgpu::BufferUsages::VERTEX,
+        });
 
         let mut textures = Vec::new();
         for texture in alias_model.textures() {
             match *texture {
                 mdl::Texture::Static(ref tex) => {
                     let (diffuse_data, _fullbright_data) = state.palette.translate(tex.indices());
-                    let diffuse_texture =
-                        state.create_texture(None, w, h, &TextureData::Diffuse(diffuse_data));
+                    let diffuse_texture = state.create_texture(
+                        device,
+                        queue,
+                        None,
+                        w,
+                        h,
+                        &TextureData::Diffuse(diffuse_data),
+                    );
                     let diffuse_view = diffuse_texture.create_view(&Default::default());
-                    let bind_group = state
-                        .device()
-                        .create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: None,
-                            // TODO: per-pipeline bind group layout ids
-                            layout: &state.alias_pipeline().bind_group_layouts()
-                                [BindGroupLayoutId::PerTexture as usize - 2],
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(&diffuse_view),
-                            }],
-                        });
+                    let bind_group = device.create_bind_group(
+                        None,
+                        // TODO: per-pipeline bind group layout ids
+                        &state.alias_pipeline().bind_group_layouts()
+                            [BindGroupLayoutId::PerTexture as usize - 2],
+                        &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&diffuse_view),
+                        }],
+                    );
                     textures.push(Texture::Static {
                         diffuse_texture,
                         diffuse_view,
@@ -378,21 +390,24 @@ impl AliasRenderer {
 
                         let (diffuse_data, _fullbright_data) =
                             state.palette.translate(frame.indices());
-                        let diffuse_texture =
-                            state.create_texture(None, w, h, &TextureData::Diffuse(diffuse_data));
+                        let diffuse_texture = state.create_texture(
+                            device,
+                            queue,
+                            None,
+                            w,
+                            h,
+                            &TextureData::Diffuse(diffuse_data),
+                        );
                         let diffuse_view = diffuse_texture.create_view(&Default::default());
-                        let bind_group =
-                            state
-                                .device()
-                                .create_bind_group(&wgpu::BindGroupDescriptor {
-                                    label: None,
-                                    layout: &state.alias_pipeline().bind_group_layouts()
-                                        [BindGroupLayoutId::PerTexture as usize - 2],
-                                    entries: &[wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: wgpu::BindingResource::TextureView(&diffuse_view),
-                                    }],
-                                });
+                        let bind_group = device.create_bind_group(
+                            None,
+                            &state.alias_pipeline().bind_group_layouts()
+                                [BindGroupLayoutId::PerTexture as usize - 2],
+                            &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&diffuse_view),
+                            }],
+                        );
 
                         diffuse_textures.push(diffuse_texture);
                         diffuse_views.push(diffuse_view);
@@ -426,7 +441,7 @@ impl AliasRenderer {
         texture_id: usize,
     ) {
         pass.set_pipeline(state.alias_pipeline().pipeline());
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        pass.set_vertex_buffer(0, *self.vertex_buffer.slice(..));
 
         pass.set_bind_group(
             BindGroupLayoutId::PerTexture as u32,

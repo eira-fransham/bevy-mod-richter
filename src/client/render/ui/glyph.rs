@@ -12,6 +12,13 @@ use crate::{
     common::util::any_slice_as_bytes,
 };
 
+use bevy::render::{
+    render_resource::{
+        BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
+        TextureView,
+    },
+    renderer::{RenderDevice, RenderQueue},
+};
 use cgmath::Vector2;
 
 pub const GLYPH_WIDTH: usize = 8;
@@ -39,15 +46,15 @@ lazy_static! {
 }
 
 pub struct GlyphPipeline {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    pipeline: RenderPipeline,
+    bind_group_layouts: Vec<BindGroupLayout>,
     format: wgpu::TextureFormat,
-    instance_buffer: wgpu::Buffer,
+    instance_buffer: Buffer,
 }
 
 impl GlyphPipeline {
     pub fn new(
-        device: &wgpu::Device,
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
         format: wgpu::TextureFormat,
         sample_count: u32,
@@ -76,23 +83,23 @@ impl GlyphPipeline {
 
     pub fn rebuild(
         &mut self,
-        device: &wgpu::Device,
+        device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
         sample_count: u32,
     ) {
-        let layout_refs = self.bind_group_layouts.iter().collect::<Vec<_>>();
-        self.pipeline = Self::recreate(device, compiler, &layout_refs, sample_count, self.format);
+        let layout_refs = self.bind_group_layouts.iter();
+        self.pipeline = Self::recreate(device, compiler, layout_refs, sample_count, self.format);
     }
 
-    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+    pub fn pipeline(&self) -> &RenderPipeline {
         &self.pipeline
     }
 
-    pub fn bind_group_layouts(&self) -> &[wgpu::BindGroupLayout] {
+    pub fn bind_group_layouts(&self) -> &[BindGroupLayout] {
         &self.bind_group_layouts
     }
 
-    pub fn instance_buffer(&self) -> &wgpu::Buffer {
+    pub fn instance_buffer(&self) -> &Buffer {
         &self.instance_buffer
     }
 }
@@ -141,11 +148,8 @@ impl Pipeline for GlyphPipeline {
         QuadPipeline::primitive_state()
     }
 
-    fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
-        vec![wgpu::BindGroupLayoutDescriptor {
-            label: Some("glyph constant bind group"),
-            entries: BIND_GROUP_LAYOUT_ENTRIES,
-        }]
+    fn bind_group_layout_descriptors() -> Vec<Vec<BindGroupLayoutEntry>> {
+        vec![BIND_GROUP_LAYOUT_ENTRIES.to_owned()]
     }
 
     fn color_target_states_with_args(format: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
@@ -197,14 +201,14 @@ pub enum GlyphRendererCommand {
 
 pub struct GlyphRenderer {
     #[allow(dead_code)]
-    textures: Vec<wgpu::Texture>,
+    textures: Vec<Texture>,
     #[allow(dead_code)]
-    texture_views: Vec<wgpu::TextureView>,
-    const_bind_group: wgpu::BindGroup,
+    texture_views: Vec<TextureView>,
+    const_bind_group: BindGroup,
 }
 
 impl GlyphRenderer {
-    pub fn new(state: &GraphicsState) -> GlyphRenderer {
+    pub fn new(state: &GraphicsState, device: &RenderDevice, queue: &RenderQueue) -> GlyphRenderer {
         let conchars = state.gfx_wad().open_conchars().unwrap();
 
         // TODO: validate conchars dimensions
@@ -233,6 +237,8 @@ impl GlyphRenderer {
             .map(|(id, indices)| {
                 let (diffuse_data, _) = state.palette().translate(&indices);
                 state.create_texture(
+                    device,
+                    queue,
                     Some(&format!("conchars[{}]", id)),
                     GLYPH_WIDTH as u32,
                     GLYPH_HEIGHT as u32,
@@ -245,24 +251,22 @@ impl GlyphRenderer {
             .iter()
             .map(|tex| tex.create_view(&Default::default()))
             .collect::<Vec<_>>();
-        let texture_view_refs = texture_views.iter().collect::<Vec<_>>();
+        let texture_view_refs = texture_views.iter().map(|t| &**t).collect::<Vec<_>>();
 
-        let const_bind_group = state
-            .device()
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("glyph constant bind group"),
-                layout: &state.glyph_pipeline().bind_group_layouts()[0],
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs[..]),
-                    },
-                ],
-            });
+        let const_bind_group = device.create_bind_group(
+            Some("glyph constant bind group"),
+            &state.glyph_pipeline().bind_group_layouts()[0],
+            &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs[..]),
+                },
+            ],
+        );
 
         GlyphRenderer {
             textures,
@@ -363,19 +367,18 @@ impl GlyphRenderer {
     pub fn record_draw<'a>(
         &'a self,
         state: &'a GraphicsState,
+        queue: &RenderQueue,
         pass: &mut wgpu::RenderPass<'a>,
         target_size: Extent2d,
         commands: &[GlyphRendererCommand],
     ) {
         let instances = self.generate_instances(commands, target_size);
-        state
-            .queue()
-            .write_buffer(state.glyph_pipeline().instance_buffer(), 0, unsafe {
-                any_slice_as_bytes(&instances)
-            });
+        queue.write_buffer(state.glyph_pipeline().instance_buffer(), 0, unsafe {
+            any_slice_as_bytes(&instances)
+        });
         pass.set_pipeline(state.glyph_pipeline().pipeline());
-        pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
-        pass.set_vertex_buffer(1, state.glyph_pipeline().instance_buffer().slice(..));
+        pass.set_vertex_buffer(0, *state.quad_pipeline().vertex_buffer().slice(..));
+        pass.set_vertex_buffer(1, *state.glyph_pipeline().instance_buffer().slice(..));
         pass.set_bind_group(0, &self.const_bind_group, &[]);
         pass.draw(0..6, 0..commands.len() as u32);
     }

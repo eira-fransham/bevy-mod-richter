@@ -118,7 +118,7 @@
 
 mod load;
 
-use std::{collections::HashSet, error::Error, fmt, iter::Iterator, rc::Rc};
+use std::{collections::HashSet, error::Error, fmt, iter::Iterator, sync::Arc};
 
 use crate::common::math::{Hyperplane, HyperplaneSide, LinePlaneIntersect};
 
@@ -357,8 +357,8 @@ pub struct BspCollisionNode {
 
 #[derive(Debug)]
 pub struct BspCollisionHull {
-    planes: Rc<Box<[Hyperplane]>>,
-    nodes: Rc<Box<[BspCollisionNode]>>,
+    planes: Arc<Box<[Hyperplane]>>,
+    nodes: Arc<Box<[BspCollisionNode]>>,
     node_id: usize,
     node_count: usize,
     mins: Vector3<f32>,
@@ -448,8 +448,8 @@ impl BspCollisionHull {
         });
 
         Ok(BspCollisionHull {
-            planes: Rc::new(planes.into_boxed_slice()),
-            nodes: Rc::new(nodes.into_boxed_slice()),
+            planes: Arc::new(planes.into_boxed_slice()),
+            nodes: Arc::new(nodes.into_boxed_slice()),
             node_id: 0,
             node_count: 6,
             mins,
@@ -700,7 +700,7 @@ impl<'a> BspLightmap<'a> {
 
 #[derive(Debug)]
 pub struct BspData {
-    pub(crate) planes: Rc<Box<[Hyperplane]>>,
+    pub(crate) planes: Arc<Box<[Hyperplane]>>,
     pub(crate) textures: Box<[BspTexture]>,
     pub(crate) vertices: Box<[Vector3<f32>]>,
     pub(crate) visibility: Box<[u8]>,
@@ -935,9 +935,9 @@ impl BspData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BspModel {
-    pub bsp_data: Rc<BspData>,
+    pub bsp_data: Arc<BspData>,
     pub min: Vector3<f32>,
     pub max: Vector3<f32>,
     pub origin: Vector3<f32>,
@@ -950,7 +950,7 @@ pub struct BspModel {
 }
 
 impl BspModel {
-    pub fn bsp_data(&self) -> Rc<BspData> {
+    pub fn bsp_data(&self) -> Arc<BspData> {
         self.bsp_data.clone()
     }
 

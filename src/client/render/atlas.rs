@@ -1,8 +1,13 @@
-use std::{cmp::Ordering, mem::size_of};
+use std::cmp::Ordering;
 
 use crate::client::render::Palette;
 
+use bevy::render::{
+    render_resource::Texture,
+    renderer::{RenderDevice, RenderQueue},
+};
 use failure::Error;
+use wgpu::util::TextureDataOrder;
 
 const DEFAULT_ATLAS_DIM: u32 = 1024;
 
@@ -82,8 +87,8 @@ impl TextureAtlasBuilder {
     pub fn build(
         self,
         label: Option<&str>,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        device: &RenderDevice,
+        queue: &RenderQueue,
         palette: &Palette,
     ) -> Result<TextureAtlas, Error> {
         let TextureAtlasBuilder { textures } = self;
@@ -253,46 +258,27 @@ impl TextureAtlasBuilder {
         let (_, subtextures): (Vec<usize>, Vec<TextureAtlasSubtexture>) =
             enumerated_subtextures.into_iter().unzip();
 
-        let (rgba, fullbright) = palette.translate(&atlas.indexed);
+        let (rgba, _fullbright) = palette.translate(&atlas.indexed);
 
-        let diffuse_buffer = device.create_buffer_with_data(&rgba, wgpu::BufferUsages::COPY_SRC);
-        let diffuse_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            size: wgpu::Extent3d {
-                width: atlas.width,
-                height: atlas.height,
-                depth_or_array_layers: 1,
+        let diffuse_texture = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d {
+                    width: atlas.width,
+                    height: atlas.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::empty(),
+                view_formats: Default::default(),
             },
-            array_layer_count: 1,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::NONE,
-        });
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &diffuse_buffer,
-                offset: 0,
-                bytes_per_row: atlas.width * atlas.height * size_of::<[u8; 4]> as u32,
-                rows_per_image: 1,
-            },
-            wgpu::ImageCopyTexture {
-                texture: &diffuse_texture,
-                mip_level: 1,
-                array_layer: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            wgpu::Extent3d {
-                width: atlas.width,
-                height: atlas.height,
-                depth_or_array_layers: 1,
-            },
+            TextureDataOrder::default(),
+            &*rgba.rgba,
         );
-        let cmd_buffer = encoder.finish();
-        queue.submit(&[cmd_buffer]);
 
         Ok(TextureAtlas {
             atlas: diffuse_texture,
@@ -326,7 +312,7 @@ impl TextureAtlasSubtexture {
 
 pub struct TextureAtlas {
     /// A handle to the atlas data on the GPU.
-    atlas: wgpu::Texture,
+    atlas: Texture,
     /// The width in texels of the atlas.
     width: u32,
     /// The height in texels of the atlas.

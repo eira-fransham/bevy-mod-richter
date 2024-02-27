@@ -33,12 +33,17 @@ use crate::{
     },
 };
 
+use bevy::render::{
+    render_resource::BindGroupLayoutEntry,
+    renderer::{RenderDevice, RenderQueue},
+};
 use bumpalo::Bump;
 use cgmath::{Euler, InnerSpace, Matrix4, SquareMatrix as _, Vector3, Vector4};
 use chrono::Duration;
+use parking_lot::RwLock;
 
 lazy_static! {
-    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<wgpu::BindGroupLayoutEntry>; 2] = [
+    static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<BindGroupLayoutEntry>; 2] = [
         vec![
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -83,17 +88,9 @@ lazy_static! {
         ],
     ];
 
-    pub static ref BIND_GROUP_LAYOUT_DESCRIPTORS: [wgpu::BindGroupLayoutDescriptor<'static>; 2] = [
-        // group 0: updated per-frame
-        wgpu::BindGroupLayoutDescriptor {
-            label: Some("per-frame bind group"),
-            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
-        },
-        // group 1: updated per-entity
-        wgpu::BindGroupLayoutDescriptor {
-            label: Some("brush per-entity bind group"),
-            entries: &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
-        },
+    pub static ref BIND_GROUP_LAYOUT_DESCRIPTORS: [&'static [BindGroupLayoutEntry]; 2] = [
+        &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[0],
+        &BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS[1],
     ];
 }
 
@@ -118,7 +115,7 @@ impl Pipeline for WorldPipelineBase {
         ""
     }
 
-    fn bind_group_layout_descriptors() -> Vec<wgpu::BindGroupLayoutDescriptor<'static>> {
+    fn bind_group_layout_descriptors() -> Vec<Vec<BindGroupLayoutEntry>> {
         // TODO
         vec![]
     }
@@ -311,11 +308,17 @@ pub struct WorldRenderer {
     entity_renderers: Vec<EntityRenderer>,
 
     world_uniform_block: DynamicUniformBufferBlock<EntityUniforms>,
-    entity_uniform_blocks: RefCell<Vec<DynamicUniformBufferBlock<EntityUniforms>>>,
+    entity_uniform_blocks: RwLock<Vec<DynamicUniformBufferBlock<EntityUniforms>>>,
 }
 
 impl WorldRenderer {
-    pub fn new(state: &GraphicsState, models: &[Model], worldmodel_id: usize) -> WorldRenderer {
+    pub fn new<'a, M: Iterator<Item = &'a Model>>(
+        state: &'a mut GraphicsState,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        models: M,
+        worldmodel_id: usize,
+    ) -> WorldRenderer {
         let mut worldmodel_renderer = None;
         let mut entity_renderers = Vec::new();
 
@@ -324,13 +327,13 @@ impl WorldRenderer {
             model: Matrix4::identity(),
         });
 
-        for (i, model) in models.iter().enumerate() {
+        for (i, model) in models.enumerate() {
             if i == worldmodel_id {
                 match *model.kind() {
                     ModelKind::Brush(ref bmodel) => {
                         worldmodel_renderer = Some(
                             BrushRendererBuilder::new(bmodel, true)
-                                .build(state)
+                                .build(state, device, queue)
                                 .unwrap(),
                         );
                     }
@@ -339,20 +342,21 @@ impl WorldRenderer {
             } else {
                 match *model.kind() {
                     ModelKind::Alias(ref amodel) => entity_renderers.push(EntityRenderer::Alias(
-                        AliasRenderer::new(state, amodel).unwrap(),
+                        AliasRenderer::new(state, device, queue, amodel).unwrap(),
                     )),
 
                     ModelKind::Brush(ref bmodel) => {
                         entity_renderers.push(EntityRenderer::Brush(
                             BrushRendererBuilder::new(bmodel, false)
-                                .build(state)
+                                .build(state, device, queue)
                                 .unwrap(),
                         ));
                     }
 
                     ModelKind::Sprite(ref smodel) => {
-                        entity_renderers
-                            .push(EntityRenderer::Sprite(SpriteRenderer::new(&state, smodel)));
+                        entity_renderers.push(EntityRenderer::Sprite(SpriteRenderer::new(
+                            &state, device, queue, smodel,
+                        )));
                     }
 
                     _ => {
@@ -367,13 +371,14 @@ impl WorldRenderer {
             worldmodel_renderer: worldmodel_renderer.unwrap(),
             entity_renderers,
             world_uniform_block,
-            entity_uniform_blocks: RefCell::new(Vec::new()),
+            entity_uniform_blocks: Default::default(),
         }
     }
 
     pub fn update_uniform_buffers<'a, I>(
         &self,
         state: &GraphicsState,
+        queue: &RenderQueue,
         camera: &Camera,
         time: Duration,
         entities: I,
@@ -383,22 +388,20 @@ impl WorldRenderer {
         I: Iterator<Item = &'a ClientEntity>,
     {
         trace!("Updating frame uniform buffer");
-        state
-            .queue()
-            .write_buffer(state.frame_uniform_buffer(), 0, unsafe {
-                any_as_bytes(&FrameUniforms {
-                    lightmap_anim_frames: {
-                        let mut frames = [UniformArrayFloat::new(0.0); 64];
-                        for i in 0..64 {
-                            frames[i] = UniformArrayFloat::new(lightstyle_values[i]);
-                        }
-                        frames
-                    },
-                    camera_pos: camera.origin.extend(1.0),
-                    time: engine::duration_to_f32(time),
-                    r_lightmap: UniformBool::new(cvars.get_value("r_lightmap").unwrap() != 0.0),
-                })
-            });
+        queue.write_buffer(state.frame_uniform_buffer(), 0, unsafe {
+            any_as_bytes(&FrameUniforms {
+                lightmap_anim_frames: {
+                    let mut frames = [UniformArrayFloat::new(0.0); 64];
+                    for i in 0..64 {
+                        frames[i] = UniformArrayFloat::new(lightstyle_values[i]);
+                    }
+                    frames
+                },
+                camera_pos: camera.origin.extend(1.0),
+                time: engine::duration_to_f32(time),
+                r_lightmap: UniformBool::new(cvars.get_value("r_lightmap").unwrap() != 0.0),
+            })
+        });
 
         trace!("Updating entity uniform buffer");
         let world_uniforms = EntityUniforms {
@@ -415,18 +418,18 @@ impl WorldRenderer {
                 model: self.calculate_model_transform(camera, ent),
             };
 
-            if ent_pos >= self.entity_uniform_blocks.borrow().len() {
+            if ent_pos >= self.entity_uniform_blocks.read().len() {
                 // if we don't have enough blocks, get a new one
                 let block = state.entity_uniform_buffer_mut().allocate(ent_uniforms);
-                self.entity_uniform_blocks.borrow_mut().push(block);
+                self.entity_uniform_blocks.write().push(block);
             } else {
                 state
                     .entity_uniform_buffer_mut()
-                    .write_block(&self.entity_uniform_blocks.borrow()[ent_pos], ent_uniforms);
+                    .write_block(&self.entity_uniform_blocks.read()[ent_pos], ent_uniforms);
             }
         }
 
-        state.entity_uniform_buffer().flush(state.queue());
+        state.entity_uniform_buffer().flush(queue);
     }
 
     pub fn render_pass<'a, E, P>(
@@ -438,23 +441,14 @@ impl WorldRenderer {
         time: Duration,
         entities: E,
         particles: P,
-        lightstyle_values: &[f32],
         viewmodel_id: usize,
         cvars: &CvarRegistry,
     ) where
-        E: Iterator<Item = &'a ClientEntity> + Clone,
+        E: Iterator<Item = &'a ClientEntity>,
         P: Iterator<Item = &'a Particle>,
     {
         use PushConstantUpdate::*;
         info!("Updating uniform buffers");
-        self.update_uniform_buffers(
-            state,
-            camera,
-            time,
-            entities.clone(),
-            lightstyle_values,
-            cvars,
-        );
 
         pass.set_bind_group(
             BindGroupLayoutId::PerFrame as u32,
@@ -488,7 +482,7 @@ impl WorldRenderer {
             pass.set_bind_group(
                 BindGroupLayoutId::PerEntity as u32,
                 &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
-                &[self.entity_uniform_blocks.borrow()[ent_pos].offset()],
+                &[self.entity_uniform_blocks.read()[ent_pos].offset()],
             );
 
             match self.renderer_for_entity(&ent) {

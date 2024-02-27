@@ -21,12 +21,19 @@
 use std::{
     borrow::BorrowMut,
     cell::RefCell,
-    iter,
+    iter, mem,
     path::PathBuf,
     rc::Rc,
     sync::{Arc, Mutex, Once},
 };
 
+use bevy::{
+    ecs::world::World,
+    render::{
+        render_resource::TextureView,
+        renderer::{RenderDevice, RenderQueue},
+    },
+};
 use lazy_static::lazy_static;
 use num::integer::Roots;
 use video_rs::{Encoder, EncoderSettings, Locator, Time};
@@ -42,10 +49,10 @@ use richter::{
         input::Input,
         menu::Menu,
         render::{
-            Extent2d, GraphicsState, RenderTarget as _, RenderTargetResolve as _, SwapChainTarget,
+            Extent2d, GraphicsState, RenderTarget as _, RenderTargetResolve, SwapChainTarget,
         },
         trace::TraceFrame,
-        Client, ClientError,
+        ClientError,
     },
     common::console::{CmdRegistry, Console, CvarRegistry},
 };
@@ -54,61 +61,51 @@ use chrono::{Duration, TimeDelta, Utc};
 use failure::Error;
 use log::{debug, info};
 
-#[derive(PartialEq, Eq, Default, Debug, Copy, Clone)]
-enum ScreenshotTarget {
-    #[default]
-    Final,
-    Game,
-}
-
-fn cmd_startvideo(
-    target: ScreenshotTarget,
-    video_context: Rc<RefCell<Option<VideoState>>>,
-) -> impl Fn(&[&str]) -> String {
+fn cmd_startvideo(args: &[&str], world: &mut World) -> String {
     static VIDEO_INIT: Once = Once::new();
 
-    move |args| {
-        let path = match args.len() {
-            // TODO: make default path configurable
-            0 => PathBuf::from(format!("richter-{}.mp4", Utc::now().format("%FT%H-%M-%S"))),
-            1 => PathBuf::from(args[0]),
-            _ => {
-                return "Usage: startvideo [PATH]".to_owned();
-            }
-        };
+    let video_context: &mut Option<VideoState> = todo!();
 
-        VIDEO_INIT.call_once(|| {
-            video_rs::init().unwrap();
-        });
-
-        if let Some(VideoState::Recording(RecordingState { mut encoder, .. })) =
-            video_context.replace(Some(VideoState::Pending(path, target)))
-        {
-            if let Err(e) = encoder.finish() {
-                return format!("Failed writing video: {}", e);
-            }
+    let path = match args.len() {
+        // TODO: make default path configurable
+        0 => PathBuf::from(format!("richter-{}.mp4", Utc::now().format("%FT%H-%M-%S"))),
+        1 => PathBuf::from(args[0]),
+        _ => {
+            return "Usage: startvideo [PATH]".to_owned();
         }
+    };
 
-        String::new()
+    VIDEO_INIT.call_once(|| {
+        video_rs::init().unwrap();
+    });
+
+    if let Some(VideoState::Recording(RecordingState { mut encoder, .. })) =
+        mem::replace(video_context, Some(VideoState::Pending(path)))
+    {
+        if let Err(e) = encoder.finish() {
+            return format!("Failed writing video: {}", e);
+        }
     }
+
+    String::new()
 }
 
-fn cmd_stopvideo(video_context: Rc<RefCell<Option<VideoState>>>) -> impl Fn(&[&str]) -> String {
-    move |args| {
-        if !args.is_empty() {
-            return "Usage: endvideo".to_owned();
-        }
+fn cmd_stopvideo(args: &[&str], world: &mut World) -> String {
+    let video_context: &mut Option<VideoState> = todo!();
 
-        if let Some(VideoState::Recording(RecordingState { mut encoder, .. })) =
-            video_context.replace(None)
-        {
-            if let Err(e) = encoder.finish() {
-                return format!("Failed writing video: {}", e);
-            }
-        }
-
-        String::new()
+    if !args.is_empty() {
+        return "Usage: endvideo".to_owned();
     }
+
+    if let Some(VideoState::Recording(RecordingState { mut encoder, .. })) =
+        mem::take(video_context)
+    {
+        if let Err(e) = encoder.finish() {
+            return format!("Failed writing video: {}", e);
+        }
+    }
+
+    String::new()
 }
 
 struct RecordingState {
@@ -116,87 +113,50 @@ struct RecordingState {
     last_rendered_frame: TimeDelta,
     last_dt: TimeDelta,
     encoder: Encoder,
-    target: ScreenshotTarget,
     size: (usize, usize),
 }
 
 enum VideoState {
-    Pending(PathBuf, ScreenshotTarget),
+    Pending(PathBuf),
     Recording(RecordingState),
 }
 
 pub struct Game {
-    cvars: Rc<RefCell<CvarRegistry>>,
-    cmds: Rc<RefCell<CmdRegistry>>,
-    input: Rc<RefCell<Input>>,
-    pub client: Client,
-
     // if Some(v), trace is in progress
-    trace: Rc<RefCell<Option<Vec<TraceFrame>>>>,
+    // trace: Option<Vec<TraceFrame>>,
 
     // if Some(path), take a screenshot and save it to path
     // TODO: Move `ScreenshotTarget` to `capture` so that we can only screenshot the game if we want to
-    screenshot_path: Rc<RefCell<Option<PathBuf>>>,
+    // screenshot_path: Option<PathBuf>,
 
-    video_context: Rc<RefCell<Option<VideoState>>>,
+    // video_context: Option<VideoState>,
 }
 
 impl Game {
-    pub fn new(
-        cvars: Rc<RefCell<CvarRegistry>>,
-        cmds: Rc<RefCell<CmdRegistry>>,
-        input: Rc<RefCell<Input>>,
-        client: Client,
-    ) -> Result<Game, Error> {
+    pub fn new(world: &mut World) -> Result<Game, Error> {
+        let world = world.cell();
+
         // set up input commands
-        input.borrow().register_cmds(&mut (*cmds).borrow_mut());
+        let mut cmds = world.resource_mut::<CmdRegistry>();
+
+        world.resource::<Input>().register_cmds(&mut *cmds);
 
         // set up screenshots
-        let screenshot_path = Rc::new(RefCell::new(None));
-        let video_context = Rc::new(RefCell::new(None));
-        (*cmds)
-            .borrow_mut()
-            .insert("screenshot", cmd_screenshot(screenshot_path.clone()))
-            .unwrap();
+        cmds.insert("screenshot", cmd_screenshot).unwrap();
 
         // set up frame tracing
-        let trace = Rc::new(RefCell::new(None));
-        (*cmds)
-            .borrow_mut()
-            .insert("trace_begin", cmd_trace_begin(trace.clone()))
-            .unwrap();
-        (*cmds)
-            .borrow_mut()
-            .insert("trace_end", cmd_trace_end(cvars.clone(), trace.clone()))
-            .unwrap();
+        // let trace = Rc::new(RefCell::new(None));
+        cmds.insert("trace_begin", cmd_trace_begin).unwrap();
+        cmds.insert("trace_end", cmd_trace_end).unwrap();
 
-        (*cmds)
-            .borrow_mut()
-            .insert(
-                "startvideo",
-                cmd_startvideo(Default::default(), video_context.clone()),
-            )
-            .unwrap();
-        (*cmds)
-            .borrow_mut()
-            .insert(
-                "startvideogame",
-                cmd_startvideo(ScreenshotTarget::Game, video_context.clone()),
-            )
-            .unwrap();
-        (*cmds)
-            .borrow_mut()
-            .insert("stopvideo", cmd_stopvideo(video_context.clone()))
-            .unwrap();
+        cmds.insert("startvideo", cmd_startvideo).unwrap();
+        cmds.insert("stopvideo", cmd_stopvideo).unwrap();
 
         Ok(Game {
-            cvars,
-            cmds,
-            input,
-            client,
-            trace,
-            screenshot_path,
-            video_context,
+            // client,
+            // trace,
+            // screenshot_path,
+            // video_context,
         })
     }
 
@@ -204,7 +164,11 @@ impl Game {
     pub fn frame(&mut self, gfx_state: &GraphicsState, frame_duration: Duration) {
         use ClientError::*;
 
-        match self.client.frame(frame_duration, gfx_state) {
+        let trace_frames: &mut Option<Vec<TraceFrame>> = todo!();
+        let input: &mut Input = todo!();
+
+        match todo!() {
+            //self.client.frame(frame_duration, gfx_state) {
             Ok(()) => (),
             Err(e) => match e {
                 Cvar(_)
@@ -222,25 +186,27 @@ impl Game {
                 | Sound(_)
                 | Vfs(_) => {
                     log::error!("{}", e);
-                    self.client.disconnect();
+                    // TODO
+                    // self.client.disconnect();
                 }
 
                 _ => panic!("{}", e),
             },
         };
 
-        if let Some(ref mut game_input) = (*self.input).borrow_mut().game_input_mut() {
-            self.client
-                .handle_input(game_input, frame_duration)
-                .unwrap();
+        if let Some(ref mut game_input) = input.game_input_mut() {
+            // TODO
+            // self.client
+            //     .handle_input(game_input, frame_duration)
+            //     .unwrap();
         }
 
         // if there's an active trace, record this frame
-        if let Some(ref mut trace_frames) = *(*self.trace).borrow_mut() {
+        if let Some(ref mut trace_frames) = trace_frames {
             trace_frames.push(
-                self.client
-                    .trace(&[self.client.view_entity_id().unwrap()])
-                    .unwrap(),
+                todo!(), // self.client
+                         //     .trace(&[self.client.view_entity_id().unwrap()])
+                         //     .unwrap(),
             );
         }
     }
@@ -248,110 +214,50 @@ impl Game {
     pub fn render(
         &mut self,
         gfx_state: &GraphicsState,
-        color_attachment_view: &wgpu::TextureView,
+        color_attachment_view: &TextureView,
         width: u32,
         height: u32,
         console: &Console,
         menu: &Menu,
     ) {
         info!("Beginning render pass");
-        let mut encoder =
-            gfx_state
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Main render"),
-                });
+        let device: &RenderDevice = todo!();
+        let queue: &RenderQueue = todo!();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Main render"),
+        });
 
+        // TODO
         // render world, hud, console, menus
-        self.client
-            .render(
-                gfx_state,
-                &mut encoder,
-                width,
-                height,
-                menu,
-                self.input.borrow().focus(),
-            )
-            .unwrap();
+        // self.client
+        //     .render(
+        //         gfx_state,
+        //         &mut encoder,
+        //         width,
+        //         height,
+        //         menu,
+        //         self.input.borrow().focus(),
+        //     )
+        //     .unwrap();
 
+        // TODO
         // screenshot setup (TODO: This is pretty complex in order to correctly handle game-only vs final capture)
-        let (mut capture, video_capture) = match (
-            self.screenshot_path.borrow().as_ref(),
-            self.video_context.borrow().as_ref(),
-        ) {
-            (_, Some(VideoState::Pending(_, ScreenshotTarget::Final)))
-            | (
-                _,
-                Some(VideoState::Recording(RecordingState {
-                    target: ScreenshotTarget::Final,
-                    ..
-                })),
-            )
-            | (Some(_), None) => {
-                let cap = Capture::new(gfx_state.device(), Extent2d { width, height });
-                cap.copy_from_texture(
-                    &mut encoder,
-                    wgpu::ImageCopyTexture {
-                        texture: gfx_state.final_pass_target().resolve_attachment(),
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: Default::default(),
-                    },
-                );
-                (Some(cap), None)
-            }
-            (None, Some(VideoState::Pending(_, ScreenshotTarget::Game)))
-            | (
-                None,
-                Some(VideoState::Recording(RecordingState {
-                    target: ScreenshotTarget::Game,
-                    ..
-                })),
-            ) => {
-                let cap = Capture::new(gfx_state.device(), Extent2d { width, height });
-                cap.copy_from_texture(
-                    &mut encoder,
-                    wgpu::ImageCopyTexture {
-                        texture: gfx_state.deferred_pass_target().color_attachment(),
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: Default::default(),
-                    },
-                );
-                (None, Some(cap))
-            }
-            (Some(_), Some(VideoState::Pending(_, ScreenshotTarget::Game)))
-            | (
-                Some(_),
-                Some(VideoState::Recording(RecordingState {
-                    target: ScreenshotTarget::Game,
-                    ..
-                })),
-            ) => {
-                let final_cap = Capture::new(gfx_state.device(), Extent2d { width, height });
-                final_cap.copy_from_texture(
-                    &mut encoder,
-                    wgpu::ImageCopyTexture {
-                        texture: gfx_state.final_pass_target().resolve_attachment(),
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: Default::default(),
-                    },
-                );
-                let game_cap = Capture::new(gfx_state.device(), Extent2d { width, height });
-                game_cap.copy_from_texture(
-                    &mut encoder,
-                    wgpu::ImageCopyTexture {
-                        texture: gfx_state.deferred_pass_target().color_attachment(),
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: Default::default(),
-                    },
-                );
-                (Some(final_cap), Some(game_cap))
-            }
-            (None, None) => (None, None),
-        };
+        // let mut capture =
+        //     if self.screenshot_path.borrow().is_some() || self.video_context.borrow().is_some() {
+        //         let cap = Capture::new(gfx_state.device(), Extent2d { width, height });
+        //         cap.copy_from_texture(
+        //             &mut encoder,
+        //             wgpu::ImageCopyTexture {
+        //                 texture: gfx_state.deferred_pass_target().color_attachment(),
+        //                 mip_level: 0,
+        //                 origin: wgpu::Origin3d::ZERO,
+        //                 aspect: Default::default(),
+        //             },
+        //         );
+        //         Some(cap)
+        //     } else {
+        //         None
+        //     };
 
         // blit to swap chain
         {
@@ -363,112 +269,119 @@ impl Game {
 
         let command_buffer = encoder.finish();
         {
-            gfx_state.queue().submit(vec![command_buffer]);
-            gfx_state.device().poll(wgpu::Maintain::Wait);
+            queue.submit(vec![command_buffer]);
+            device.poll(wgpu::Maintain::Wait);
         }
 
         // write screenshot if requested and clear screenshot path
-        self.screenshot_path.replace(None).map(|path| {
-            capture
-                .as_mut()
-                .unwrap()
-                .write_to_file(gfx_state.device(), path)
-        });
+        // self.screenshot_path.replace(None).map(|path| {
+        //     capture
+        //         .as_mut()
+        //         .unwrap()
+        //         .write_to_file(gfx_state.device(), path)
+        // });
 
-        if let Some(state) = self.video_context.borrow_mut().take() {
-            // RGB texture
-            const PIXEL_SIZE: usize = 3;
+        // if let Some(state) = self.video_context.borrow_mut().take() {
+        //     // RGB texture
+        //     const PIXEL_SIZE: usize = 3;
 
-            let mut capture = video_capture.or(capture);
+        //     capture.as_mut().unwrap().read_texture(gfx_state.device());
 
-            capture.as_mut().unwrap().read_texture(gfx_state.device());
+        //     let mut state = match state {
+        //         VideoState::Pending(path) => RecordingState {
+        //             encoder: Encoder::new(
+        //                 &path.into(),
+        //                 EncoderSettings::for_h264_yuv420p(width as usize, height as usize, false),
+        //             )
+        //             .unwrap(),
+        //             last_dt: TimeDelta::try_milliseconds(1000 / 60).unwrap(),
+        //             last_frame: self.client.elapsed(),
+        //             last_rendered_frame: TimeDelta::zero(),
+        //             size: (width as usize, height as usize),
+        //         },
+        //         VideoState::Recording(state) => state,
+        //     };
 
-            let mut state = match state {
-                VideoState::Pending(path, target) => RecordingState {
-                    encoder: Encoder::new(
-                        &path.into(),
-                        EncoderSettings::for_h264_yuv420p(width as usize, height as usize, false),
-                    )
-                    .unwrap(),
-                    last_dt: TimeDelta::try_milliseconds(1000 / 60).unwrap(),
-                    last_frame: self.client.elapsed(),
-                    last_rendered_frame: TimeDelta::zero(),
-                    target,
-                    size: (width as usize, height as usize),
-                },
-                VideoState::Recording(state) => state,
-            };
+        //     let dt = self.client.elapsed() - state.last_frame;
 
-            let dt = self.client.elapsed() - state.last_frame;
+        //     let dt = if dt < TimeDelta::zero() {
+        //         state.last_dt
+        //     } else {
+        //         dt
+        //     };
 
-            let dt = if dt < TimeDelta::zero() {
-                state.last_dt
-            } else {
-                dt
-            };
+        //     state.last_frame = self.client.elapsed();
+        //     state.last_dt = dt;
 
-            state.last_frame = self.client.elapsed();
-            state.last_dt = dt;
+        //     let time = dt + state.last_rendered_frame;
 
-            let time = dt + state.last_rendered_frame;
+        //     state.last_rendered_frame = time;
 
-            state.last_rendered_frame = time;
+        //     let approx_time =
+        //         time.num_seconds() as f64 + (time.subsec_nanos() as f64 / 1_000_000_000f64);
 
-            let approx_time =
-                time.num_seconds() as f64 + (time.subsec_nanos() as f64 / 1_000_000_000f64);
+        //     let data = capture.as_ref().unwrap().data().unwrap();
+        //     fn to_srgb(v: u8) -> u8 {
+        //         ((v as f64 / u8::MAX as f64).sqrt() * (u8::MAX as f64)) as u8
+        //     }
+        //     let make_pixel: fn([u8; PIXEL_SIZE]) -> [u8; PIXEL_SIZE] =
+        //         match gfx_state.final_pass_target().format() {
+        //             TextureFormat::Bgra8Unorm => |pixel| {
+        //                 let pixel = pixel.map(to_srgb);
 
-            let data = capture.as_ref().unwrap().data().unwrap();
-            let make_pixel: fn([u8; PIXEL_SIZE]) -> [u8; PIXEL_SIZE] =
-                match gfx_state.final_pass_target().format() {
-                    TextureFormat::Bgra8Unorm => |pixel| {
-                        pixel.map(|v| ((v as f64 / u8::MAX as f64).sqrt() * (u8::MAX as f64)) as u8)
-                    },
-                    TextureFormat::Bgra8UnormSrgb => |pixel| pixel,
-                    _ => unimplemented!(),
-                };
-            let texture = match gfx_state.final_pass_target().format() {
-                TextureFormat::Bgra8Unorm | TextureFormat::Bgra8UnormSrgb => {
-                    // TODO: This will lead to weird artifacts when resizing the window
-                    let data = data
-                        .chunks_exact(4)
-                        .map(|pixel| {
-                            <[_; 3]>::into_iter(make_pixel([pixel[0], pixel[1], pixel[2]]))
-                        })
-                        .flatten()
-                        .chain(iter::repeat(0))
-                        .take(state.size.0 * state.size.1 * PIXEL_SIZE)
-                        .collect();
-                    ndarray::Array3::from_shape_vec((state.size.1, state.size.0, PIXEL_SIZE), data)
-                }
-                _ => unimplemented!(),
-            }
-            .expect("TODO: Create texture failed");
+        //                 [pixel[2], pixel[1], pixel[0]]
+        //             },
+        //             TextureFormat::Bgra8UnormSrgb => |pixel| [pixel[2], pixel[1], pixel[0]],
+        //             TextureFormat::Rgba8Unorm => |pixel| pixel.map(to_srgb),
+        //             TextureFormat::Rgba8UnormSrgb => |pixel| pixel,
+        //             _ => unimplemented!(),
+        //         };
+        //     let texture = match gfx_state.final_pass_target().format() {
+        //         TextureFormat::Bgra8Unorm
+        //         | TextureFormat::Bgra8UnormSrgb
+        //         | TextureFormat::Rgba8Unorm
+        //         | TextureFormat::Rgba8UnormSrgb => {
+        //             // TODO: This will lead to weird artifacts when resizing the window
+        //             let data = data
+        //                 .chunks_exact(4)
+        //                 .map(|pixel| {
+        //                     <[_; 3]>::into_iter(make_pixel([pixel[0], pixel[1], pixel[2]]))
+        //                 })
+        //                 .flatten()
+        //                 .chain(iter::repeat(0))
+        //                 .take(state.size.0 * state.size.1 * PIXEL_SIZE)
+        //                 .collect();
+        //             ndarray::Array3::from_shape_vec((state.size.1, state.size.0, PIXEL_SIZE), data)
+        //         }
+        //         _ => unimplemented!(),
+        //     }
+        //     .expect("TODO: Create texture failed");
 
-            // TODO: Handle failures gracefully
-            let _ = state
-                .encoder
-                .encode(&texture, &Time::from_secs_f64(approx_time));
+        //     // TODO: Handle failures gracefully
+        //     let _ = state
+        //         .encoder
+        //         .encode(&texture, &Time::from_secs_f64(approx_time));
 
-            *(*self.video_context).borrow_mut() = Some(VideoState::Recording(state));
-        }
+        //     *(*self.video_context).borrow_mut() = Some(VideoState::Recording(state));
+        // }
     }
 }
 
-impl std::ops::Drop for Game {
-    fn drop(&mut self) {
-        let _ = (*self.cmds).borrow_mut().remove("trace_begin");
-        let _ = (*self.cmds).borrow_mut().remove("trace_end");
-        let _ = (*self.cmds).borrow_mut().remove("screenshot");
-        let _ = (*self.cmds).borrow_mut().remove("startvideo");
-        let _ = (*self.cmds).borrow_mut().remove("startvideogame");
-        let _ = (*self.cmds).borrow_mut().remove("endvideo");
+// impl std::ops::Drop for Game {
+//     fn drop(&mut self) {
+//         let _ = (*self.cmds).borrow_mut().remove("trace_begin");
+//         let _ = (*self.cmds).borrow_mut().remove("trace_end");
+//         let _ = (*self.cmds).borrow_mut().remove("screenshot");
+//         let _ = (*self.cmds).borrow_mut().remove("startvideo");
+//         let _ = (*self.cmds).borrow_mut().remove("startvideogame");
+//         let _ = (*self.cmds).borrow_mut().remove("endvideo");
 
-        if let Some(VideoState::Recording(RecordingState { mut encoder, .. })) =
-            self.video_context.replace(None)
-        {
-            if let Err(e) = encoder.finish() {
-                debug!("Failed writing video: {}", e);
-            }
-        }
-    }
-}
+//         if let Some(VideoState::Recording(RecordingState { mut encoder, .. })) =
+//             self.video_context.replace(None)
+//         {
+//             if let Err(e) = encoder.finish() {
+//                 debug!("Failed writing video: {}", e);
+//             }
+//         }
+//     }
+// }

@@ -56,14 +56,14 @@ bitflags! {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Model {
-    pub name: String,
+    pub name: imstr::ImString,
     pub kind: ModelKind,
     pub flags: ModelFlags,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ModelKind {
     // TODO: find a more elegant way to express the null model
     None,
@@ -75,7 +75,7 @@ pub enum ModelKind {
 impl Model {
     pub fn none() -> Model {
         Model {
-            name: String::new(),
+            name: Default::default(),
             kind: ModelKind::None,
             flags: ModelFlags::empty(),
         }
@@ -94,13 +94,10 @@ impl Model {
         if name.ends_with(".bsp") {
             panic!("BSP files may contain multiple models, use bsp::load for this");
         } else if name.ends_with(".mdl") {
-            Ok(Model::from_alias_model(
-                name.to_owned(),
-                mdl::load(vfs.open(name)?)?,
-            ))
+            Ok(Model::from_alias_model(name, mdl::load(vfs.open(name)?)?))
         } else if name.ends_with(".spr") {
             Ok(Model::from_sprite_model(
-                name.to_owned(),
+                name,
                 sprite::load(vfs.open(name)?),
             ))
         } else {
@@ -114,7 +111,7 @@ impl Model {
         S: AsRef<str>,
     {
         Model {
-            name: name.as_ref().to_owned(),
+            name: name.as_ref().into(),
             kind: ModelKind::Brush(brush_model),
             flags: ModelFlags::empty(),
         }
@@ -128,7 +125,7 @@ impl Model {
         let flags = alias_model.flags();
 
         Model {
-            name: name.as_ref().to_owned(),
+            name: name.as_ref().into(),
             kind: ModelKind::Alias(alias_model),
             flags,
         }
@@ -140,7 +137,7 @@ impl Model {
         S: AsRef<str>,
     {
         Model {
-            name: name.as_ref().to_owned(),
+            name: name.as_ref().into(),
             kind: ModelKind::Sprite(sprite_model),
             flags: ModelFlags::empty(),
         }

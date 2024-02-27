@@ -5,21 +5,19 @@ use std::{
 
 use crate::{client::sound::SoundError, common::vfs::Vfs};
 
+use bevy::ecs::system::Resource;
 use rodio::{Decoder, OutputStreamHandle, Sink, Source};
 
 /// Plays music tracks.
+#[derive(Resource)]
 pub struct MusicPlayer {
-    vfs: Rc<Vfs>,
-    stream: OutputStreamHandle,
     playing: Option<String>,
     sink: Option<Sink>,
 }
 
 impl MusicPlayer {
-    pub fn new(vfs: Rc<Vfs>, stream: OutputStreamHandle) -> MusicPlayer {
+    pub fn new() -> MusicPlayer {
         MusicPlayer {
-            vfs,
-            stream,
             playing: None,
             sink: None,
         }
@@ -33,7 +31,12 @@ impl MusicPlayer {
     /// `"music/"`.
     ///
     /// If the specified track is already playing, this has no effect.
-    pub fn play_named<S>(&mut self, name: S) -> Result<(), SoundError>
+    pub fn play_named<S>(
+        &mut self,
+        vfs: &Vfs,
+        output_stream: OutputStreamHandle,
+        name: S,
+    ) -> Result<(), SoundError>
     where
         S: AsRef<str>,
     {
@@ -49,12 +52,11 @@ impl MusicPlayer {
         // TODO: there's probably a better way to do this extension check
         let mut file = if !name.contains('.') {
             // try all supported formats
-            let Ok(file) = self
-                .vfs
+            let Ok(file) = vfs
                 .open(format!("music/{}.flac", name))
-                .or_else(|_| self.vfs.open(format!("music/{}.wav", name)))
-                .or_else(|_| self.vfs.open(format!("music/{}.mp3", name)))
-                .or_else(|_| self.vfs.open(format!("music/{}.ogg", name)))
+                .or_else(|_| vfs.open(format!("music/{}.wav", name)))
+                .or_else(|_| vfs.open(format!("music/{}.mp3", name)))
+                .or_else(|_| vfs.open(format!("music/{}.ogg", name)))
                 .or(Err(SoundError::NoSuchTrack(name.to_owned())))
             else {
                 return Ok(());
@@ -62,7 +64,7 @@ impl MusicPlayer {
 
             file
         } else {
-            self.vfs.open(name)?
+            vfs.open(name)?
         };
 
         let mut data = Vec::new();
@@ -75,7 +77,7 @@ impl MusicPlayer {
         // stop the old track before starting the new one so there's no overlap
         self.sink = None;
         // TODO handle PlayError
-        let new_sink = Sink::try_new(&self.stream).unwrap();
+        let new_sink = Sink::try_new(&output_stream).unwrap();
         new_sink.append(source);
         self.sink = Some(new_sink);
 
@@ -86,8 +88,13 @@ impl MusicPlayer {
     ///
     /// Note that the first actual music track is track 2; track 1 on the
     /// original Quake CD-ROM held the game data.
-    pub fn play_track(&mut self, track_id: usize) -> Result<(), SoundError> {
-        self.play_named(format!("track{:02}", track_id))
+    pub fn play_track(
+        &mut self,
+        vfs: &Vfs,
+        output_stream: OutputStreamHandle,
+        track_id: usize,
+    ) -> Result<(), SoundError> {
+        self.play_named(vfs, output_stream, format!("track{:02}", track_id))
     }
 
     /// Stop the current music track.

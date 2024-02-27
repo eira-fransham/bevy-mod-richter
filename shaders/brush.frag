@@ -23,7 +23,6 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     float light_anim_frames[64];
     vec4 camera_pos;
     float time;
-    bool r_lightmap;
 } frame_uniforms;
 
 // set 1: per-entity
