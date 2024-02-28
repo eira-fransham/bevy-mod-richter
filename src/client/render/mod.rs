@@ -59,6 +59,7 @@ use bevy::{
     app::{Plugin, Startup, Update},
     core_pipeline::core_3d::graph::{Core3d, Node3d},
     ecs::{
+        event::EventReader,
         system::{In, IntoSystem as _, Res, ResMut, Resource},
         world::FromWorld,
     },
@@ -68,7 +69,7 @@ use bevy::{
         render_resource::{BindGroup, BindGroupLayout, Buffer, Sampler, Texture, TextureView},
         renderer::{RenderDevice, RenderQueue},
         view::ViewTarget,
-        ExtractSchedule, Render, RenderApp,
+        ExtractSchedule, MainWorld, Render, RenderApp,
     },
     time::{Time, Virtual},
 };
@@ -125,9 +126,9 @@ use crate::{
 use self::blit::BlitPipeline;
 
 use super::{
-    cvar_error_handler, extract_resolution, init_client,
+    extract_resolution, init_client,
     input::Input,
-    sound::{AudioOut, MusicPlayer},
+    sound::{MixerEvent, MusicPlayer},
     ConnectionState, DemoQueue, GameConnection, RenderResolution, RenderState, RenderStateRes,
     TimeHack,
 };
@@ -137,6 +138,15 @@ use chrono::{DateTime, Duration, Utc};
 use failure::Error;
 
 pub struct RichterRenderPlugin;
+
+fn send_mixer_events_to_main_thread_hack(
+    mut main_world: ResMut<MainWorld>,
+    mut events: EventReader<MixerEvent>,
+) {
+    for e in events.read() {
+        main_world.send_event(e.clone());
+    }
+}
 
 impl Plugin for RichterRenderPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
@@ -208,7 +218,6 @@ impl Plugin for RichterRenderPlugin {
         // let conn = app.world.resource::<GameConnection>().clone();
         let demo_queue = app.world.resource::<DemoQueue>().clone();
         let input = app.world.resource::<Input>().clone();
-        let audio = app.world.resource::<AudioOut>().clone();
 
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
@@ -227,32 +236,9 @@ impl Plugin for RichterRenderPlugin {
         render_app.init_resource::<GameConnection>();
         render_app.insert_resource(demo_queue);
         render_app.insert_resource(input);
-        render_app.insert_resource(audio);
 
         render_app
-            // TODO: This is only so we can run the per-frame update in the render thread, which we should not do
-            .init_resource::<TimeHack>()
-            .init_resource::<MusicPlayer>()
             // .init_resource::<RenderStateRes>()
-            // TODO: This is only so we can run the per-frame update in the render thread, which we should not do
-            .add_systems(
-                Render,
-                (
-                    super::frame.pipe(|In(res)| {
-                        // TODO: Error handling
-                        if let Err(e) = res {
-                            warn!("{}", e);
-                        }
-                    }),
-                    super::handle_input.pipe(|In(res)| {
-                        // TODO: Error handling
-                        if let Err(e) = res {
-                            warn!("{}", e);
-                        }
-                    }),
-                    super::run_console,
-                ),
-            )
             .add_render_graph_node::<ViewNodeRunner<ClientRenderer>>(
                 // Specify the label of the graph, in this case we want the graph for 3d
                 Core3d,
@@ -269,6 +255,50 @@ impl Plugin for RichterRenderPlugin {
                     Node3d::EndMainPass,
                 ),
             );
+
+        // TODO: This is only so we can run the per-frame update in the render thread, which we should not do
+        render_app
+            .init_resource::<TimeHack>()
+            .init_resource::<MusicPlayer>()
+            // .add_systems(
+            //     Render,
+            //     (
+            //         super::frame.pipe(|In(res)| {
+            //             // TODO: Error handling
+            //             if let Err(e) = res {
+            //                 warn!("{}", e);
+            //             }
+            //         }),
+            //         super::handle_input.pipe(|In(res)| {
+            //             // TODO: Error handling
+            //             if let Err(e) = res {
+            //                 warn!("{}", e);
+            //             }
+            //         }),
+            //         super::run_console,
+            //     ),
+            // )
+            .add_systems(
+                Render,
+                super::frame.pipe(|In(res)| {
+                    // TODO: Error handling
+                    if let Err(e) = res {
+                        warn!("{}", e);
+                    }
+                }),
+            )
+            .add_systems(
+                Render,
+                super::handle_input.pipe(|In(res)| {
+                    // TODO: Error handling
+                    if let Err(e) = res {
+                        warn!("{}", e);
+                    }
+                }),
+            )
+            .add_systems(Render, super::run_console)
+            .add_event::<MixerEvent>()
+            .add_systems(ExtractSchedule, send_mixer_events_to_main_thread_hack);
     }
 
     fn finish(&self, app: &mut bevy::prelude::App) {

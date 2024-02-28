@@ -1,6 +1,6 @@
-use std::{cell::RefCell, collections::HashMap, iter, rc::Rc, sync::Arc};
+use std::{collections::HashMap, iter, sync::Arc};
 
-use super::view::BobVars;
+use super::{sound::MixerEvent, view::BobVars};
 use crate::{
     client::{
         entity::{
@@ -9,7 +9,7 @@ use crate::{
         },
         input::game::{Action, GameInput},
         render::Camera,
-        sound::{AudioSource, EntityMixer, Listener, StaticSound},
+        sound::{self, Listener, StartSound},
         view::{IdleVars, KickVars, MouseVars, RollVars, View},
         ClientError, ColorShiftCode, IntermissionKind, MoveVars, MAX_STATS,
     },
@@ -25,6 +25,11 @@ use crate::{
     },
 };
 use arrayvec::ArrayVec;
+use bevy::{
+    asset::{AssetServer, Handle},
+    audio::AudioSource,
+    ecs::{event::EventWriter, system::Commands, world::World},
+};
 use cgmath::{Angle as _, Deg, InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
 use net::{ClientCmd, ClientStat, EntityState, EntityUpdate, PlayerColor};
@@ -33,7 +38,6 @@ use rand::{
     rngs::SmallRng,
     SeedableRng,
 };
-use rodio::OutputStreamHandle;
 
 const CACHED_SOUND_NAMES: &[&'static str] = &[
     "hknight/hit.wav",
@@ -67,13 +71,10 @@ pub struct ClientState {
     pub model_names: im::HashMap<String, usize>,
 
     // audio source precache
-    pub sounds: im::Vector<AudioSource>,
+    pub sounds: im::Vector<Handle<AudioSource>>,
 
     // sounds that are always needed even if not in precache
-    cached_sounds: im::HashMap<String, AudioSource>,
-
-    // ambient sounds (infinite looping, static position)
-    pub static_sounds: im::Vector<Arc<StaticSound>>,
+    cached_sounds: im::HashMap<String, Handle<AudioSource>>,
 
     // entities and entity-like things
     pub entities: im::Vector<ClientEntity>,
@@ -117,21 +118,17 @@ pub struct ClientState {
     pub intermission: Option<IntermissionKind>,
     pub start_time: Duration,
     pub completion_time: Option<Duration>,
-
-    pub mixer: EntityMixer,
-    pub listener: Listener,
 }
 
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
-    pub fn new(output_stream: OutputStreamHandle) -> ClientState {
+    pub fn new() -> ClientState {
         ClientState {
             rng: SmallRng::from_entropy(),
             models: iter::once(Model::none()).collect(),
             model_names: Default::default(),
             sounds: Default::default(),
             cached_sounds: Default::default(),
-            static_sounds: Default::default(),
             entities: Default::default(),
             static_entities: Default::default(),
             temp_entities: Default::default(),
@@ -158,17 +155,15 @@ impl ClientState {
             intermission: None,
             start_time: Duration::zero(),
             completion_time: None,
-            mixer: EntityMixer::new(output_stream),
-            listener: Listener::new(),
         }
     }
 
     pub fn from_server_info<SName: AsRef<str>>(
         vfs: &Vfs,
+        asset_server: &AssetServer,
         max_clients: u8,
         model_precache: Vec<String>,
         sound_precache: Vec<SName>,
-        output_stream: OutputStreamHandle,
     ) -> Result<ClientState, ClientError> {
         // TODO: validate submodel names
         let mut models: im::Vector<_> = iter::once(Model::none()).collect();
@@ -201,14 +196,19 @@ impl ClientState {
             .map(|(i, snd_name)| {
                 debug!("Loading sound {}: {}", i, snd_name);
 
-                Ok(AudioSource::load(vfs, snd_name)?)
+                Ok(asset_server.load(format!("sound/{}", snd_name)))
                 // TODO: send keepalive message?
             })
             .collect::<Result<_, ClientError>>()?;
 
         let cached_sounds = CACHED_SOUND_NAMES
             .iter()
-            .map(|name| Ok((name.to_string(), AudioSource::load(vfs, *name)?.into())))
+            .map(|name| {
+                Ok((
+                    name.to_string(),
+                    asset_server.load(format!("sound/{}", name)),
+                ))
+            })
             .collect::<Result<_, ClientError>>()?;
 
         Ok(ClientState {
@@ -217,7 +217,7 @@ impl ClientState {
             sounds,
             cached_sounds,
             max_players: max_clients as usize,
-            ..ClientState::new(output_stream)
+            ..ClientState::new()
         })
     }
 
@@ -817,7 +817,11 @@ impl ClientState {
         Ok(())
     }
 
-    pub fn spawn_temp_entity(&mut self, temp_entity: &TempEntity) {
+    pub fn spawn_temp_entity(
+        &mut self,
+        events: &mut EventWriter<MixerEvent>,
+        temp_entity: &TempEntity,
+    ) {
         lazy_static! {
             static ref ZERO_ONE_DISTRIBUTION: Uniform<f32> = Uniform::new(0.0, 1.0);
         }
@@ -863,16 +867,14 @@ impl ClientState {
                         );
 
                         if let Some(snd) = sound {
-                            self.mixer.start_sound(
-                                self.cached_sounds.get(snd).unwrap().clone(),
-                                self.time,
-                                None,
-                                0,
-                                1.0,
-                                1.0,
-                                *origin,
-                                &self.listener,
-                            );
+                            events.send(MixerEvent::StartSound(StartSound {
+                                src: self.cached_sounds.get(snd).unwrap().clone(),
+                                ent_id: None,
+                                ent_channel: 0,
+                                volume: 1.0,
+                                attenuation: 1.0,
+                                origin: (*origin).into(),
+                            }));
                         }
                     }
 
@@ -890,19 +892,18 @@ impl ClientState {
                             None,
                         );
 
-                        self.mixer.start_sound(
-                            self.cached_sounds
+                        events.send(MixerEvent::StartSound(StartSound {
+                            src: self
+                                .cached_sounds
                                 .get("weapons/r_exp3.wav")
                                 .unwrap()
                                 .clone(),
-                            self.time,
-                            None,
-                            0,
-                            1.0,
-                            1.0,
-                            *origin,
-                            &self.listener,
-                        );
+                            ent_id: None,
+                            ent_channel: 0,
+                            volume: 1.0,
+                            attenuation: 1.0,
+                            origin: (*origin).into(),
+                        }));
                     }
 
                     ColorExplosion {
@@ -926,38 +927,36 @@ impl ClientState {
                             None,
                         );
 
-                        self.mixer.start_sound(
-                            self.cached_sounds
+                        events.send(MixerEvent::StartSound(StartSound {
+                            src: self
+                                .cached_sounds
                                 .get("weapons/r_exp3.wav")
                                 .unwrap()
                                 .clone(),
-                            self.time,
-                            None,
-                            0,
-                            1.0,
-                            1.0,
-                            *origin,
-                            &self.listener,
-                        );
+                            ent_id: None,
+                            ent_channel: 0,
+                            volume: 1.0,
+                            attenuation: 1.0,
+                            origin: (*origin).into(),
+                        }));
                     }
 
                     TarExplosion => {
                         Arc::make_mut(&mut self.particles)
                             .create_spawn_explosion(self.time, *origin);
 
-                        self.mixer.start_sound(
-                            self.cached_sounds
+                        events.send(MixerEvent::StartSound(StartSound {
+                            src: self
+                                .cached_sounds
                                 .get("weapons/r_exp3.wav")
                                 .unwrap()
                                 .clone(),
-                            self.time,
-                            None,
-                            0,
-                            1.0,
-                            1.0,
-                            *origin,
-                            &self.listener,
-                        );
+                            ent_id: None,
+                            ent_channel: 0,
+                            volume: 1.0,
+                            attenuation: 1.0,
+                            origin: (*origin).into(),
+                        }));
                     }
 
                     LavaSplash => {
@@ -1036,45 +1035,24 @@ impl ClientState {
         }
     }
 
-    pub fn update_listener(&mut self) {
+    #[must_use]
+    pub fn update_listener(&self) -> Listener {
         // TODO: update to self.view_origin()
-        let view_origin = self.entities[self.view.entity_id()].origin;
-        let world_translate = Matrix4::from_translation(view_origin);
+        let origin = self.entities[self.view.entity_id()].origin;
+        let world_translate = Matrix4::from_translation(origin);
 
         let left_base = Vector3::new(0.0, 4.0, self.view.view_height());
         let right_base = Vector3::new(0.0, -4.0, self.view.view_height());
 
         let rotate = self.view.input_angles().mat4_quake();
 
-        let left = (world_translate * rotate * left_base.extend(1.0)).truncate();
-        let right = (world_translate * rotate * right_base.extend(1.0)).truncate();
+        let left_ear = (world_translate * rotate * left_base.extend(1.0)).truncate();
+        let right_ear = (world_translate * rotate * right_base.extend(1.0)).truncate();
 
-        self.listener.set_origin(view_origin);
-        self.listener.set_left_ear(left);
-        self.listener.set_right_ear(right);
-    }
-
-    pub fn update_sound_spatialization(&mut self) {
-        self.update_listener();
-
-        // update entity sounds
-        for e_channel in self.mixer.iter_entity_channels_mut() {
-            if let Some(ent_id) = e_channel.entity_id() {
-                if e_channel.channel().in_use() {
-                    e_channel
-                        .channel_mut()
-                        .update(self.entities[ent_id].origin, &self.listener);
-                }
-            }
-        }
-
-        // update static sounds
-        for ss in self.static_sounds.iter_mut() {
-            // TODO: Split sound into a non-cloneable struct - we only allow it to be cloned as we need
-            //       to send render data to the render thread for pipelined rendering
-            Arc::get_mut(ss)
-                .expect("This should never actually be shared!")
-                .update(&self.listener);
+        Listener {
+            origin,
+            left_ear,
+            right_ear,
         }
     }
 

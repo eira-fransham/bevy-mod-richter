@@ -1,7 +1,10 @@
 use std::{fs::File, io::BufWriter, mem};
 
 use bevy::ecs::world::World;
-use richter::{client::trace::TraceFrame, common::console::CvarRegistry};
+use richter::{
+    client::trace::TraceFrame,
+    common::console::{CommandArgs, CvarRegistry},
+};
 
 const DEFAULT_TRACE_PATH: &'static str = "richter-trace.json";
 

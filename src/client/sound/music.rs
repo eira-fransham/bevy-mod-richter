@@ -5,22 +5,30 @@ use std::{
 
 use crate::{client::sound::SoundError, common::vfs::Vfs};
 
-use bevy::{ecs::system::Resource, render::extract_resource::ExtractResource};
+use bevy::{
+    asset::AssetServer,
+    audio::{
+        AudioBundle, AudioSink, AudioSinkPlayback as _, AudioSource, PlaybackMode,
+        PlaybackSettings, Volume,
+    },
+    ecs::{
+        entity::Entity,
+        system::{Commands, Query, Resource},
+        world::World,
+    },
+    render::extract_resource::ExtractResource,
+};
 use rodio::{Decoder, OutputStreamHandle, Sink, Source};
 
 /// Plays music tracks.
 #[derive(Resource, Default)]
 pub struct MusicPlayer {
-    playing: Option<String>,
-    sink: Option<Sink>,
+    playing: Option<(String, Entity)>,
 }
 
 impl MusicPlayer {
     pub fn new() -> MusicPlayer {
-        MusicPlayer {
-            playing: None,
-            sink: None,
-        }
+        MusicPlayer { playing: None }
     }
 
     /// Start playing the track with the given name.
@@ -33,8 +41,8 @@ impl MusicPlayer {
     /// If the specified track is already playing, this has no effect.
     pub fn play_named<S>(
         &mut self,
-        vfs: &Vfs,
-        output_stream: OutputStreamHandle,
+        asset_server: &AssetServer,
+        commands: &mut Commands,
         name: S,
     ) -> Result<(), SoundError>
     where
@@ -43,43 +51,49 @@ impl MusicPlayer {
         let name = name.as_ref();
 
         // don't replay the same track
-        if let Some(ref playing) = self.playing {
+        if let Some((playing, _)) = &self.playing {
             if playing == name {
                 return Ok(());
             }
         }
 
         // TODO: there's probably a better way to do this extension check
-        let mut file = if !name.contains('.') {
-            // try all supported formats
-            let Ok(file) = vfs
-                .open(format!("music/{}.flac", name))
-                .or_else(|_| vfs.open(format!("music/{}.wav", name)))
-                .or_else(|_| vfs.open(format!("music/{}.mp3", name)))
-                .or_else(|_| vfs.open(format!("music/{}.ogg", name)))
-                .or(Err(SoundError::NoSuchTrack(name.to_owned())))
-            else {
-                return Ok(());
-            };
+        // let mut file = if !name.contains('.') {
+        //     // try all supported formats
+        //     let Ok(file) = vfs
+        //         .open(format!("music/{}.flac", name))
+        //         .or_else(|_| vfs.open(format!("music/{}.wav", name)))
+        //         .or_else(|_| vfs.open(format!("music/{}.mp3", name)))
+        //         .or_else(|_| vfs.open(format!("music/{}.ogg", name)))
+        //         .or(Err(SoundError::NoSuchTrack(name.to_owned())))
+        //     else {
+        //         return Ok(());
+        //     };
 
-            file
-        } else {
-            vfs.open(name)?
-        };
+        //     file
+        // } else {
+        //     vfs.open(name)?
+        // };
 
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)?;
-        let source = Decoder::new(Cursor::new(data))?
-            .convert_samples::<f32>()
-            .buffered()
-            .repeat_infinite();
+        // TODO: Turn VFS into an AssetReader so that this is asynchronous
+        // let mut data = Vec::new();
+        // file.read_to_end(&mut data)?;
 
-        // stop the old track before starting the new one so there's no overlap
-        self.sink = None;
-        // TODO handle PlayError
-        let new_sink = Sink::try_new(&output_stream).unwrap();
-        new_sink.append(source);
-        self.sink = Some(new_sink);
+        let source = asset_server.load(format!("music/{}.ogg", name));
+
+        self.stop(commands);
+
+        let entity = commands
+            .spawn(AudioBundle {
+                source,
+                settings: PlaybackSettings {
+                    mode: PlaybackMode::Loop,
+                    ..Default::default()
+                },
+            })
+            .id();
+
+        self.playing = Some((name.to_string(), entity));
 
         Ok(())
     }
@@ -90,11 +104,11 @@ impl MusicPlayer {
     /// original Quake CD-ROM held the game data.
     pub fn play_track(
         &mut self,
-        vfs: &Vfs,
-        output_stream: OutputStreamHandle,
+        asset_server: &AssetServer,
+        commands: &mut Commands,
         track_id: usize,
     ) -> Result<(), SoundError> {
-        self.play_named(vfs, output_stream, format!("track{:02}", track_id))
+        self.play_named(asset_server, commands, format!("track{:02}", track_id))
     }
 
     /// Stop the current music track.
@@ -103,17 +117,22 @@ impl MusicPlayer {
     /// resumed later, use `MusicPlayer::pause()`.
     ///
     /// If no music track is currently playing, this has no effect.
-    pub fn stop(&mut self) {
-        self.sink = None;
-        self.playing = None;
+    pub fn stop(&self, commands: &mut Commands) {
+        if let Some(mut entity) = self
+            .playing
+            .as_ref()
+            .and_then(|(_, e)| commands.get_entity(*e))
+        {
+            entity.despawn();
+        }
     }
 
     /// Pause the current music track.
     ///
     /// If no music track is currently playing, or if the current track is
     /// already paused, this has no effect.
-    pub fn pause(&mut self) {
-        if let Some(ref mut sink) = self.sink {
+    pub fn pause(&self, query: &Query<&AudioSink>) {
+        if let Some(sink) = self.playing.as_ref().and_then(|(_, e)| query.get(*e).ok()) {
             sink.pause();
         }
     }
@@ -122,8 +141,8 @@ impl MusicPlayer {
     ///
     /// If no music track is currently playing, or if the current track is not
     /// paused, this has no effect.
-    pub fn resume(&mut self) {
-        if let Some(ref mut sink) = self.sink {
+    pub fn resume(&self, query: &Query<&AudioSink>) {
+        if let Some(sink) = self.playing.as_ref().and_then(|(_, e)| query.get(*e).ok()) {
             sink.play();
         }
     }

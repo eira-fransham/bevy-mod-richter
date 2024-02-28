@@ -18,19 +18,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{
-    borrow::Cow,
-    collections::{HashMap, VecDeque},
-    fmt::Write,
-    mem,
-    sync::Arc,
-};
+use std::{borrow::Cow, fmt::Write, mem, sync::Arc};
 
 use crate::common::parse;
 
 use bevy::{
     ecs::{
-        system::Resource,
+        system::{Commands, Resource},
         world::{FromWorld, World},
     },
     render::extract_resource::ExtractResource,
@@ -56,6 +50,17 @@ pub enum ConsoleError {
 }
 
 type Cmd = Arc<dyn Fn(&[&str], &mut World) -> ExecResult + Send + Sync>;
+
+pub struct CommandArgs<'a, 'w, 's> {
+    pub world: &'a mut World,
+    pub commands: &'a mut Commands<'w, 's>,
+}
+
+impl<'a, 'w, 's> CommandArgs<'a, 'w, 's> {
+    pub fn new(world: &'a mut World, commands: &'a mut Commands<'w, 's>) -> Self {
+        Self { world, commands }
+    }
+}
 
 fn insert_name<S>(names: &mut im::Vector<String>, name: S) -> Result<usize, usize>
 where
@@ -117,7 +122,7 @@ impl CmdRegistry {
 
                 self.cmds.insert(
                     name.to_owned(),
-                    Arc::new(move |args, world| cmd(args, world).into()),
+                    Arc::new(move |args, input| cmd(args, input).into()),
                 );
             }
         }
@@ -142,7 +147,7 @@ impl CmdRegistry {
 
         self.cmds.insert(
             name.into(),
-            Arc::new(move |args, world| cmd(args, world).into()),
+            Arc::new(move |args, input| cmd(args, input).into()),
         );
 
         Ok(())
@@ -173,11 +178,11 @@ impl CmdRegistry {
     /// Executes a command.
     ///
     /// Returns an error if no command with the specified name exists.
-    pub fn exec<'this, 'a, S>(
+    pub fn exec<'this, 'args, S>(
         &'this self,
         name: S,
-        args: &'a [&str],
-    ) -> Result<impl Fn(&mut World) -> ExecResult + 'a, ConsoleError>
+        args: &'args [&'args str],
+    ) -> Result<impl Fn(&mut World) -> ExecResult + 'args, ConsoleError>
     where
         S: AsRef<str>,
     {
@@ -603,7 +608,7 @@ impl FromWorld for Console {
         })
         .unwrap();
 
-        cmds.insert("alias", move |args, world: &mut World| {
+        cmds.insert("alias", move |args, world| {
             let mut console = world.resource_mut::<Console>();
 
             match args.len() {
@@ -627,24 +632,26 @@ impl FromWorld for Console {
         })
         .unwrap();
 
-        cmds.insert("find", move |args, world: &mut World| match args.len() {
-            1 => {
-                let cmds = world.resource::<CmdRegistry>();
-                // Take every item starting with the target.
-                let it = cmds
-                    .names()
-                    .skip_while(move |item| !item.starts_with(&args[0]))
-                    .take_while(move |item| item.starts_with(&args[0]));
+        cmds.insert("find", move |args, world| {
+            match args.len() {
+                1 => {
+                    let cmds = world.resource::<CmdRegistry>();
+                    // Take every item starting with the target.
+                    let it = cmds
+                        .names()
+                        .skip_while(move |item| !item.starts_with(&args[0]))
+                        .take_while(move |item| item.starts_with(&args[0]));
 
-                let mut output = String::new();
-                for name in it {
-                    write!(&mut output, "{}\n", name).unwrap();
+                    let mut output = String::new();
+                    for name in it {
+                        write!(&mut output, "{}\n", name).unwrap();
+                    }
+
+                    output
                 }
 
-                output
+                _ => "usage: find <cvar or command>".into(),
             }
-
-            _ => "usage: find <cvar or command>".into(),
         })
         .unwrap();
 
@@ -789,7 +796,6 @@ impl Console {
         commands.reverse();
 
         while let Some(args) = commands.pop() {
-            dbg!(&args);
             let tail_args: Vec<&str>;
 
             let func = {

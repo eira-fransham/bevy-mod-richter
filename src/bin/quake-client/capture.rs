@@ -11,7 +11,7 @@ use bevy::{
     ecs::world::World,
     render::{render_resource::Buffer, renderer::RenderDevice},
 };
-use richter::client::render::Extent2d;
+use richter::{client::render::Extent2d, common::console::CommandArgs};
 
 use chrono::Utc;
 

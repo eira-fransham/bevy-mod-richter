@@ -36,7 +36,6 @@ use richter::{
         input::{Input, InputFocus},
         menu::Menu,
         render::{Extent2d, GraphicsState},
-        sound::AudioOut,
         RichterPlugin,
     },
     common::{
@@ -239,7 +238,6 @@ fn main() -> ExitCode {
             }),
             ..Default::default()
         }))
-        .insert_resource(AudioOut(handle))
         .add_plugins(RichterPlugin {
             base_dir: opt.base_dir.clone(),
             game: opt.game.clone(),

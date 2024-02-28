@@ -57,12 +57,10 @@ use richter::{
         trace::TraceFrame,
         ClientError,
     },
-    common::console::{CmdRegistry, Console, CvarRegistry},
+    common::console::{CmdRegistry, CommandArgs, Console, CvarRegistry},
 };
 
 use chrono::{Duration, TimeDelta, Utc};
-use failure::Error;
-use log::{debug, info};
 
 fn cmd_startvideo(args: &[&str], world: &mut World) -> String {
     static VIDEO_INIT: Once = Once::new();

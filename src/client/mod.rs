@@ -32,7 +32,7 @@ pub mod view;
 pub use self::cvars::register_cvars;
 use self::{
     render::{Fov, RichterRenderPlugin},
-    sound::AudioOut,
+    sound::{MixerEvent, MusicSource, RichterSoundPlugin},
 };
 
 use std::{
@@ -49,31 +49,33 @@ use crate::{
         demo::{DemoServer, DemoServerError},
         entity::{ClientEntity, MAX_STATIC_ENTITIES},
         input::Input,
-        sound::{MusicPlayer, StaticSound},
+        sound::{MusicPlayer, StartSound, StartStaticSound, StopSound},
         state::{ClientState, PlayerInfo},
         trace::{TraceEntity, TraceFrame},
         view::{IdleVars, KickVars, MouseVars, RollVars},
     },
     common::{
         self,
-        console::{CmdRegistry, Console, ConsoleError, CvarRegistry},
+        console::{CmdRegistry, CommandArgs, Console, ConsoleError, CvarRegistry},
         engine,
         model::ModelError,
         net::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
-            BlockingMode, ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState, GameType,
-            NetError, PlayerColor, QSocket, ServerCmd, SignOnStage,
+            ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState, GameType, NetError,
+            PlayerColor, ServerCmd, SignOnStage,
         },
         vfs::{Vfs, VfsError},
     },
 };
 
 use bevy::{
-    app::{Main, Plugin, Startup},
+    app::Plugin,
+    asset::AssetServer,
     ecs::{
+        event::EventWriter,
         query::With,
-        system::{In, IntoSystem as _, Query, Res, ResMut, Resource},
+        system::{Commands, In, IntoSystem as _, Query, Res, ResMut, Resource},
         world::{FromWorld, World},
     },
     render::{
@@ -89,7 +91,6 @@ use chrono::Duration;
 use input::InputFocus;
 use menu::Menu;
 use render::{GraphicsState, WorldRenderer};
-use rodio::OutputStreamHandle;
 use sound::SoundError;
 use thiserror::Error;
 use view::BobVars;
@@ -165,7 +166,8 @@ impl Plugin for RichterPlugin {
         //         }),
         //     ),
         // )
-        .add_plugins(RichterRenderPlugin);
+        .add_plugins(RichterRenderPlugin)
+        .add_plugins(RichterSoundPlugin);
     }
 }
 
@@ -448,13 +450,13 @@ impl Connection {
     fn parse_server_msg(
         &mut self,
         vfs: &Vfs,
+        asset_server: &AssetServer,
         gfx_state: &mut GraphicsState,
         device: &RenderDevice,
         queue: &RenderQueue,
         cmds: &mut CmdRegistry,
         console: &mut Console,
-        music_player: &mut MusicPlayer,
-        output_stream: OutputStreamHandle,
+        mixer_events: &mut EventWriter<MixerEvent>,
         kick_vars: KickVars,
     ) -> Result<ConnectionStatus, ClientError> {
         use ConnectionStatus::*;
@@ -521,14 +523,12 @@ impl Connection {
                 ServerCmd::NoOp => (),
 
                 ServerCmd::CdTrack { track, .. } => {
-                    music_player.play_track(
-                        vfs,
-                        output_stream.clone(),
+                    mixer_events.send(MixerEvent::StartMusic(Some(sound::MusicSource::TrackId(
                         match track_override {
                             Some(t) => t as usize,
                             None => track as usize,
                         },
-                    )?;
+                    ))));
                 }
 
                 ServerCmd::CenterPrint { text } => {
@@ -639,13 +639,13 @@ impl Connection {
 
                     self.state = ClientState::from_server_info(
                         vfs,
+                        asset_server,
                         max_clients,
                         model_precache,
                         sound_precache,
-                        output_stream.clone(),
                     )?;
 
-                    cmds.insert_or_replace("bf", move |_, world| {
+                    cmds.insert_or_replace("bf", move |_, world: &mut World| {
                         if let Some(Connection { state, .. }) =
                             &mut world.resource_mut::<GameConnection>().0
                         {
@@ -701,16 +701,14 @@ impl Connection {
                     let volume = volume.unwrap_or(DEFAULT_SOUND_PACKET_VOLUME);
                     let attenuation = attenuation.unwrap_or(DEFAULT_SOUND_PACKET_ATTENUATION);
                     // TODO: apply volume, attenuation, spatialization
-                    self.state.mixer.start_sound(
-                        self.state.sounds[sound_id as usize].clone(),
-                        self.state.msg_times[0],
-                        Some(entity_id as usize),
-                        channel,
-                        volume as f32 / 255.0,
+                    mixer_events.send(MixerEvent::StartSound(StartSound {
+                        src: self.state.sounds[sound_id as usize].clone(),
+                        ent_id: Some(entity_id as usize),
+                        ent_channel: channel,
+                        volume: volume as f32 / 255.0,
                         attenuation,
-                        position,
-                        &self.state.listener,
-                    );
+                        origin: position.into(),
+                    }));
                 }
 
                 ServerCmd::SpawnBaseline {
@@ -766,20 +764,17 @@ impl Connection {
                     volume,
                     attenuation,
                 } => {
-                    self.state.static_sounds.push_back(
-                        StaticSound::new(
-                            output_stream.clone(),
-                            origin,
-                            self.state.sounds[sound_id as usize].clone(),
-                            volume as f32 / 255.0,
-                            attenuation as f32 / 64.0,
-                            &self.state.listener,
-                        )
-                        .into(),
-                    );
+                    mixer_events.send(MixerEvent::StartStaticSound(StartStaticSound {
+                        src: self.state.sounds[sound_id as usize].clone(),
+                        origin,
+                        volume: volume as f32 / 255.0,
+                        attenuation: attenuation as f32 / 64.0,
+                    }));
                 }
 
-                ServerCmd::TempEntity { temp_entity } => self.state.spawn_temp_entity(&temp_entity),
+                ServerCmd::TempEntity { temp_entity } => {
+                    self.state.spawn_temp_entity(mixer_events, &temp_entity)
+                }
 
                 ServerCmd::StuffText { text } => console.append_text(text),
 
@@ -888,7 +883,10 @@ impl Connection {
                 ServerCmd::SetPause { .. } => {}
 
                 ServerCmd::StopSound { entity_id, channel } => {
-                    self.state.mixer.stop_sound(Some(entity_id as _), channel)
+                    mixer_events.send(MixerEvent::StopSound(StopSound {
+                        ent_id: Some(entity_id as _),
+                        ent_channel: channel,
+                    }));
                 }
                 ServerCmd::SellScreen => todo!(),
             }
@@ -901,13 +899,13 @@ impl Connection {
         &mut self,
         frame_time: Duration,
         vfs: &Vfs,
+        asset_server: &AssetServer,
         gfx_state: &mut GraphicsState,
         device: &RenderDevice,
         queue: &RenderQueue,
         cmds: &mut CmdRegistry,
         console: &mut Console,
-        music_player: &mut MusicPlayer,
-        output_stream: OutputStreamHandle,
+        mixer_events: &mut EventWriter<MixerEvent>,
         idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
@@ -922,13 +920,13 @@ impl Connection {
         self.state.advance_time(frame_time);
         match self.parse_server_msg(
             vfs,
+            asset_server,
             gfx_state,
             device,
             queue,
             cmds,
             console,
-            music_player,
-            output_stream.clone(),
+            mixer_events,
             kick_vars,
         )? {
             ConnectionStatus::Maintain => (),
@@ -968,12 +966,6 @@ impl Connection {
             // update view
             self.state
                 .calc_final_view(idle_vars, kick_vars, roll_vars, bob_vars);
-
-            // update ear positions
-            self.state.update_listener();
-
-            // spatialize sounds for new ear positions
-            self.state.update_sound_spatialization();
 
             // update camera color shifts for new position/effects
             self.state.update_color_shifts(frame_time)?;
@@ -1034,13 +1026,13 @@ pub fn frame(
     queue: Res<RenderQueue>,
     cvars: Res<CvarRegistry>,
     vfs: Res<Vfs>,
+    asset_server: Res<AssetServer>,
     mut cmds: ResMut<CmdRegistry>,
     mut console: ResMut<Console>,
-    mut music_player: ResMut<MusicPlayer>,
+    mut mixer_events: EventWriter<MixerEvent>,
     mut demo_queue: ResMut<DemoQueue>,
     mut input: ResMut<Input>,
     mut conn: ResMut<GameConnection>,
-    output_stream: Res<AudioOut>,
 ) -> Result<(), ClientError> {
     let frame_time = frame_time.0;
     let conn = &mut conn.0;
@@ -1054,14 +1046,14 @@ pub fn frame(
     let status = match *conn {
         Some(ref mut conn) => conn.frame(
             Duration::from_std(frame_time.delta()).unwrap(),
-            &vfs,
+            &*vfs,
+            &*asset_server,
             &mut *gfx_state,
             &*device,
             &*queue,
             &mut *cmds,
             &mut *console,
-            &mut *music_player,
-            output_stream.0.clone(),
+            &mut mixer_events,
             idle_vars,
             kick_vars,
             roll_vars,
@@ -1107,7 +1099,7 @@ pub fn frame(
                             demo_file.as_mut().and_then(|df| match DemoServer::new(df) {
                                 Ok(d) => Some(Connection {
                                     kind: ConnectionKind::Demo(d),
-                                    state: ClientState::new(output_stream.0.clone()),
+                                    state: ClientState::new(),
                                     conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
                                 }),
                                 Err(e) => {
@@ -1330,7 +1322,7 @@ impl CvarsExt for CvarRegistry {
 }
 
 // implements the "toggleconsole" command
-fn cmd_toggleconsole(args: &[&str], world: &mut World) -> String {
+fn cmd_toggleconsole(_: &[&str], world: &mut World) -> String {
     let has_conn = world.resource::<GameConnection>().0.is_some();
     let mut input = world.resource_mut::<Input>();
     let focus = input.focus();
@@ -1351,7 +1343,7 @@ fn cmd_toggleconsole(args: &[&str], world: &mut World) -> String {
 }
 
 // implements the "togglemenu" command
-fn cmd_togglemenu(args: &[&str], world: &mut World) -> String {
+fn cmd_togglemenu(_: &[&str], world: &mut World) -> String {
     let has_conn = world.resource::<GameConnection>().0.is_some();
     let mut input = world.resource_mut::<Input>();
     let focus = input.focus();
@@ -1371,7 +1363,7 @@ fn cmd_togglemenu(args: &[&str], world: &mut World) -> String {
     String::new()
 }
 
-fn connect<A>(server_addrs: A, output_stream: OutputStreamHandle) -> Result<Connection, ClientError>
+fn connect<A>(server_addrs: A) -> Result<Connection, ClientError>
 where
     A: ToSocketAddrs,
 {
@@ -1445,7 +1437,7 @@ where
     let qsock = con_sock.into_qsocket(new_addr);
 
     Ok(Connection {
-        state: ClientState::new(output_stream),
+        state: ClientState::new(),
         kind: ConnectionKind::Server {
             qsock: todo!(),
             compose: Vec::new(),
@@ -1464,14 +1456,13 @@ fn cmd_connect(args: &[&str], world: &mut World) -> String {
     let world = world.cell();
     let mut conn = world.resource_mut::<GameConnection>();
     let mut input = world.resource_mut::<Input>();
-    let audio = world.resource::<AudioOut>();
 
     if args.len() < 1 {
         // TODO: print to console
         return "usage: connect <server_ip>:<server_port>".to_owned();
     }
 
-    match connect(args[0], audio.0.clone()) {
+    match connect(args[0]) {
         Ok(new_conn) => {
             conn.0 = Some(new_conn);
             input.set_focus(InputFocus::Game);
@@ -1516,7 +1507,6 @@ fn cmd_playdemo(args: &[&str], world: &mut World) -> String {
     let world = world.cell();
     let mut conn = world.resource_mut::<GameConnection>();
     let vfs = world.resource::<Vfs>();
-    let audio = world.resource::<AudioOut>();
     let mut input = world.resource_mut::<Input>();
 
     if args.len() != 1 {
@@ -1536,7 +1526,7 @@ fn cmd_playdemo(args: &[&str], world: &mut World) -> String {
         match DemoServer::new(&mut demo_file) {
             Ok(d) => Connection {
                 kind: ConnectionKind::Demo(d),
-                state: ClientState::new(audio.0.clone()),
+                state: ClientState::new(),
                 conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
             },
             Err(e) => {
@@ -1562,7 +1552,6 @@ fn cmd_startdemos(args: &[&str], world: &mut World) -> String {
     let mut demo_queue = world.resource_mut::<DemoQueue>();
     let mut conn = world.resource_mut::<GameConnection>();
     let mut input = world.resource_mut::<Input>();
-    let audio = world.resource_mut::<AudioOut>();
     let vfs = world.resource::<Vfs>();
     demo_queue.0 = args.into_iter().map(|s| s.to_string()).collect();
 
@@ -1583,7 +1572,7 @@ fn cmd_startdemos(args: &[&str], world: &mut World) -> String {
             match DemoServer::new(&mut demo_file) {
                 Ok(d) => Connection {
                     kind: ConnectionKind::Demo(d),
-                    state: ClientState::new(audio.0.clone()),
+                    state: ClientState::new(),
                     conn_state: ConnectionState::SignOn(SignOnStage::Prespawn),
                 },
                 Err(e) => {
@@ -1601,8 +1590,6 @@ fn cmd_startdemos(args: &[&str], world: &mut World) -> String {
 
     conn.0 = Some(new_conn);
 
-    dbg!(conn.0.is_some());
-
     String::new()
 }
 
@@ -1611,33 +1598,31 @@ fn cmd_music(args: &[&str], world: &mut World) -> String {
         return "usage: music [TRACKNAME]".to_owned();
     }
 
-    let world = world.cell();
-
-    let mut music_player = world.resource_mut::<MusicPlayer>();
-    let audio = world.resource::<AudioOut>();
-    let vfs = world.resource::<Vfs>();
-
-    let res = music_player.play_named(&*vfs, audio.0.clone(), args[0]);
-    match res {
-        Ok(()) => String::new(),
-        Err(e) => {
-            music_player.stop();
-            format!("{}", e)
-        }
-    }
+    world.send_event(MixerEvent::StartMusic(Some(MusicSource::Named(
+        args[0].to_owned(),
+    ))));
+    // TODO: Handle failure correctly
+    // match res {
+    //     Ok(()) => String::new(),
+    //     Err(e) => {
+    //         music_player.stop(commands);
+    //         format!("{}", e)
+    //     }
+    // }
+    String::new()
 }
 
 fn cmd_music_stop(_: &[&str], world: &mut World) -> String {
-    world.resource_mut::<MusicPlayer>().stop();
+    world.send_event(MixerEvent::StopMusic);
     String::new()
 }
 
 fn cmd_music_pause(_: &[&str], world: &mut World) -> String {
-    world.resource_mut::<MusicPlayer>().pause();
+    world.send_event(MixerEvent::PauseMusic);
     String::new()
 }
 
 fn cmd_music_resume(_: &[&str], world: &mut World) -> String {
-    world.resource_mut::<MusicPlayer>().resume();
+    world.send_event(MixerEvent::StartMusic(None));
     String::new()
 }
