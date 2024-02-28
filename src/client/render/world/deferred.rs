@@ -2,7 +2,7 @@ use std::{mem::size_of, num::NonZeroU64};
 
 use bevy::{
     ecs::{
-        system::{Deferred, Resource},
+        system:: Resource,
         world::FromWorld,
     },
     render::{

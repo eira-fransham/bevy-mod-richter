@@ -5,7 +5,7 @@ pub mod particle;
 pub mod postprocess;
 pub mod sprite;
 
-use std::{cell::RefCell, mem::size_of};
+use std::mem::size_of;
 
 use crate::{
     client::{
@@ -33,13 +33,17 @@ use crate::{
     },
 };
 
-use bevy::render::{
-    render_resource::BindGroupLayoutEntry,
-    renderer::{RenderDevice, RenderQueue},
+use bevy::{
+    prelude::*,
+    render::{
+        render_resource::BindGroupLayoutEntry,
+        renderer::{RenderDevice, RenderQueue},
+    },
 };
 use bumpalo::Bump;
 use cgmath::{Euler, InnerSpace, Matrix4, SquareMatrix as _, Vector3, Vector4};
 use chrono::Duration;
+use lazy_static::lazy_static;
 use parking_lot::RwLock;
 
 lazy_static! {
@@ -554,7 +558,7 @@ impl WorldRenderer {
             }
         }
 
-        log::debug!("Drawing particles");
+        debug!("Drawing particles");
         state
             .particle_pipeline()
             .record_draw(pass, &bump, camera, particles);

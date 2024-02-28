@@ -56,13 +56,14 @@ mod warp;
 mod world;
 
 use bevy::{
-    app::{Plugin, Startup, Update},
+    app::Plugin,
     core_pipeline::core_3d::graph::{Core3d, Node3d},
     ecs::{
         event::EventReader,
-        system::{In, IntoSystem as _, Res, ResMut, Resource},
+        system::{In, Res, ResMut, Resource},
         world::FromWorld,
     },
+    prelude::*,
     render::{
         extract_resource::{ExtractResource as _, ExtractResourcePlugin},
         render_graph::{RenderGraphApp as _, RenderLabel, ViewNode, ViewNodeRunner},
@@ -71,7 +72,6 @@ use bevy::{
         view::ViewTarget,
         ExtractSchedule, MainWorld, Render, RenderApp,
     },
-    time::{Time, Virtual},
 };
 pub use cvars::register_cvars;
 pub use error::{RenderError, RenderErrorKind};

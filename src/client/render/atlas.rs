@@ -6,7 +6,7 @@ use bevy::render::{
     render_resource::Texture,
     renderer::{RenderDevice, RenderQueue},
 };
-use failure::Error;
+use failure::{bail, ensure, Error};
 use wgpu::util::TextureDataOrder;
 
 const DEFAULT_ATLAS_DIM: u32 = 1024;

@@ -57,7 +57,7 @@ use richter::{
         trace::TraceFrame,
         ClientError,
     },
-    common::console::{CmdRegistry, CommandArgs, Console, CvarRegistry},
+    common::console::{CmdRegistry, Console, CvarRegistry},
 };
 
 use chrono::{Duration, TimeDelta, Utc};

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::FromIterator};
+use std::collections::HashMap;
 
 use crate::{
     client::{
@@ -20,10 +20,13 @@ use crate::{
     },
 };
 
-use arrayvec::ArrayVec;
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::{
+    prelude::*,
+    render::renderer::{RenderDevice, RenderQueue},
+};
 use chrono::Duration;
 use num::FromPrimitive as _;
+use num_derive::FromPrimitive;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumIter;
 

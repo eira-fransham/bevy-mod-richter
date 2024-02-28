@@ -22,6 +22,7 @@ use bevy::{
     },
 };
 use chrono::Duration;
+use lazy_static::lazy_static;
 
 pub struct SpritePipeline {
     pipeline: RenderPipeline,

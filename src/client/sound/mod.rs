@@ -46,7 +46,6 @@ use thiserror::Error;
 use super::GameConnection;
 
 pub const DISTANCE_ATTENUATION_FACTOR: f32 = 0.001;
-const MAX_ENTITY_CHANNELS: usize = 128;
 
 #[derive(Error, Debug)]
 pub enum SoundError {
@@ -56,8 +55,6 @@ pub enum SoundError {
     Io(#[from] io::Error),
     #[error("Virtual filesystem error: {0}")]
     Vfs(#[from] VfsError),
-    #[error("WAV decoder error: {0}")]
-    Decoder(#[from] rodio::decoder::DecoderError),
 }
 
 /// Data needed for sound spatialization.
@@ -137,7 +134,7 @@ impl Plugin for RichterSoundPlugin {
         app.init_resource::<MusicPlayer>()
             .init_resource::<Listener>()
             .add_event::<MixerEvent>()
-            .add_systems(Main, update_mixer);
+            .add_systems(Main, systems::update_mixer);
         // TODO: Currently the main game state is on the render thread so we can't access it
         //.add_systems(Main, (update_entities, update_mixer));
     }
@@ -310,69 +307,75 @@ pub enum MixerEvent {
     StopMusic,
 }
 
-pub fn update_mixer(
-    channels: Query<(Entity, &Channel, Option<&EntityChannel>)>,
-    listener: Res<Listener>,
-    mut music_player: ResMut<MusicPlayer>,
-    asset_server: Res<AssetServer>,
-    mut events: EventReader<MixerEvent>,
-    mut commands: Commands,
-    all_sounds: Query<&AudioSink>,
-) {
-    for event in events.read() {
-        match *event {
-            MixerEvent::StartSound(ref start) => {
-                match make_bundle(start, &*listener) {
-                    Ok(bundle) => commands.spawn(bundle),
-                    Err(bundle) => commands.spawn(bundle),
-                };
-            }
-            MixerEvent::StopSound(StopSound {
-                ent_id,
-                ent_channel,
-            }) => {
-                for (e, chan, e_chan) in channels.iter() {
-                    if chan.channel == ent_channel && e_chan.map(|e| e.id) == ent_id {
-                        if let Some(mut e) = commands.get_entity(e) {
-                            e.despawn();
+mod systems {
+    use super::*;
+
+    pub fn update_mixer(
+        channels: Query<(Entity, &Channel, Option<&EntityChannel>)>,
+        vfs: Res<Vfs>,
+        listener: Res<Listener>,
+        mut music_player: ResMut<MusicPlayer>,
+        asset_server: Res<AssetServer>,
+        mut events: EventReader<MixerEvent>,
+        mut commands: Commands,
+        all_sounds: Query<&AudioSink>,
+    ) {
+        for event in events.read() {
+            match *event {
+                MixerEvent::StartSound(ref start) => {
+                    match make_bundle(start, &*listener) {
+                        Ok(bundle) => commands.spawn(bundle),
+                        Err(bundle) => commands.spawn(bundle),
+                    };
+                }
+                MixerEvent::StopSound(StopSound {
+                    ent_id,
+                    ent_channel,
+                }) => {
+                    for (e, chan, e_chan) in channels.iter() {
+                        if chan.channel == ent_channel && e_chan.map(|e| e.id) == ent_id {
+                            if let Some(mut e) = commands.get_entity(e) {
+                                e.despawn();
+                            }
                         }
                     }
                 }
+                MixerEvent::StartStaticSound(ref static_sound) => {
+                    commands.spawn(StaticSoundBundle::new(static_sound, &*listener));
+                }
+                MixerEvent::StartMusic(Some(MusicSource::Named(ref named))) => {
+                    // TODO: Error handling
+                    music_player
+                        .play_named(&*asset_server, &mut commands, &*vfs, named)
+                        .unwrap();
+                }
+                MixerEvent::StartMusic(Some(MusicSource::TrackId(id))) => {
+                    // TODO: Error handling
+                    music_player
+                        .play_track(&*asset_server, &mut commands, &*vfs, id)
+                        .unwrap();
+                }
+                MixerEvent::StartMusic(None) => music_player.resume(&all_sounds),
+                MixerEvent::StopMusic => music_player.stop(&mut commands),
+                MixerEvent::PauseMusic => music_player.pause(&all_sounds),
             }
-            MixerEvent::StartStaticSound(ref static_sound) => {
-                commands.spawn(StaticSoundBundle::new(static_sound, &*listener));
-            }
-            MixerEvent::StartMusic(Some(MusicSource::Named(ref named))) => {
-                // TODO: Error handling
-                music_player
-                    .play_named(&*asset_server, &mut commands, named)
-                    .unwrap();
-            }
-            MixerEvent::StartMusic(Some(MusicSource::TrackId(id))) => {
-                // TODO: Error handling
-                music_player
-                    .play_track(&*asset_server, &mut commands, id)
-                    .unwrap();
-            }
-            MixerEvent::StartMusic(None) => music_player.resume(&all_sounds),
-            MixerEvent::StopMusic => music_player.stop(&mut commands),
-            MixerEvent::PauseMusic => music_player.pause(&all_sounds),
         }
     }
-}
 
-pub fn update_entities(
-    mut entities: Query<(&mut AudioSink, &EntityChannel, &mut Channel)>,
-    listener: Res<Listener>,
-    conn: Res<GameConnection>,
-) {
-    let Some(conn) = &conn.0 else {
-        return;
-    };
+    pub fn update_entities(
+        mut entities: Query<(&mut AudioSink, Option<&EntityChannel>, &mut Channel)>,
+        listener: Res<Listener>,
+        conn: Res<GameConnection>,
+    ) {
+        let Some(conn) = &conn.0 else {
+            return;
+        };
 
-    for (mut sink, EntityChannel { id, .. }, mut chan) in entities.iter_mut() {
-        if let Some(e) = conn.state.entities.get(*id) {
-            chan.origin = e.origin;
+        for (mut sink, e_chan, mut chan) in entities.iter_mut() {
+            if let Some(e) = e_chan.and_then(|e| conn.state.entities.get(e.id)) {
+                chan.origin = e.origin;
+            }
+
             chan.update(&mut *sink, &*listener)
         }
     }

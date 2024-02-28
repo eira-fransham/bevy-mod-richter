@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 use crate::common::parse::quoted;
 
+use failure::bail;
 use nom::{
     bytes::complete::tag,
     character::complete::newline,

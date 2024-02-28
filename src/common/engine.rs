@@ -19,6 +19,7 @@ use std::{fs::File, io::Read};
 
 use cgmath::{Deg, Vector3};
 use chrono::Duration;
+use lazy_static::lazy_static;
 
 // TODO: the palette should be host-specific and loaded alongside pak0.pak (or the latest PAK with a
 // palette.lmp)

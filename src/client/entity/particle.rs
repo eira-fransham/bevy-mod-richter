@@ -23,7 +23,6 @@ use std::{mem, ops::RangeInclusive};
 use crate::{
     client::ClientEntity,
     common::{
-        alloc::LinkedSlab,
         engine,
         math::{self, VERTEX_NORMAL_COUNT},
     },
@@ -31,6 +30,7 @@ use crate::{
 
 use cgmath::{InnerSpace as _, Vector3, Zero as _};
 use chrono::Duration;
+use lazy_static::lazy_static;
 use rand::{
     distributions::{Distribution as _, Uniform},
     rngs::SmallRng,

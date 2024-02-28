@@ -15,9 +15,10 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, convert::TryInto, rc::Rc};
+use std::{convert::TryInto, rc::Rc};
 
 use num::FromPrimitive;
+use num_derive::FromPrimitive;
 
 use crate::server::progs::{ops::Opcode, ProgsError, StringId, StringTable};
 

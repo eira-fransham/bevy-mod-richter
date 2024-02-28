@@ -1,18 +1,19 @@
 use std::{
-    cell::{Cell, RefCell},
     marker::PhantomData,
     mem::{self, align_of, size_of},
-    rc::Rc,
     sync::Arc,
 };
 
 use crate::common::util::{any_as_bytes, Pod};
 
-use bevy::render::{
-    render_resource::Buffer,
-    renderer::{RenderDevice, RenderQueue},
+use bevy::{
+    prelude::*,
+    render::{
+        render_resource::Buffer,
+        renderer::{RenderDevice, RenderQueue},
+    },
 };
-use failure::Error;
+use failure::{bail, Error};
 
 // minimum limit is 16384:
 // https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#limits-maxUniformBufferRange

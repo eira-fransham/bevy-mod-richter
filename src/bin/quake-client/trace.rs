@@ -1,10 +1,7 @@
 use std::{fs::File, io::BufWriter, mem};
 
-use bevy::ecs::world::World;
-use richter::{
-    client::trace::TraceFrame,
-    common::console::{CommandArgs, CvarRegistry},
-};
+use bevy::prelude::*;
+use richter::{client::trace::TraceFrame, common::console::CvarRegistry};
 
 const DEFAULT_TRACE_PATH: &'static str = "richter-trace.json";
 
@@ -12,7 +9,7 @@ const DEFAULT_TRACE_PATH: &'static str = "richter-trace.json";
 pub fn cmd_trace_begin(_: &[&str], world: &mut World) -> String {
     let mut trace: &mut Option<Vec<TraceFrame>> = todo!();
     if trace.is_some() {
-        log::error!("trace already in progress");
+        error!("trace already in progress");
         "trace already in progress".to_owned()
     } else {
         // start a new trace
@@ -32,7 +29,7 @@ pub fn cmd_trace_end(_: &[&str], world: &mut World) -> String {
         let trace_file = match File::create(&trace_path) {
             Ok(f) => f,
             Err(e) => {
-                log::error!("Couldn't open trace file for write: {}", e);
+                error!("Couldn't open trace file for write: {}", e);
                 return format!("Couldn't open trace file for write: {}", e);
             }
         };
@@ -42,15 +39,15 @@ pub fn cmd_trace_end(_: &[&str], world: &mut World) -> String {
         match serde_json::to_writer(&mut writer, &trace_frames) {
             Ok(()) => (),
             Err(e) => {
-                log::error!("Couldn't serialize trace: {}", e);
+                error!("Couldn't serialize trace: {}", e);
                 return format!("Couldn't serialize trace: {}", e);
             }
         };
 
-        log::debug!("wrote {} frames to {}", trace_frames.len(), &trace_path);
+        debug!("wrote {} frames to {}", trace_frames.len(), &trace_path);
         format!("wrote {} frames to {}", trace_frames.len(), &trace_path)
     } else {
-        log::error!("no trace in progress");
+        error!("no trace in progress");
         "no trace in progress".to_owned()
     }
 }

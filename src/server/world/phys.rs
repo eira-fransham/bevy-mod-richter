@@ -22,8 +22,10 @@ use crate::{
     server::progs::EntityId,
 };
 
+use bevy::prelude::*;
 use bitflags::bitflags;
 use cgmath::{InnerSpace, Vector3, Zero};
+use num_derive::FromPrimitive;
 
 /// Velocity in units/second under which a *component* (not the entire
 /// velocity!) is instantly reduced to zero.

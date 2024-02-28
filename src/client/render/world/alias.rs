@@ -23,6 +23,7 @@ use bevy::{
 use cgmath::{InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
 use failure::Error;
+use lazy_static::lazy_static;
 
 pub struct AliasPipeline {
     pipeline: RenderPipeline,

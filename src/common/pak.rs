@@ -18,10 +18,9 @@
 //! Quake PAK archive manipulation.
 
 use std::{
-    collections::{hash_map::Iter, BTreeSet, HashMap},
+    collections::HashMap,
     fs,
     io::{self, Read, Seek, SeekFrom},
-    mem,
     ops::Range,
     path::{Path, PathBuf},
 };
@@ -31,11 +30,12 @@ use bevy::{
         io::{AssetReader, AssetReaderError, PathStream, Reader},
         Asset, AssetLoader, LoadContext,
     },
+    prelude::*,
     reflect::TypePath,
     utils::BoxedFuture,
 };
-use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
-use futures::{AsyncRead, AsyncReadExt as _, AsyncSeek, AsyncSeekExt as _};
+use byteorder::{LittleEndian, ReadBytesExt};
+use futures::AsyncReadExt as _;
 use memmap2::{Mmap, MmapOptions};
 use thiserror::Error;
 

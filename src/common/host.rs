@@ -18,9 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::cell::{Ref, RefMut};
-
-use crate::common::{console::CvarRegistry, engine};
+use crate::common::console::CvarRegistry;
 
 use bevy::ecs::system::ResMut;
 use chrono::{DateTime, Duration, Utc};

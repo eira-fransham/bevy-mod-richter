@@ -32,10 +32,13 @@ use std::{
 
 use crate::common::{engine, util};
 
+use bevy::prelude::*;
+use bitflags::bitflags;
 use byteorder::{LittleEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
 use cgmath::{Deg, Vector3, Zero};
 use chrono::Duration;
 use num::FromPrimitive;
+use num_derive::FromPrimitive;
 
 pub const MAX_MESSAGE: usize = 8192;
 const MAX_DATAGRAM: usize = 1024;
@@ -93,6 +96,7 @@ impl fmt::Display for NetError {
 }
 
 impl Error for NetError {
+    #[allow(deprecated)]
     fn description(&self) -> &str {
         match *self {
             NetError::Io(ref err) => err.description(),

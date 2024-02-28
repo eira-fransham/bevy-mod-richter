@@ -1,7 +1,6 @@
-use std::{
-    io::{Cursor, Read},
-    rc::Rc,
-};
+use std::
+    io::Read
+;
 
 use crate::{client::sound::SoundError, common::vfs::Vfs};
 
@@ -9,16 +8,13 @@ use bevy::{
     asset::AssetServer,
     audio::{
         AudioBundle, AudioSink, AudioSinkPlayback as _, AudioSource, PlaybackMode,
-        PlaybackSettings, Volume,
+        PlaybackSettings, 
     },
     ecs::{
         entity::Entity,
         system::{Commands, Query, Resource},
-        world::World,
     },
-    render::extract_resource::ExtractResource,
 };
-use rodio::{Decoder, OutputStreamHandle, Sink, Source};
 
 /// Plays music tracks.
 #[derive(Resource, Default)]
@@ -43,6 +39,7 @@ impl MusicPlayer {
         &mut self,
         asset_server: &AssetServer,
         commands: &mut Commands,
+        vfs: &Vfs,
         name: S,
     ) -> Result<(), SoundError>
     where
@@ -58,28 +55,28 @@ impl MusicPlayer {
         }
 
         // TODO: there's probably a better way to do this extension check
-        // let mut file = if !name.contains('.') {
-        //     // try all supported formats
-        //     let Ok(file) = vfs
-        //         .open(format!("music/{}.flac", name))
-        //         .or_else(|_| vfs.open(format!("music/{}.wav", name)))
-        //         .or_else(|_| vfs.open(format!("music/{}.mp3", name)))
-        //         .or_else(|_| vfs.open(format!("music/{}.ogg", name)))
-        //         .or(Err(SoundError::NoSuchTrack(name.to_owned())))
-        //     else {
-        //         return Ok(());
-        //     };
+        let mut file = if !name.contains('.') {
+            // try all supported formats
+            let Ok(file) = vfs
+                .open(format!("music/{}.flac", name))
+                .or_else(|_| vfs.open(format!("music/{}.wav", name)))
+                .or_else(|_| vfs.open(format!("music/{}.mp3", name)))
+                .or_else(|_| vfs.open(format!("music/{}.ogg", name)))
+                .or(Err(SoundError::NoSuchTrack(name.to_owned())))
+            else {
+                return Ok(());
+            };
 
-        //     file
-        // } else {
-        //     vfs.open(name)?
-        // };
+            file
+        } else {
+            vfs.open(name)?
+        };
 
         // TODO: Turn VFS into an AssetReader so that this is asynchronous
-        // let mut data = Vec::new();
-        // file.read_to_end(&mut data)?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
 
-        let source = asset_server.load(format!("music/{}.ogg", name));
+        let source = asset_server.add(AudioSource { bytes: data.into() });
 
         self.stop(commands);
 
@@ -106,9 +103,10 @@ impl MusicPlayer {
         &mut self,
         asset_server: &AssetServer,
         commands: &mut Commands,
+        vfs: &Vfs,
         track_id: usize,
     ) -> Result<(), SoundError> {
-        self.play_named(asset_server, commands, format!("track{:02}", track_id))
+        self.play_named(asset_server, commands, vfs, format!("track{:02}", track_id))
     }
 
     /// Stop the current music track.

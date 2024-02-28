@@ -1,17 +1,14 @@
 use std::{
-    cell::RefCell,
     fs::File,
     io::BufWriter,
-    num::NonZeroU32,
     path::{Path, PathBuf},
-    rc::Rc,
 };
 
 use bevy::{
-    ecs::world::World,
+    prelude::*,
     render::{render_resource::Buffer, renderer::RenderDevice},
 };
-use richter::{client::render::Extent2d, common::console::CommandArgs};
+use richter::client::render::Extent2d;
 
 use chrono::Utc;
 
@@ -28,7 +25,7 @@ pub fn cmd_screenshot(args: &[&str], world: &mut World) -> String {
         0 => PathBuf::from(format!("richter-{}.png", Utc::now().format("%FT%H-%M-%S"))),
         1 => PathBuf::from(args[0]),
         _ => {
-            log::error!("Usage: screenshot [PATH]");
+            error!("Usage: screenshot [PATH]");
             return "Usage: screenshot [PATH]".to_owned();
         }
     };

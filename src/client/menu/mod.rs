@@ -21,7 +21,7 @@
 mod item;
 
 use bevy::{ecs::system::Resource, render::extract_resource::ExtractResource};
-use failure::Error;
+use failure::{bail, Error};
 
 use crate::common::host::Control;
 

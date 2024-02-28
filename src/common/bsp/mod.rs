@@ -118,15 +118,17 @@
 
 mod load;
 
-use std::{collections::HashSet, error::Error, fmt, iter::Iterator, sync::Arc};
+use std::{collections::HashSet, error::Error, fmt, sync::Arc};
 
 use crate::common::math::{Hyperplane, HyperplaneSide, LinePlaneIntersect};
 
 // TODO: Either Trace should be moved into common or the functions requiring it should be moved into server
 use crate::server::world::{Trace, TraceEnd, TraceStart};
 
+use bevy::prelude::*;
 use cgmath::Vector3;
 use chrono::Duration;
+use num_derive::FromPrimitive;
 
 pub use self::load::{load, BspFileError};
 
@@ -168,6 +170,7 @@ impl fmt::Display for BspError {
 }
 
 impl Error for BspError {
+    #[allow(deprecated)]
     fn description(&self) -> &str {
         match *self {
             BspError::Io(ref err) => err.description(),

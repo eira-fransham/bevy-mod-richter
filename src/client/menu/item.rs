@@ -18,14 +18,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{
-    cell::{Cell, RefCell},
-    fmt::Debug,
-};
+use std::fmt::Debug;
 
 use crate::{client::menu::Menu, common::host::Control};
 
-use failure::Error;
+use failure::{ensure, Error};
 
 pub struct Action(pub Box<dyn Fn() -> Control + Send + Sync>);
 

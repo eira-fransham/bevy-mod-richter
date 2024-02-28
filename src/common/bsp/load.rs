@@ -19,7 +19,6 @@ use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     mem::size_of,
-    rc::Rc,
     sync::Arc,
 };
 
@@ -36,11 +35,12 @@ use crate::common::{
 };
 
 use super::{BspTextureFrame, BspTextureKind};
+use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{InnerSpace, Vector3};
-use chrono::Duration;
-use failure::ResultExt as _;
+use failure::{bail, ensure, ResultExt as _};
 use num::FromPrimitive;
+use num_derive::FromPrimitive;
 use thiserror::Error;
 
 const VERSION: i32 = 29;

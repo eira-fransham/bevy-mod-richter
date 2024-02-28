@@ -32,6 +32,7 @@ use crate::common::{
 use byteorder::{LittleEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
 use chrono::Duration;
 use num::FromPrimitive;
+use num_derive::FromPrimitive;
 
 pub const CONNECT_PROTOCOL_VERSION: u8 = 3;
 const CONNECT_CONTROL: i32 = 1 << 31;

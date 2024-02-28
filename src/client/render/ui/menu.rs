@@ -15,7 +15,10 @@ use crate::{
     common::{vfs::Vfs, wad::QPic},
 };
 
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::{
+    prelude::*,
+    render::renderer::{RenderDevice, RenderQueue},
+};
 use chrono::Duration;
 
 // original minimum Quake resolution

@@ -20,9 +20,8 @@
 
 use std::{
     borrow::Cow,
-    cell::{Cell, RefCell},
     collections::HashMap,
-    mem::{self, size_of},
+    mem::size_of,
     num::NonZeroU32,
     ops::Range,
     sync::{
@@ -62,6 +61,7 @@ use bumpalo::Bump;
 use cgmath::{InnerSpace as _, Matrix4, Vector3};
 use chrono::Duration;
 use failure::Error;
+use lazy_static::lazy_static;
 
 pub struct BrushPipeline {
     pipeline: RenderPipeline,

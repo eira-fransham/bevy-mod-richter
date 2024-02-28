@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, convert::TryInto, error::Error, fmt, rc::Rc};
+use std::{convert::TryInto, error::Error, fmt, rc::Rc};
 
 use crate::server::progs::{
     EntityId, FieldAddr, FunctionId, GlobalDef, StringId, StringTable, Type,
@@ -23,6 +23,7 @@ use crate::server::progs::{
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use cgmath::{Deg, Euler, InnerSpace, Matrix3, Vector3};
+use num_derive::FromPrimitive;
 
 pub const GLOBAL_STATIC_START: usize = 28;
 pub const GLOBAL_DYNAMIC_START: usize = 64;

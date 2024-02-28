@@ -23,7 +23,6 @@ pub mod particle;
 use std::mem;
 
 use crate::common::{
-    alloc::LinkedSlab,
     engine,
     net::{EntityEffects, EntityState, EntityUpdate},
 };

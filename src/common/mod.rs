@@ -35,13 +35,13 @@ pub mod util;
 pub mod vfs;
 pub mod wad;
 
-use std::path::PathBuf;
+use bevy::prelude::*;
 
 pub fn default_base_dir() -> std::path::PathBuf {
     match std::env::current_dir() {
         Ok(cwd) => cwd,
         Err(e) => {
-            log::error!("cannot access current directory: {}", e);
+            error!("cannot access current directory: {}", e);
             std::process::exit(1);
         }
     }

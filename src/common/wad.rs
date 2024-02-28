@@ -20,15 +20,15 @@
 
 use std::{
     collections::HashMap,
-    convert::From,
     fmt::{self, Display},
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
 };
 
 use crate::common::util;
 
+use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
-use failure::{Backtrace, Context, Error, Fail};
+use failure::{bail, Backtrace, Context, Error, Fail};
 
 // see definition of lumpinfo_t:
 // https://github.com/id-Software/Quake/blob/master/WinQuake/wad.h#L54-L63

@@ -15,27 +15,20 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{
-    borrow::Cow,
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    rc::Rc,
-    str::FromStr,
-    string::ToString,
-};
+use std::{collections::HashMap, str::FromStr, string::ToString};
 
 use crate::common::{
     console::{CmdRegistry, Console},
     parse,
 };
 
-use bevy::ecs::system::Resource;
-use failure::Error;
+use bevy::prelude::*;
+use failure::{bail, Error};
 use smol_str::SmolStr;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use winit::{
-    dpi::{LogicalPosition, PhysicalPosition},
+    dpi::PhysicalPosition,
     event::{
         DeviceEvent, ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
     },

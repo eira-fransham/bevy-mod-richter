@@ -20,8 +20,10 @@
 
 use std::{cmp::Ordering, convert::Into, ops::Neg};
 
-use bevy::reflect::Reflect;
+use bevy::prelude::*;
 use cgmath::{Angle, Deg, InnerSpace, Matrix3, Matrix4, Vector2, Vector3, Zero};
+use lazy_static::lazy_static;
+use num_derive::FromPrimitive;
 
 trait CoordSys {}
 
@@ -277,7 +279,7 @@ pub fn clamp_deg(val: Deg<f32>, min: Deg<f32>, max: Deg<f32>) -> Deg<f32> {
     };
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Reflect)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum HyperplaneSide {
     Positive = 0,
     Negative = 1,
@@ -305,7 +307,7 @@ impl HyperplaneSide {
     }
 }
 
-#[derive(Debug, Reflect)]
+#[derive(Debug)]
 /// The intersection of a line or segment and a plane at a point.
 pub struct PointIntersection {
     // percentage of distance between start and end where crossover occurred
@@ -337,7 +339,7 @@ impl PointIntersection {
 /// A true mathematical representation would account for lines or segments contained entirely within
 /// the plane, but here a distance of 0.0 is considered Positive. Thus, lines or segments contained
 /// by the plane are considered to be `NoIntersection(Positive)`.
-#[derive(Debug, Reflect)]
+#[derive(Debug)]
 pub enum LinePlaneIntersect {
     /// The line or line segment never intersects with the plane.
     NoIntersection(HyperplaneSide),
@@ -346,20 +348,20 @@ pub enum LinePlaneIntersect {
     PointIntersection(PointIntersection),
 }
 
-#[derive(Copy, Clone, Debug, FromPrimitive, Reflect)]
+#[derive(Copy, Clone, Debug, FromPrimitive)]
 pub enum Axis {
     X = 0,
     Y = 1,
     Z = 2,
 }
 
-#[derive(Clone, Debug, Reflect)]
+#[derive(Clone, Debug)]
 enum Alignment {
     Axis(Axis),
     Normal([f32; 3]),
 }
 
-#[derive(Clone, Debug, Reflect)]
+#[derive(Clone, Debug)]
 pub struct Hyperplane {
     alignment: Alignment,
     dist: f32,

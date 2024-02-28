@@ -20,11 +20,14 @@
 
 use std::mem::size_of;
 
-use bevy::render::{
-    render_resource::{BindGroupLayout, BindGroupLayoutDescriptor, RenderPipeline},
-    renderer::RenderDevice,
+use bevy::{
+    prelude::*,
+    render::{
+        render_resource::{BindGroupLayout, RenderPipeline},
+        renderer::RenderDevice,
+    },
 };
-use wgpu::{core::binding_model::BindGroup, BindGroupLayoutEntry};
+use wgpu::BindGroupLayoutEntry;
 
 use crate::common::util::{any_as_bytes, Pod};
 
@@ -40,7 +43,7 @@ fn create_shader<S>(
 where
     S: AsRef<str>,
 {
-    log::debug!("creating shader {}", name.as_ref());
+    debug!("creating shader {}", name.as_ref());
     let spirv = compiler
         .compile_into_spirv(source.as_ref(), kind, name.as_ref(), "main", None)
         .unwrap();

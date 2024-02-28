@@ -1,8 +1,4 @@
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    mem::size_of,
-    num::NonZeroU64,
-};
+use std::{mem::size_of, num::NonZeroU64};
 
 use crate::{
     client::render::{
@@ -24,6 +20,7 @@ use bevy::render::{
     renderer::{RenderDevice, RenderQueue},
 };
 use cgmath::Matrix4;
+use lazy_static::lazy_static;
 
 pub const VERTICES: [QuadVertex; 6] = [
     QuadVertex {

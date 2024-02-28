@@ -10,7 +10,10 @@ use crate::{
     common::{console::Console, engine, vfs::Vfs, wad::QPic},
 };
 
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::{
+    prelude::*,
+    render::renderer::{RenderDevice, RenderQueue},
+};
 use chrono::Duration;
 
 const PAD_LEFT: i32 = GLYPH_WIDTH as i32;

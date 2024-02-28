@@ -19,11 +19,7 @@ pub mod precache;
 pub mod progs;
 pub mod world;
 
-use std::{
-    cell::{Ref, RefCell},
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     common::{
@@ -57,6 +53,8 @@ use self::{
 };
 
 use arrayvec::ArrayVec;
+use bevy::prelude::*;
+use bitflags::bitflags;
 use cgmath::{InnerSpace, Vector3, Zero};
 use chrono::Duration;
 
@@ -442,7 +440,7 @@ impl LevelState {
                 // Control flow ================================================
                 If => {
                     let cond = self.globals.get_float(a)? != 0.0;
-                    log::debug!("If: cond == {}", cond);
+                    debug!("If: cond == {}", cond);
 
                     if cond {
                         self.cx.jump_relative(b);
@@ -452,7 +450,7 @@ impl LevelState {
 
                 IfNot => {
                     let cond = self.globals.get_float(a)? != 0.0;
-                    log::debug!("IfNot: cond == {}", cond);
+                    debug!("IfNot: cond == {}", cond);
 
                     if !cond {
                         self.cx.jump_relative(b);
@@ -870,7 +868,6 @@ impl LevelState {
             frame_time
         };
 
-        drop(ent);
         if !move_time.is_zero() {
             self.move_push(ent_id, frame_time, move_time)?;
         }

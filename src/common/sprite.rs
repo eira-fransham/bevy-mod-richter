@@ -19,10 +19,12 @@ use std::io::{BufReader, Read, Seek};
 
 use crate::common::{engine, model::SyncType};
 
+use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::Vector3;
 use chrono::Duration;
 use num::FromPrimitive;
+use num_derive::FromPrimitive;
 
 const MAGIC: u32 = ('I' as u32) << 0 | ('D' as u32) << 8 | ('S' as u32) << 16 | ('P' as u32) << 24;
 const VERSION: u32 = 1;

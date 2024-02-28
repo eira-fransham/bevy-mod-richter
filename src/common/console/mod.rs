@@ -24,9 +24,10 @@ use crate::common::parse;
 
 use bevy::{
     ecs::{
-        system::{Commands, Resource},
+        system::Resource,
         world::{FromWorld, World},
     },
+    prelude::*,
     render::extract_resource::ExtractResource,
 };
 use chrono::{Duration, Utc};
@@ -50,17 +51,6 @@ pub enum ConsoleError {
 }
 
 type Cmd = Arc<dyn Fn(&[&str], &mut World) -> ExecResult + Send + Sync>;
-
-pub struct CommandArgs<'a, 'w, 's> {
-    pub world: &'a mut World,
-    pub commands: &'a mut Commands<'w, 's>,
-}
-
-impl<'a, 'w, 's> CommandArgs<'a, 'w, 's> {
-    pub fn new(world: &'a mut World, commands: &'a mut Commands<'w, 's>) -> Self {
-        Self { world, commands }
-    }
-}
 
 fn insert_name<S>(names: &mut im::Vector<String>, name: S) -> Result<usize, usize>
 where

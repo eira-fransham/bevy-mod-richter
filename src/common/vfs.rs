@@ -80,7 +80,7 @@ impl Vfs {
         quake_dir.push("id1");
 
         if !quake_dir.is_dir() {
-            log::error!(concat!(
+            error!(concat!(
                 "`id1/` directory does not exist! Use the `--base-dir` option with the name of the",
                 " directory which contains `id1/`."
             ));
@@ -90,7 +90,7 @@ impl Vfs {
 
         if let Some(game_dir) = &game_dir {
             if !game_dir.is_dir() {
-                log::error!(
+                error!(
                         "`{0}/` directory does not exist! Use the `--base-dir` option with the name of the directory which contains `{0}/`.",
                         game.unwrap()
                     );
@@ -130,7 +130,7 @@ impl Vfs {
         }
 
         if num_paks == 0 {
-            log::warn!("No PAK files found.");
+            warn!("No PAK files found.");
         }
 
         vfs

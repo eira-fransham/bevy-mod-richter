@@ -1,6 +1,6 @@
 use std::{
     mem::size_of,
-    num::{NonZeroU32, NonZeroU8},
+    num::NonZeroU32,
 };
 
 use crate::{
@@ -25,6 +25,7 @@ use bevy::render::{
 };
 use bumpalo::Bump;
 use cgmath::Matrix4;
+use lazy_static::lazy_static;
 
 lazy_static! {
     static ref VERTEX_BUFFER_ATTRIBUTES: [Vec<wgpu::VertexAttribute>; 1] = [

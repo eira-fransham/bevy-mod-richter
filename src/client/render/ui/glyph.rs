@@ -20,6 +20,7 @@ use bevy::render::{
     renderer::{RenderDevice, RenderQueue},
 };
 use cgmath::Vector2;
+use lazy_static::lazy_static;
 
 pub const GLYPH_WIDTH: usize = 8;
 pub const GLYPH_HEIGHT: usize = 8;

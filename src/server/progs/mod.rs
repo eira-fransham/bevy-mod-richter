@@ -99,7 +99,6 @@ mod ops;
 mod string_table;
 
 use std::{
-    cell::RefCell,
     convert::TryInto,
     error::Error,
     fmt,
@@ -109,8 +108,10 @@ use std::{
 
 use crate::server::world::{EntityError, EntityTypeDef};
 
+use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use num::FromPrimitive;
+use num_derive::FromPrimitive;
 
 use self::{
     functions::{BuiltinFunctionId, FunctionDef, FunctionKind, Statement, MAX_ARGS},

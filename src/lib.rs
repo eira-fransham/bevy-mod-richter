@@ -20,25 +20,12 @@
 // TODO: Is this necessary?
 #![recursion_limit = "256"]
 
-#[macro_use]
-extern crate bitflags;
-extern crate byteorder;
-extern crate cgmath;
-extern crate chrono;
-extern crate env_logger;
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-extern crate num;
-#[macro_use]
-extern crate num_derive;
-extern crate rand;
-extern crate regex;
-extern crate rodio;
-extern crate winit;
+// TODO: These should be removed, but we're still in the refactoring process
+#![cfg_attr(debug_assertions, allow(dead_code))]
+#![cfg_attr(debug_assertions, allow(unreachable_code))]
+#![cfg_attr(debug_assertions, allow(dead_code))]
+#![cfg_attr(debug_assertions, allow(unused_variables))]
+#![cfg_attr(debug_assertions, allow(unused_assignments))]
 
 pub mod client;
 pub mod common;

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter, sync::Arc};
+use std::{collections::HashMap, io::Read, iter, sync::Arc};
 
 use super::{sound::MixerEvent, view::BobVars};
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
         },
         input::game::{Action, GameInput},
         render::Camera,
-        sound::{self, Listener, StartSound},
+        sound::{Listener, StartSound},
         view::{IdleVars, KickVars, MouseVars, RollVars, View},
         ClientError, ColorShiftCode, IntermissionKind, MoveVars, MAX_STATS,
     },
@@ -28,10 +28,12 @@ use arrayvec::ArrayVec;
 use bevy::{
     asset::{AssetServer, Handle},
     audio::AudioSource,
-    ecs::{event::EventWriter, system::Commands, world::World},
+    ecs::event::EventWriter,
+    prelude::*,
 };
 use cgmath::{Angle as _, Deg, InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
+use lazy_static::lazy_static;
 use net::{ClientCmd, ClientStat, EntityState, EntityUpdate, PlayerColor};
 use rand::{
     distributions::{Distribution as _, Uniform},
@@ -196,7 +198,12 @@ impl ClientState {
             .map(|(i, snd_name)| {
                 debug!("Loading sound {}: {}", i, snd_name);
 
-                Ok(asset_server.load(format!("sound/{}", snd_name)))
+                let mut data = Vec::new();
+                vfs.open(format!("sound/{}", snd_name))?
+                    .read_to_end(&mut data)
+                    .unwrap();
+
+                Ok(asset_server.add(AudioSource { bytes: data.into() }))
                 // TODO: send keepalive message?
             })
             .collect::<Result<_, ClientError>>()?;
@@ -204,9 +211,14 @@ impl ClientState {
         let cached_sounds = CACHED_SOUND_NAMES
             .iter()
             .map(|name| {
+                let mut data = Vec::new();
+                vfs.open(format!("sound/{}", name))?
+                    .read_to_end(&mut data)
+                    .unwrap();
+
                 Ok((
                     name.to_string(),
-                    asset_server.load(format!("sound/{}", name)),
+                    asset_server.add(AudioSource { bytes: data.into() }),
                 ))
             })
             .collect::<Result<_, ClientError>>()?;

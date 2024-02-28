@@ -44,7 +44,6 @@ use richter::{
         vfs::Vfs,
     },
 };
-use rodio::OutputStream;
 use structopt::StructOpt;
 use winit::{
     event::{Event, WindowEvent},
@@ -109,7 +108,7 @@ impl Program for ClientProgram {
                 if let Err(e) = window.set_cursor_grab(CursorGrabMode::Locked) {
                     // This can happen if the window is running in another
                     // workspace. It shouldn't be considered an error.
-                    log::debug!("Couldn't grab cursor: {}", e);
+                    debug!("Couldn't grab cursor: {}", e);
                 }
 
                 window.set_cursor_visible(false);
@@ -117,7 +116,7 @@ impl Program for ClientProgram {
 
             _ => {
                 if let Err(e) = window.set_cursor_grab(CursorGrabMode::None) {
-                    log::debug!("Couldn't release cursor: {}", e);
+                    debug!("Couldn't release cursor: {}", e);
                 };
                 window.set_cursor_visible(true);
             }
@@ -213,8 +212,6 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<Console>, ResMut<CmdRegistry
 
 fn main() -> ExitCode {
     let opt = Opt::from_args();
-
-    let (stream, handle) = OutputStream::try_default().unwrap();
 
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
