@@ -66,7 +66,7 @@ use bevy::{
     prelude::*,
     render::{
         extract_resource::{ExtractResource as _, ExtractResourcePlugin},
-        render_graph::{RenderGraphApp as _, RenderLabel, ViewNode, ViewNodeRunner},
+        render_graph::{Node, RenderGraph, RenderLabel, SlotInfo},
         render_resource::{BindGroup, BindGroupLayout, Buffer, Sampler, Texture, TextureView},
         renderer::{RenderDevice, RenderQueue},
         view::ViewTarget,
@@ -101,7 +101,7 @@ use crate::{
         input::InputFocus,
         menu::Menu,
         render::{
-            target::{DeferredPassTarget, FinalPassTarget, InitialPassTarget},
+            target::{DeferredPassTarget, FinalPassTarget, InitPassOutput, InitialPassTarget},
             ui::{glyph::GlyphPipeline, quad::QuadPipeline},
             uniform::DynamicUniformBuffer,
             world::{
@@ -123,7 +123,10 @@ use crate::{
     },
 };
 
-use self::blit::BlitPipeline;
+use self::{
+    blit::BlitPipeline,
+    target::{InitPass, InitPassLabel},
+};
 
 use super::{
     extract_resolution, init_client,
@@ -237,24 +240,37 @@ impl Plugin for RichterRenderPlugin {
         render_app.insert_resource(demo_queue);
         render_app.insert_resource(input);
 
-        render_app
-            // .init_resource::<RenderStateRes>()
-            .add_render_graph_node::<ViewNodeRunner<ClientRenderer>>(
-                // Specify the label of the graph, in this case we want the graph for 3d
-                Core3d,
-                // It also needs the label of the node
-                ClientRenderLabel,
-            )
-            .add_render_graph_edges(
-                Core3d,
-                // Specify the node ordering.
-                // This will automatically create all required node edges to enforce the given ordering.
-                (
-                    Node3d::MainOpaquePass,
-                    ClientRenderLabel,
-                    Node3d::EndMainPass,
-                ),
-            );
+        let renderer = ClientRenderer::from_world(&mut render_app.world);
+        let mut render_graph = render_app.world.resource_mut::<RenderGraph>();
+        let render_graph = render_graph.sub_graph_mut(Core3d);
+        render_graph.add_node(ClientRenderLabel, renderer);
+        render_graph.add_node(InitPassLabel, InitPass);
+        render_graph.add_node_edge(Node3d::MainOpaquePass, InitPassLabel);
+        render_graph.add_slot_edge(
+            InitPassLabel,
+            InitPassOutput::Diffuse,
+            ClientRenderLabel,
+            InitPassOutput::Diffuse,
+        );
+        render_graph.add_slot_edge(
+            InitPassLabel,
+            InitPassOutput::Normal,
+            ClientRenderLabel,
+            InitPassOutput::Normal,
+        );
+        render_graph.add_slot_edge(
+            InitPassLabel,
+            InitPassOutput::Light,
+            ClientRenderLabel,
+            InitPassOutput::Light,
+        );
+        render_graph.add_slot_edge(
+            InitPassLabel,
+            InitPassOutput::Depth,
+            ClientRenderLabel,
+            InitPassOutput::Depth,
+        );
+        render_graph.add_node_edge(ClientRenderLabel, Node3d::EndMainPass);
 
         // TODO: This is only so we can run the per-frame update in the render thread, which we should not do
         render_app
@@ -747,6 +763,14 @@ impl GraphicsState {
         })
     }
 
+    pub fn set_format(&mut self, format: wgpu::TextureFormat) {
+        self.blit_pipeline.set_format(format);
+    }
+
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.blit_pipeline.format()
+    }
+
     pub fn create_texture<'a>(
         &self,
         device: &RenderDevice,
@@ -791,7 +815,7 @@ impl GraphicsState {
             // TODO: How do we do the final pass?
             // COMPILER.with_borrow_mut(|compiler| {
             //     self.blit_pipeline
-            //         .rebuild(device, compiler, self.final_pass_target.resolve_view());
+            //         .rebuild(device, compiler, self.deferred_pass_target.color_view());
             // });
         }
     }
@@ -826,6 +850,8 @@ impl GraphicsState {
                 .rebuild(device, compiler, sample_count);
             self.glyph_pipeline.rebuild(device, compiler, sample_count);
             self.quad_pipeline.rebuild(device, compiler, sample_count);
+            self.blit_pipeline
+                .rebuild(device, compiler, self.final_pass_target.resolve_view());
         });
     }
 
@@ -919,14 +945,6 @@ impl GraphicsState {
         &self.quad_pipeline
     }
 
-    pub fn quad_pipeline_mut(&mut self) -> &mut QuadPipeline {
-        &mut self.quad_pipeline
-    }
-
-    pub fn blit_pipeline(&self) -> &BlitPipeline {
-        &self.blit_pipeline
-    }
-
     pub fn palette(&self) -> &Palette {
         &self.palette
     }
@@ -934,139 +952,102 @@ impl GraphicsState {
     pub fn gfx_wad(&self) -> &Wad {
         &self.gfx_wad
     }
+
+    pub fn blit_pipeline(&self) -> &BlitPipeline {
+        &self.blit_pipeline
+    }
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 struct ClientRenderLabel;
 
-pub struct ClientRenderer {
+struct ClientRenderer {
     start_time: DateTime<Utc>,
+    view_query: QueryState<&'static ViewTarget>,
 }
 
-impl Default for ClientRenderer {
-    fn default() -> Self {
-        Self::new()
+impl FromWorld for ClientRenderer {
+    fn from_world(world: &mut World) -> Self {
+        Self {
+            view_query: world.query(),
+            start_time: Utc::now(),
+        }
     }
 }
 
 #[derive(Resource)]
 pub struct Fov(pub Deg<f32>);
 
-impl ViewNode for ClientRenderer {
-    type ViewQuery = &'static ViewTarget;
+impl Node for ClientRenderer {
+    fn update(&mut self, world: &mut World) {
+        self.view_query.update_archetypes(world);
+        let Ok(target) = self.view_query.get_single(world) else {
+            return;
+        };
+        let format = target.main_texture_format();
+        let world = world.cell();
+        let mut gfx_state = world.resource_mut::<GraphicsState>();
+
+        if format != gfx_state.format() {
+            let device = world.resource::<RenderDevice>();
+            gfx_state.set_format(format);
+            gfx_state.recreate_pipelines(&*device, 1);
+        }
+    }
 
     fn run<'w>(
         &self,
-        _graph: &mut bevy::render::render_graph::RenderGraphContext,
+        graph: &mut bevy::render::render_graph::RenderGraphContext,
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
-        view_target: &ViewTarget,
         world: &'w bevy::prelude::World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
-        let render_state = RenderStateRes::extract_resource(world.resource::<GameConnection>());
-        let queue = world.resource::<RenderQueue>();
-        let gfx_state = world.resource::<GraphicsState>();
-        let deferred_renderer = world.resource::<DeferredRenderer>();
-        let postprocess_renderer = world.resource::<PostProcessRenderer>();
-        let ui_renderer = world.resource::<UiRenderer>();
-        let cvars = world.resource::<CvarRegistry>();
-        let console = world.resource::<Console>();
-        let resolution = world.resource::<RenderResolution>();
-        let menu = world.resource::<Menu>();
-        let focus = world.resource::<Input>().focus();
-        // let fov = world.resource::<Fov>();
-        let fov = Fov::extract_resource(cvars);
-
-        self.render(
-            gfx_state,
-            render_context.command_encoder(),
-            &*queue,
-            deferred_renderer,
-            postprocess_renderer,
-            ui_renderer,
-            render_state.0.as_ref(),
-            resolution.0,
-            resolution.1,
-            fov.0,
-            cvars,
-            console,
-            menu,
-            focus,
-        );
-
-        let attachment = view_target.main_texture_view();
-
-        {
-            let swap_chain_target = SwapChainTarget::with_swap_chain_view(attachment);
-            let blit_pass_builder = swap_chain_target.render_pass_builder();
-            let mut blit_pass = render_context
-                .command_encoder()
-                .begin_render_pass(&blit_pass_builder.descriptor());
-            gfx_state.blit_pipeline().blit(gfx_state, &mut blit_pass);
-        }
-
-        Ok(())
-    }
-}
-
-pub fn update_renderers(
-    gfx_state: Res<GraphicsState>,
-    device: Res<RenderDevice>,
-    mut deferred_renderer: ResMut<DeferredRenderer>,
-    mut postprocess_renderer: ResMut<PostProcessRenderer>,
-) {
-    deferred_renderer.rebuild(
-        &*gfx_state,
-        &*device,
-        gfx_state.initial_pass_target().diffuse_view(),
-        gfx_state.initial_pass_target().normal_view(),
-        gfx_state.initial_pass_target().light_view(),
-        gfx_state.initial_pass_target().depth_view(),
-    );
-    postprocess_renderer.rebuild(
-        &*gfx_state,
-        &*device,
-        gfx_state.deferred_pass_target().color_view(),
-    );
-}
-
-impl ClientRenderer {
-    pub fn new() -> ClientRenderer {
-        ClientRenderer {
-            start_time: Utc::now(),
-        }
-    }
-
-    pub fn elapsed(&self, time: Option<Duration>) -> Duration {
-        match time {
-            Some(time) => time,
-            None => Utc::now().signed_duration_since(self.start_time),
-        }
-    }
-
-    pub fn render(
-        &self,
-        gfx_state: &GraphicsState,
-        encoder: &mut wgpu::CommandEncoder,
-        queue: &RenderQueue,
-        deferred_renderer: &DeferredRenderer,
-        postprocess_renderer: &PostProcessRenderer,
-        ui_renderer: &UiRenderer,
-        conn: Option<&RenderState>,
-        width: u32,
-        height: u32,
-        fov: Deg<f32>,
-        cvars: &CvarRegistry,
-        console: &Console,
-        menu: &Menu,
-        focus: InputFocus,
-    ) {
         thread_local! {
             static BUMP: RefCell<Bump> =Bump::new().into();
         }
 
+        let RenderStateRes(ref conn) =
+            RenderStateRes::extract_resource(world.resource::<GameConnection>());
+        let conn = conn.as_ref();
+        let queue = world.resource::<RenderQueue>();
+        let device = world.resource::<RenderDevice>();
+        let gfx_state = world.resource::<GraphicsState>();
+        let postprocess_renderer = world.resource::<PostProcessRenderer>();
+        let ui_renderer = world.resource::<UiRenderer>();
+        let cvars = world.resource::<CvarRegistry>();
+        let console = world.resource::<Console>();
+        let &RenderResolution(width, height) = world.resource::<RenderResolution>();
+        let menu = world.resource::<Menu>();
+        let focus = world.resource::<Input>().focus();
+        // let fov = world.resource::<Fov>();
+        let fov = Fov::extract_resource(cvars).0;
+
+        let Some(target) = graph
+            .get_view_entity()
+            .and_then(|e| self.view_query.get_manual(world, e).ok())
+        else {
+            return Ok(());
+        };
+
+        // TODO: Cache
+        let deferred_renderer = DeferredRenderer::new(
+            gfx_state,
+            device,
+            graph.get_input_texture(InitPassOutput::Diffuse)?,
+            graph.get_input_texture(InitPassOutput::Normal)?,
+            graph.get_input_texture(InitPassOutput::Light)?,
+            graph.get_input_texture(InitPassOutput::Depth)?,
+        );
+
+        let encoder = render_context.command_encoder();
+
+        BUMP.with_borrow_mut(|bump| bump.reset());
         BUMP.with_borrow(|bump| {
+            // quad_commands must outlive final pass
+            let mut quad_commands = Vec::new();
+            let mut glyph_commands = Vec::new();
+
             if let Some(RenderState {
-                state: ref cl_state,
+                state: cl_state,
                 conn_state,
                 kind,
             }) = conn
@@ -1082,40 +1063,6 @@ impl ClientRenderer {
                                 cl_state.camera(width as f32 / height as f32, fov)
                             }
                         };
-
-                        // initial render pass
-                        {
-                            let init_pass_builder =
-                                gfx_state.initial_pass_target().render_pass_builder();
-
-                            world.update_uniform_buffers(
-                                gfx_state,
-                                queue,
-                                &camera,
-                                cl_state.time(),
-                                cl_state.iter_visible_entities(),
-                                cl_state.lightstyle_values().unwrap().as_slice(),
-                                cvars,
-                            );
-
-                            let mut init_pass =
-                                encoder.begin_render_pass(&init_pass_builder.descriptor());
-
-                            world.render_pass(
-                                gfx_state,
-                                &mut init_pass,
-                                bump,
-                                &camera,
-                                cl_state.time(),
-                                cl_state.iter_visible_entities(),
-                                cl_state.iter_particles(),
-                                cl_state.viewmodel_id(),
-                            );
-                        }
-
-                        // quad_commands must outlive final pass
-                        let mut quad_commands = Vec::new();
-                        let mut glyph_commands = Vec::new();
 
                         // deferred lighting pass
                         {
@@ -1153,60 +1100,6 @@ impl ClientRenderer {
                                 &mut deferred_pass,
                                 uniforms,
                             );
-
-                            let ui_state = match conn {
-                                Some(RenderState {
-                                    state: cl_state, ..
-                                }) => UiState::InGame {
-                                    hud: match cl_state.intermission() {
-                                        Some(kind) => HudState::Intermission {
-                                            kind,
-                                            completion_duration: cl_state
-                                                .completion_time()
-                                                .unwrap()
-                                                - cl_state.start_time(),
-                                            stats: cl_state.stats(),
-                                            console,
-                                        },
-
-                                        None => HudState::InGame {
-                                            items: cl_state.items(),
-                                            item_pickup_time: cl_state.item_pickup_times(),
-                                            stats: cl_state.stats(),
-                                            face_anim_time: cl_state.face_anim_time(),
-                                            console,
-                                        },
-                                    },
-
-                                    overlay: match focus {
-                                        InputFocus::Game => None,
-                                        InputFocus::Console => Some(UiOverlay::Console(console)),
-                                        InputFocus::Menu => Some(UiOverlay::Menu(menu)),
-                                    },
-                                },
-
-                                None => UiState::Title {
-                                    overlay: match focus {
-                                        InputFocus::Console => UiOverlay::Console(console),
-                                        InputFocus::Menu => UiOverlay::Menu(menu),
-                                        InputFocus::Game => unreachable!(),
-                                    },
-                                },
-                            };
-
-                            let elapsed = self.elapsed(conn.map(|c| c.state.time));
-
-                            ui_renderer.render_pass(
-                                &gfx_state,
-                                queue,
-                                &mut deferred_pass,
-                                Extent2d { width, height },
-                                // use client time when in game, renderer time otherwise
-                                elapsed,
-                                &ui_state,
-                                &mut quad_commands,
-                                &mut glyph_commands,
-                            );
                         }
                     }
 
@@ -1238,9 +1131,127 @@ impl ClientRenderer {
                             &mut final_pass,
                             cl_state.color_shift(),
                         );
+
+                        let ui_state = match conn {
+                            Some(RenderState {
+                                state: cl_state, ..
+                            }) => UiState::InGame {
+                                hud: match cl_state.intermission() {
+                                    Some(kind) => HudState::Intermission {
+                                        kind,
+                                        completion_duration: cl_state.completion_time().unwrap()
+                                            - cl_state.start_time(),
+                                        stats: cl_state.stats(),
+                                        console,
+                                    },
+
+                                    None => HudState::InGame {
+                                        items: cl_state.items(),
+                                        item_pickup_time: cl_state.item_pickup_times(),
+                                        stats: cl_state.stats(),
+                                        face_anim_time: cl_state.face_anim_time(),
+                                        console,
+                                    },
+                                },
+
+                                overlay: match focus {
+                                    InputFocus::Game => None,
+                                    InputFocus::Console => Some(UiOverlay::Console(console)),
+                                    InputFocus::Menu => Some(UiOverlay::Menu(menu)),
+                                },
+                            },
+
+                            None => UiState::Title {
+                                overlay: match focus {
+                                    InputFocus::Console => UiOverlay::Console(console),
+                                    InputFocus::Menu => UiOverlay::Menu(menu),
+                                    InputFocus::Game => unreachable!(),
+                                },
+                            },
+                        };
+
+                        let elapsed = self.elapsed(conn.map(|c| c.state.time));
+
+                        ui_renderer.render_pass(
+                            &*gfx_state,
+                            queue,
+                            &mut final_pass,
+                            Extent2d { width, height },
+                            // use client time when in game, renderer time otherwise
+                            elapsed,
+                            &ui_state,
+                            &mut quad_commands,
+                            &mut glyph_commands,
+                        );
                     }
                 }
             }
         });
+
+        {
+            let attachment = target.main_texture_view();
+
+            let swap_chain_target = SwapChainTarget::with_swap_chain_view(attachment);
+            let blit_pass_builder = swap_chain_target.render_pass_builder();
+            let mut blit_pass = render_context
+                .command_encoder()
+                .begin_render_pass(&blit_pass_builder.descriptor());
+            gfx_state.blit_pipeline().blit(gfx_state, &mut blit_pass);
+        }
+
+        Ok(())
+    }
+
+    fn input(&self) -> Vec<SlotInfo> {
+        InitPass.output()
+    }
+}
+
+pub fn update_renderers(
+    gfx_state: Res<GraphicsState>,
+    device: Res<RenderDevice>,
+    mut deferred_renderer: ResMut<DeferredRenderer>,
+    mut postprocess_renderer: ResMut<PostProcessRenderer>,
+) {
+    deferred_renderer.rebuild(
+        &*gfx_state,
+        &*device,
+        gfx_state.initial_pass_target().diffuse_view(),
+        gfx_state.initial_pass_target().normal_view(),
+        gfx_state.initial_pass_target().light_view(),
+        gfx_state.initial_pass_target().depth_view(),
+    );
+    postprocess_renderer.rebuild(
+        &*gfx_state,
+        &*device,
+        gfx_state.deferred_pass_target().color_view(),
+    );
+}
+
+impl ClientRenderer {
+    pub fn elapsed(&self, time: Option<Duration>) -> Duration {
+        match time {
+            Some(time) => time,
+            None => Utc::now().signed_duration_since(self.start_time),
+        }
+    }
+
+    pub fn render(
+        &self,
+        gfx_state: &GraphicsState,
+        encoder: &mut wgpu::CommandEncoder,
+        queue: &RenderQueue,
+        deferred_renderer: &DeferredRenderer,
+        postprocess_renderer: &PostProcessRenderer,
+        ui_renderer: &UiRenderer,
+        conn: Option<&RenderState>,
+        width: u32,
+        height: u32,
+        fov: Deg<f32>,
+        cvars: &CvarRegistry,
+        console: &Console,
+        menu: &Menu,
+        focus: InputFocus,
+    ) {
     }
 }

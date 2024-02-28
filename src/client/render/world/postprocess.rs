@@ -65,6 +65,10 @@ impl PostProcessPipeline {
         self.swapchain_format = format;
     }
 
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.swapchain_format
+    }
+
     pub fn rebuild(
         &mut self,
         device: &RenderDevice,

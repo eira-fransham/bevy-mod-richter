@@ -1,4 +1,8 @@
-use std::{mem::size_of, num::NonZeroU64};
+use std::{
+    mem::size_of,
+    num::NonZeroU64,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{
     client::render::{
@@ -21,6 +25,7 @@ use bevy::render::{
 };
 use cgmath::Matrix4;
 use lazy_static::lazy_static;
+use parking_lot::RwLock;
 
 pub const VERTICES: [QuadVertex; 6] = [
     QuadVertex {
@@ -77,13 +82,17 @@ lazy_static! {
     ];
 }
 
+struct UniformBuffer {
+    buffer: DynamicUniformBuffer<QuadUniforms>,
+    blocks: Vec<DynamicUniformBufferBlock<QuadUniforms>>,
+}
+
 pub struct QuadPipeline {
     pipeline: RenderPipeline,
     bind_group_layouts: Vec<BindGroupLayout>,
     format: wgpu::TextureFormat,
     vertex_buffer: Buffer,
-    uniform_buffer: DynamicUniformBuffer<QuadUniforms>,
-    uniform_buffer_blocks: Vec<DynamicUniformBufferBlock<QuadUniforms>>,
+    uniform_buffer: RwLock<UniformBuffer>,
 }
 
 impl QuadPipeline {
@@ -103,15 +112,17 @@ impl QuadPipeline {
         });
 
         let uniform_buffer = DynamicUniformBuffer::new(device);
-        let uniform_buffer_blocks = Vec::new();
 
         QuadPipeline {
             pipeline,
             bind_group_layouts,
             format,
             vertex_buffer,
-            uniform_buffer,
-            uniform_buffer_blocks,
+            uniform_buffer: UniformBuffer {
+                buffer: uniform_buffer,
+                blocks: vec![],
+            }
+            .into(),
         }
     }
 
@@ -141,21 +152,12 @@ impl QuadPipeline {
         &self.vertex_buffer
     }
 
-    pub fn uniform_buffer(&self) -> &DynamicUniformBuffer<QuadUniforms> {
-        &self.uniform_buffer
+    fn uniform_buffer(&self) -> impl Deref<Target = UniformBuffer> + '_ {
+        self.uniform_buffer.read()
     }
 
-    pub fn uniform_buffer_and_blocks_mut(
-        &mut self,
-    ) -> (
-        &mut DynamicUniformBuffer<QuadUniforms>,
-        &mut Vec<DynamicUniformBufferBlock<QuadUniforms>>,
-    ) {
-        (&mut self.uniform_buffer, &mut self.uniform_buffer_blocks)
-    }
-
-    pub fn uniform_buffer_blocks(&self) -> &[DynamicUniformBufferBlock<QuadUniforms>] {
-        &self.uniform_buffer_blocks
+    fn uniform_buffer_mut(&self) -> impl DerefMut<Target = UniformBuffer> + '_ {
+        self.uniform_buffer.write()
     }
 }
 
@@ -360,7 +362,7 @@ impl QuadRenderer {
             &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: state.quad_pipeline().uniform_buffer().buffer(),
+                    buffer: state.quad_pipeline().uniform_buffer().buffer.buffer(),
                     offset: 0,
                     size: Some(NonZeroU64::new(size_of::<QuadUniforms>() as u64).unwrap()),
                 }),
@@ -424,17 +426,22 @@ impl QuadRenderer {
     }
 
     pub fn update_uniforms(
-        &mut self,
-        state: &mut GraphicsState,
+        &self,
+        state: &GraphicsState,
         queue: &RenderQueue,
         target_size: Extent2d,
         commands: &[QuadRendererCommand<'_>],
     ) {
         // update uniform buffer
         let uniforms = self.generate_uniforms(commands, target_size);
-        let (uniform_buffer, uniform_buffer_blocks) =
-            state.quad_pipeline_mut().uniform_buffer_and_blocks_mut();
-        uniform::clear_and_rewrite(queue, uniform_buffer, uniform_buffer_blocks, &uniforms);
+        let mut uniform_buffer = state.quad_pipeline().uniform_buffer_mut();
+        let uniform_buffer = &mut *uniform_buffer;
+        uniform::clear_and_rewrite(
+            queue,
+            &mut uniform_buffer.buffer,
+            &mut uniform_buffer.blocks,
+            &uniforms,
+        );
     }
 
     pub fn record_draw<'this, 'a>(
@@ -449,11 +456,13 @@ impl QuadRenderer {
         pass.set_bind_group(0, &self.sampler_bind_group, &[]);
         for (cmd, block) in commands
             .iter()
-            .zip(state.quad_pipeline().uniform_buffer_blocks().iter())
+            .zip(state.quad_pipeline().uniform_buffer().blocks.iter())
         {
             pass.set_bind_group(1, &cmd.texture.bind_group, &[]);
             pass.set_bind_group(2, &self.transform_bind_group, &[block.offset()]);
             pass.draw(0..6, 0..1);
         }
     }
+
+    pub fn clear_uniforms(&mut self) {}
 }

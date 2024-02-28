@@ -18,18 +18,27 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// TODO: These should be removed, but we're still in the refactoring process
+#![cfg_attr(debug_assertions, allow(dead_code))]
+#![cfg_attr(debug_assertions, allow(unreachable_code))]
+#![cfg_attr(debug_assertions, allow(dead_code))]
+#![cfg_attr(debug_assertions, allow(unused_variables))]
+#![cfg_attr(debug_assertions, allow(unused_assignments))]
+
 mod capture;
 mod game;
 mod menu;
 mod trace;
 
-use std::{io::Read, net::SocketAddr, path::PathBuf, process::ExitCode};
+use std::{fs, io::Read, net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use bevy::{
+    core_pipeline::tonemapping::Tonemapping,
     prelude::*,
-    render::renderer::RenderDevice,
+    render::{camera::Exposure, renderer::RenderDevice},
     window::{PresentMode, WindowTheme},
 };
+use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
 use chrono::Duration;
 use richter::{
     client::{
@@ -160,11 +169,25 @@ struct Opt {
 fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<Console>, ResMut<CmdRegistry>) {
     move |mut commands, mut console, mut cmds| {
         // camera
-        commands.spawn((Camera3dBundle {
-            transform: Transform::from_translation(Vec3::new(0.0, 0.0, 5.0))
-                .looking_at(Vec3::default(), Vec3::Y),
-            ..default()
-        },));
+        commands.spawn((
+            Camera3dBundle {
+                transform: Transform::from_translation(Vec3::new(0.0, 0.0, 5.0))
+                    .looking_at(Vec3::default(), Vec3::Y),
+                camera: Camera {
+                    hdr: true,
+                    ..default()
+                },
+                exposure: Exposure::INDOOR,
+                tonemapping: Tonemapping::BlenderFilmic,
+                ..default()
+            },
+            AutoExposure {
+                min: -16.0,
+                max: 16.0,
+                compensation_curve: vec![(-16.0, -8.0).into(), (0.0, -1.0).into()],
+                ..default()
+            },
+        ));
 
         cmds.insert_or_replace("exec", move |args, world| {
             let vfs = world.resource::<Vfs>();
@@ -213,35 +236,43 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<Console>, ResMut<CmdRegistry
 fn main() -> ExitCode {
     let opt = Opt::from_args();
 
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(bevy::window::Window {
-                title: "Richter client".into(),
-                name: Some("Richter client".into()),
-                resolution: (1366., 768.).into(),
-                present_mode: PresentMode::AutoVsync,
-                // Tells wasm not to override default event handling, like F5, Ctrl+R etc.
-                prevent_default_event_handling: false,
-                window_theme: Some(WindowTheme::Dark),
-                enabled_buttons: bevy::window::EnabledButtons {
-                    maximize: false,
-                    ..Default::default()
-                },
-                // This will spawn an invisible window
-                // The window will be made visible in the make_visible() system after 3 frames.
-                // This is useful when you want to avoid the white window that shows up before the GPU is ready to render the app.
-                // visible: false,
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(bevy::window::Window {
+            title: "Richter client".into(),
+            name: Some("Richter client".into()),
+            resolution: (1366., 768.).into(),
+            present_mode: PresentMode::AutoVsync,
+            // Tells wasm not to override default event handling, like F5, Ctrl+R etc.
+            prevent_default_event_handling: false,
+            window_theme: Some(WindowTheme::Dark),
+            enabled_buttons: bevy::window::EnabledButtons {
+                maximize: false,
                 ..Default::default()
-            }),
+            },
+            // This will spawn an invisible window
+            // The window will be made visible in the make_visible() system after 3 frames.
+            // This is useful when you want to avoid the white window that shows up before the GPU is ready to render the app.
+            // visible: false,
             ..Default::default()
-        }))
-        .add_plugins(RichterPlugin {
-            base_dir: opt.base_dir.clone(),
-            game: opt.game.clone(),
-            main_menu: menu::build_main_menu().expect("TODO: Error handling"),
-        })
-        .add_systems(Startup, startup(opt))
-        .run();
+        }),
+        ..Default::default()
+    }))
+    .add_plugins(AutoExposurePlugin)
+    .add_plugins(RichterPlugin {
+        base_dir: opt.base_dir.clone(),
+        game: opt.game.clone(),
+        main_menu: menu::build_main_menu().expect("TODO: Error handling"),
+    })
+    .add_systems(Startup, startup(opt));
+
+    fs::write(
+        "debug-out.dot",
+        bevy_mod_debugdump::render_graph_dot(&app, &Default::default()),
+    )
+    .unwrap();
+
+    app.run();
 
     0.into()
 }

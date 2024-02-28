@@ -244,13 +244,13 @@ fn make_bundle(
     let audio = AudioBundle {
         source: value.src.clone(),
         settings: PlaybackSettings {
-            mode: PlaybackMode::Loop,
+            mode: PlaybackMode::Despawn,
             // TODO: Use Bevy's built-in spacialiser
-            volume: Volume::new(listener.attenuate(
-                value.origin.into(),
-                value.volume,
-                value.attenuation,
-            )),
+            // volume: Volume::new(listener.attenuate(
+            //     value.origin.into(),
+            //     value.volume,
+            //     value.attenuation,
+            // )),
             ..Default::default()
         },
     };
@@ -308,8 +308,6 @@ pub enum MixerEvent {
 }
 
 mod systems {
-    use bevy::hierarchy::DespawnRecursiveExt;
-
     use super::*;
 
     pub fn update_mixer(
@@ -335,8 +333,8 @@ mod systems {
                 }) => {
                     for (e, chan, e_chan) in channels.iter() {
                         if chan.channel == ent_channel && e_chan.map(|e| e.id) == ent_id {
-                            if let Some(e) = commands.get_entity(e) {
-                                e.despawn_recursive();
+                            if let Some(mut e) = commands.get_entity(e) {
+                                e.despawn();
                             }
                         }
                     }

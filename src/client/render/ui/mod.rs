@@ -173,6 +173,8 @@ impl UiRenderer {
         }
 
         self.quad_renderer
+            .update_uniforms(state, queue, target_size, quad_commands);
+        self.quad_renderer
             .record_draw(state, queue, pass, quad_commands);
         self.glyph_renderer
             .record_draw(state, queue, pass, target_size, glyph_commands);

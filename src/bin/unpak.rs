@@ -29,6 +29,7 @@ use richter::common::pak::Pak;
 
 use structopt::StructOpt;
 
+#[allow(dead_code)]
 #[derive(Debug, StructOpt)]
 struct Opt {
     #[structopt(short, long)]

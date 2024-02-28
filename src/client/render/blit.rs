@@ -98,6 +98,14 @@ impl BlitPipeline {
         pass.set_vertex_buffer(0, *state.quad_pipeline().vertex_buffer().slice(..));
         pass.draw(0..6, 0..1);
     }
+
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.format
+    }
+
+    pub fn set_format(&mut self, format: wgpu::TextureFormat) {
+        self.format = format;
+    }
 }
 
 impl Pipeline for BlitPipeline {

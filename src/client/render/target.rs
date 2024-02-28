@@ -18,14 +18,29 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use bevy::render::{
-    render_resource::{Texture, TextureView},
-    renderer::RenderDevice,
-};
+use std::cell::RefCell;
 
-use crate::client::render::{
-    Extent2d, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, FINAL_ATTACHMENT_FORMAT,
-    LIGHT_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
+use bevy::render::{
+    extract_resource::ExtractResource as _,
+    render_graph::{Node, RenderLabel, SlotInfo, SlotLabel, SlotType},
+    render_resource::{Texture, TextureView},
+    renderer::{RenderDevice, RenderQueue},
+};
+use bumpalo::Bump;
+
+use crate::{
+    client::{
+        input::Input,
+        menu::Menu,
+        render::{
+            DeferredRenderer, Extent2d, Fov, GraphicsState, PostProcessRenderer, UiRenderer,
+            DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, FINAL_ATTACHMENT_FORMAT,
+            LIGHT_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
+        },
+        ConnectionState, GameConnection, RenderConnectionKind, RenderResolution, RenderState,
+        RenderStateRes,
+    },
+    common::console::{Console, CvarRegistry},
 };
 
 // TODO: collapse these into a single definition
@@ -304,6 +319,155 @@ impl RenderTarget for InitialPassTarget {
                 stencil_ops: None,
             }),
         }
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+pub struct InitPassLabel;
+
+#[derive(Default)]
+pub struct InitPass;
+
+const INIT_DIFFUSE: &str = "init_diffuse";
+const INIT_NORMAL: &str = "init_normal";
+const INIT_LIGHT: &str = "init_light";
+const INIT_DEPTH: &str = "init_depth";
+
+pub enum InitPassOutput {
+    Diffuse,
+    Normal,
+    Light,
+    Depth,
+}
+
+impl From<InitPassOutput> for SlotLabel {
+    fn from(value: InitPassOutput) -> Self {
+        match value {
+            InitPassOutput::Diffuse => INIT_DIFFUSE.into(),
+            InitPassOutput::Normal => INIT_NORMAL.into(),
+            InitPassOutput::Light => INIT_LIGHT.into(),
+            InitPassOutput::Depth => INIT_DEPTH.into(),
+        }
+    }
+}
+
+impl Node for InitPass {
+    fn run<'w>(
+        &self,
+        graph: &mut bevy::render::render_graph::RenderGraphContext,
+        render_context: &mut bevy::render::renderer::RenderContext<'w>,
+        world: &'w bevy::prelude::World,
+    ) -> Result<(), bevy::render::render_graph::NodeRunError> {
+        let RenderStateRes(conn) =
+            RenderStateRes::extract_resource(world.resource::<GameConnection>());
+        let queue = world.resource::<RenderQueue>();
+        let gfx_state = world.resource::<GraphicsState>();
+        let deferred_renderer = world.resource::<DeferredRenderer>();
+        let postprocess_renderer = world.resource::<PostProcessRenderer>();
+        let ui_renderer = world.resource::<UiRenderer>();
+        let cvars = world.resource::<CvarRegistry>();
+        let console = world.resource::<Console>();
+        let &RenderResolution(width, height) = world.resource::<RenderResolution>();
+        let menu = world.resource::<Menu>();
+        let focus = world.resource::<Input>().focus();
+        // let fov = world.resource::<Fov>();
+        let fov = Fov::extract_resource(cvars).0;
+
+        // TODO: Remove this
+        thread_local! {
+            static BUMP: RefCell<Bump> =Bump::new().into();
+        }
+
+        let encoder = render_context.command_encoder();
+
+        BUMP.with_borrow_mut(|bump| bump.reset());
+        BUMP.with_borrow(|bump| {
+            if let Some(RenderState {
+                state: ref cl_state,
+                conn_state,
+                kind,
+            }) = conn
+            {
+                match conn_state {
+                    ConnectionState::Connected(ref world) => {
+                        // if client is fully connected, draw world
+                        let camera = match kind {
+                            RenderConnectionKind::Demo => {
+                                cl_state.demo_camera(width as f32 / height as f32, fov)
+                            }
+                            RenderConnectionKind::Server => {
+                                cl_state.camera(width as f32 / height as f32, fov)
+                            }
+                        };
+
+                        // initial render pass
+                        {
+                            let init_pass_builder =
+                                gfx_state.initial_pass_target().render_pass_builder();
+
+                            world.update_uniform_buffers(
+                                gfx_state,
+                                queue,
+                                &camera,
+                                cl_state.time(),
+                                cl_state.iter_visible_entities(),
+                                cl_state.lightstyle_values().unwrap().as_slice(),
+                                cvars,
+                            );
+
+                            let mut init_pass =
+                                encoder.begin_render_pass(&init_pass_builder.descriptor());
+
+                            world.render_pass(
+                                gfx_state,
+                                &mut init_pass,
+                                bump,
+                                &camera,
+                                cl_state.time(),
+                                cl_state.iter_visible_entities(),
+                                cl_state.iter_particles(),
+                                cl_state.viewmodel_id(),
+                            );
+                        }
+                    }
+
+                    // if client is still signing on, draw the loading screen
+                    ConnectionState::SignOn(_) => {
+                        // TODO: loading screen
+                    }
+                }
+            }
+        });
+
+        let target = gfx_state.initial_pass_target();
+
+        graph.set_output(InitPassOutput::Diffuse, target.diffuse_view().clone())?;
+        graph.set_output(InitPassOutput::Normal, target.normal_view().clone())?;
+        graph.set_output(InitPassOutput::Light, target.light_view().clone())?;
+        graph.set_output(InitPassOutput::Depth, target.depth_view().clone())?;
+
+        Ok(())
+    }
+
+    fn output(&self) -> Vec<SlotInfo> {
+        vec![
+            SlotInfo {
+                name: INIT_DIFFUSE.into(),
+                slot_type: SlotType::TextureView,
+            },
+            SlotInfo {
+                name: INIT_NORMAL.into(),
+                slot_type: SlotType::TextureView,
+            },
+            SlotInfo {
+                name: INIT_LIGHT.into(),
+                slot_type: SlotType::TextureView,
+            },
+            SlotInfo {
+                name: INIT_DEPTH.into(),
+                slot_type: SlotType::TextureView,
+            },
+        ]
     }
 }
 

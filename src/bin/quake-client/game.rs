@@ -18,46 +18,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{
-    borrow::BorrowMut,
-    cell::RefCell,
-    iter, mem,
-    path::PathBuf,
-    rc::Rc,
-    sync::{Arc, Mutex, Once},
-};
+use std::{mem, path::PathBuf, sync::Once};
 
-use bevy::{
-    ecs::{
-        system::{Res, ResMut},
-        world::World,
-    },
-    render::{
-        render_resource::TextureView,
-        renderer::{RenderDevice, RenderQueue},
-    },
+use bevy::ecs::{
+    system::{Res, ResMut},
+    world::World,
 };
-use lazy_static::lazy_static;
-use num::integer::Roots;
-use video_rs::{Encoder, EncoderSettings, Locator, Time};
-use wgpu::TextureFormat;
+use video_rs::Encoder;
 
 use crate::{
-    capture::{cmd_screenshot, Capture},
+    capture::cmd_screenshot,
     trace::{cmd_trace_begin, cmd_trace_end},
 };
 
 use richter::{
-    client::{
-        input::Input,
-        menu::Menu,
-        render::{
-            Extent2d, GraphicsState, RenderTarget as _, RenderTargetResolve, SwapChainTarget,
-        },
-        trace::TraceFrame,
-        ClientError,
-    },
-    common::console::{CmdRegistry, Console, CvarRegistry},
+    client::{input::Input, render::GraphicsState},
+    common::console::CmdRegistry,
 };
 
 use chrono::{Duration, TimeDelta, Utc};
@@ -149,8 +125,6 @@ pub fn setup(mut cmds: ResMut<CmdRegistry>, input: Res<Input>) {
 
 // advance the simulation
 pub fn frame(gfx_state: Res<GraphicsState>, input: ResMut<Input>, frame_duration: Duration) {
-    use ClientError::*;
-
     // let trace_frames: &mut Option<Vec<TraceFrame>> = todo!();
 
     // match client.frame(frame_duration, gfx_state) {
