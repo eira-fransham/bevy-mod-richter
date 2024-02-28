@@ -308,6 +308,8 @@ pub enum MixerEvent {
 }
 
 mod systems {
+    use bevy::hierarchy::DespawnRecursiveExt;
+
     use super::*;
 
     pub fn update_mixer(
@@ -322,6 +324,27 @@ mod systems {
     ) {
         for event in events.read() {
             match *event {
+                MixerEvent::StartSound(StartSound {
+                    ent_id,
+                    ent_channel,
+                    ..
+                })
+                | MixerEvent::StopSound(StopSound {
+                    ent_id,
+                    ent_channel,
+                }) => {
+                    for (e, chan, e_chan) in channels.iter() {
+                        if chan.channel == ent_channel && e_chan.map(|e| e.id) == ent_id {
+                            if let Some(e) = commands.get_entity(e) {
+                                e.despawn_recursive();
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            match *event {
                 MixerEvent::StartSound(ref start) => {
                     match make_bundle(start, &*listener) {
                         Ok(bundle) => commands.spawn(bundle),
@@ -332,13 +355,7 @@ mod systems {
                     ent_id,
                     ent_channel,
                 }) => {
-                    for (e, chan, e_chan) in channels.iter() {
-                        if chan.channel == ent_channel && e_chan.map(|e| e.id) == ent_id {
-                            if let Some(mut e) = commands.get_entity(e) {
-                                e.despawn();
-                            }
-                        }
-                    }
+                    // Handled by previous match
                 }
                 MixerEvent::StartStaticSound(ref static_sound) => {
                     commands.spawn(StaticSoundBundle::new(static_sound, &*listener));

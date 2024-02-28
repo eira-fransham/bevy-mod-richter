@@ -1,10 +1,7 @@
 use std::{mem::size_of, num::NonZeroU64};
 
 use bevy::{
-    ecs::{
-        system:: Resource,
-        world::FromWorld,
-    },
+    ecs::{system::Resource, world::FromWorld},
     render::{
         render_resource::{
             BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, TextureView,

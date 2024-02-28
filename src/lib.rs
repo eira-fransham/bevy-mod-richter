@@ -19,7 +19,6 @@
 #![feature(extract_if, iter_repeat_n)]
 // TODO: Is this necessary?
 #![recursion_limit = "256"]
-
 // TODO: These should be removed, but we're still in the refactoring process
 #![cfg_attr(debug_assertions, allow(dead_code))]
 #![cfg_attr(debug_assertions, allow(unreachable_code))]

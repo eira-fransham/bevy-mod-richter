@@ -1,14 +1,11 @@
-use std::
-    io::Read
-;
+use std::io::Read;
 
 use crate::{client::sound::SoundError, common::vfs::Vfs};
 
 use bevy::{
     asset::AssetServer,
     audio::{
-        AudioBundle, AudioSink, AudioSinkPlayback as _, AudioSource, PlaybackMode,
-        PlaybackSettings, 
+        AudioBundle, AudioSink, AudioSinkPlayback as _, AudioSource, PlaybackMode, PlaybackSettings,
     },
     ecs::{
         entity::Entity,

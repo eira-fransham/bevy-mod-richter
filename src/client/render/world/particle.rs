@@ -1,7 +1,4 @@
-use std::{
-    mem::size_of,
-    num::NonZeroU32,
-};
+use std::{mem::size_of, num::NonZeroU32};
 
 use crate::{
     client::{
