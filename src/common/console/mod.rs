@@ -50,6 +50,12 @@ pub enum ConsoleError {
     NoSuchCvar(String),
 }
 
+pub fn cvar_error_handler(In(result): In<Result<(), ConsoleError>>) {
+    if let Err(err) = result {
+        warn!("encountered an error {:?}", err);
+    }
+}
+
 type Cmd = Arc<dyn Fn(&[&str], &mut World) -> ExecResult + Send + Sync>;
 
 fn insert_name<S>(names: &mut im::Vector<String>, name: S) -> Result<usize, usize>

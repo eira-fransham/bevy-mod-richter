@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{collections::HashMap, str::FromStr, string::ToString};
+use std::{str::FromStr, string::ToString};
 
 use crate::common::{
     console::{CmdRegistry, Console},
@@ -24,6 +24,7 @@ use crate::common::{
 
 use bevy::prelude::*;
 use failure::{bail, Error};
+use fxhash::FxHashMap;
 use smol_str::SmolStr;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -495,7 +496,7 @@ impl ToString for BindTarget {
 
 #[derive(Clone, Resource, Default)]
 pub struct GameInput {
-    bindings: HashMap<BindInput, BindTarget>,
+    bindings: FxHashMap<BindInput, BindTarget>,
     action_states: [bool; ACTION_COUNT],
     mouse_delta: (f64, f64),
     impulse: u8,
@@ -739,7 +740,7 @@ impl GameInput {
         cmds.insert_or_replace("unbindall", move |args, world| match args.len() {
             0 => {
                 let mut game_input = world.resource_mut::<GameInput>();
-                game_input.bindings = HashMap::new();
+                game_input.bindings = FxHashMap::default();
                 String::new()
             }
             _ => "unbindall: delete all keybindings".to_owned(),

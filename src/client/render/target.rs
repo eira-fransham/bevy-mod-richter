@@ -29,18 +29,12 @@ use bevy::render::{
 use bumpalo::Bump;
 
 use crate::{
-    client::{
-        input::Input,
-        menu::Menu,
-        render::{
-            DeferredRenderer, Extent2d, Fov, GraphicsState, PostProcessRenderer, UiRenderer,
-            DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, FINAL_ATTACHMENT_FORMAT,
-            LIGHT_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
-        },
-        ConnectionState, GameConnection, RenderConnectionKind, RenderResolution, RenderState,
-        RenderStateRes,
+    client::render::{
+        Extent2d, Fov, GraphicsState, RenderConnectionKind, RenderResolution, RenderState,
+        WorldRenderer, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, FINAL_ATTACHMENT_FORMAT,
+        LIGHT_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
     },
-    common::console::{Console, CvarRegistry},
+    common::console::CvarRegistry,
 };
 
 // TODO: collapse these into a single definition
@@ -358,19 +352,12 @@ impl Node for InitPass {
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
         world: &'w bevy::prelude::World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
-        let RenderStateRes(conn) =
-            RenderStateRes::extract_resource(world.resource::<GameConnection>());
         let queue = world.resource::<RenderQueue>();
         let gfx_state = world.resource::<GraphicsState>();
-        let deferred_renderer = world.resource::<DeferredRenderer>();
-        let postprocess_renderer = world.resource::<PostProcessRenderer>();
-        let ui_renderer = world.resource::<UiRenderer>();
+        let render_state = world.get_resource::<RenderState>();
+        let world_renderer = world.get_resource::<WorldRenderer>();
         let cvars = world.resource::<CvarRegistry>();
-        let console = world.resource::<Console>();
         let &RenderResolution(width, height) = world.resource::<RenderResolution>();
-        let menu = world.resource::<Menu>();
-        let focus = world.resource::<Input>().focus();
-        // let fov = world.resource::<Fov>();
         let fov = Fov::extract_resource(cvars).0;
 
         // TODO: Remove this
@@ -382,59 +369,50 @@ impl Node for InitPass {
 
         BUMP.with_borrow_mut(|bump| bump.reset());
         BUMP.with_borrow(|bump| {
-            if let Some(RenderState {
-                state: ref cl_state,
-                conn_state,
-                kind,
-            }) = conn
+            if let (
+                Some(RenderState {
+                    state: ref cl_state,
+                    kind,
+                }),
+                Some(world),
+            ) = (render_state, world_renderer)
             {
-                match conn_state {
-                    ConnectionState::Connected(ref world) => {
-                        // if client is fully connected, draw world
-                        let camera = match kind {
-                            RenderConnectionKind::Demo => {
-                                cl_state.demo_camera(width as f32 / height as f32, fov)
-                            }
-                            RenderConnectionKind::Server => {
-                                cl_state.camera(width as f32 / height as f32, fov)
-                            }
-                        };
-
-                        // initial render pass
-                        {
-                            let init_pass_builder =
-                                gfx_state.initial_pass_target().render_pass_builder();
-
-                            world.update_uniform_buffers(
-                                gfx_state,
-                                queue,
-                                &camera,
-                                cl_state.time(),
-                                cl_state.iter_visible_entities(),
-                                cl_state.lightstyle_values().unwrap().as_slice(),
-                                cvars,
-                            );
-
-                            let mut init_pass =
-                                encoder.begin_render_pass(&init_pass_builder.descriptor());
-
-                            world.render_pass(
-                                gfx_state,
-                                &mut init_pass,
-                                bump,
-                                &camera,
-                                cl_state.time(),
-                                cl_state.iter_visible_entities(),
-                                cl_state.iter_particles(),
-                                cl_state.viewmodel_id(),
-                            );
-                        }
+                // if client is fully connected, draw world
+                let camera = match kind {
+                    RenderConnectionKind::Demo => {
+                        cl_state.demo_camera(width as f32 / height as f32, fov)
                     }
-
-                    // if client is still signing on, draw the loading screen
-                    ConnectionState::SignOn(_) => {
-                        // TODO: loading screen
+                    RenderConnectionKind::Server => {
+                        cl_state.camera(width as f32 / height as f32, fov)
                     }
+                };
+
+                // initial render pass
+                {
+                    let init_pass_builder = gfx_state.initial_pass_target().render_pass_builder();
+
+                    world.update_uniform_buffers(
+                        gfx_state,
+                        queue,
+                        &camera,
+                        cl_state.time(),
+                        cl_state.iter_visible_entities(),
+                        cl_state.lightstyle_values().unwrap().as_slice(),
+                        cvars,
+                    );
+
+                    let mut init_pass = encoder.begin_render_pass(&init_pass_builder.descriptor());
+
+                    world.render_pass(
+                        gfx_state,
+                        &mut init_pass,
+                        bump,
+                        &camera,
+                        cl_state.time(),
+                        cl_state.iter_visible_entities(),
+                        cl_state.iter_particles(),
+                        cl_state.viewmodel_id(),
+                    );
                 }
             }
         });

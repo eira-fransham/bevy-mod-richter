@@ -18,13 +18,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::ops::DerefMut;
+use bevy::ecs::system::ResMut;
 
 use crate::common::console::{ConsoleError, CvarRegistry};
 
-pub fn register_cvars<C: DerefMut<Target = CvarRegistry>>(
-    mut cvars: C,
-) -> Result<(), ConsoleError> {
+pub fn register_cvars(mut cvars: ResMut<CvarRegistry>) -> Result<(), ConsoleError> {
     cvars.register("cl_anglespeedkey", "1.5")?;
     cvars.register_archive("cl_backspeed", "200")?;
     cvars.register("cl_bob", "0.02")?;

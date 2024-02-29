@@ -18,13 +18,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::ops::DerefMut;
+use bevy::ecs::system::ResMut;
 
 use crate::common::console::{ConsoleError, CvarRegistry};
 
-pub fn register_cvars<C: DerefMut<Target = CvarRegistry>>(
-    mut cvars: C,
-) -> Result<(), ConsoleError> {
+pub fn register_cvars(mut cvars: ResMut<CvarRegistry>) -> Result<(), ConsoleError> {
     cvars.register("r_lightmap", "0")?;
     cvars.register("r_msaa_samples", "1")?;
 

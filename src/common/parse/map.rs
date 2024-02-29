@@ -15,11 +15,10 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::collections::HashMap;
-
 use crate::common::parse::quoted;
 
 use failure::bail;
+use fxhash::FxHashMap;
 use nom::{
     bytes::complete::tag,
     character::complete::newline,
@@ -38,7 +37,7 @@ pub fn entity_attribute(input: &str) -> nom::IResult<&str, (&str, &str)> {
 // "name2" "value2"
 // "name3" "value3"
 // }
-pub fn entity(input: &str) -> nom::IResult<&str, HashMap<&str, &str>> {
+pub fn entity(input: &str) -> nom::IResult<&str, FxHashMap<&str, &str>> {
     delimited(
         terminated(tag("{"), newline),
         map(many0(entity_attribute), |attrs| attrs.into_iter().collect()),
@@ -46,7 +45,7 @@ pub fn entity(input: &str) -> nom::IResult<&str, HashMap<&str, &str>> {
     )(input)
 }
 
-pub fn entities(input: &str) -> Result<Vec<HashMap<&str, &str>>, failure::Error> {
+pub fn entities(input: &str) -> Result<Vec<FxHashMap<&str, &str>>, failure::Error> {
     let input = input.strip_suffix('\0').unwrap_or(input);
     match all_consuming(many0(entity))(input) {
         Ok(("", entities)) => Ok(entities),

@@ -34,6 +34,7 @@ use std::{fs, io::Read, net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use bevy::{
     core_pipeline::tonemapping::Tonemapping,
+    pbr::DefaultOpaqueRendererMethod,
     prelude::*,
     render::{camera::Exposure, renderer::RenderDevice},
     window::{PresentMode, WindowTheme},
@@ -264,6 +265,7 @@ fn main() -> ExitCode {
         game: opt.game.clone(),
         main_menu: menu::build_main_menu().expect("TODO: Error handling"),
     })
+    .insert_resource(DefaultOpaqueRendererMethod::deferred())
     .add_systems(Startup, startup(opt));
 
     fs::write(

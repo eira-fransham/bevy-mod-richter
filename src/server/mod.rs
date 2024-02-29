@@ -19,7 +19,7 @@ pub mod precache;
 pub mod progs;
 pub mod world;
 
-use std::{collections::HashMap, rc::Rc};
+use std::rc::Rc;
 
 use crate::{
     common::{
@@ -57,6 +57,7 @@ use bevy::prelude::*;
 use bitflags::bitflags;
 use cgmath::{InnerSpace, Vector3, Zero};
 use chrono::Duration;
+use fxhash::FxHashMap;
 
 const MAX_DATAGRAM: usize = 1024;
 const MAX_LIGHTSTYLES: usize = 64;
@@ -665,7 +666,7 @@ impl LevelState {
 
     pub fn spawn_entity_from_map(
         &mut self,
-        map: HashMap<&str, &str>,
+        map: FxHashMap<&str, &str>,
         vfs: &Vfs,
         cvars: &mut CvarRegistry,
     ) -> Result<EntityId, ProgsError> {

@@ -43,8 +43,6 @@ use crate::common::vfs::{Vfs, VfsError};
 use cgmath::{InnerSpace, Vector3};
 use thiserror::Error;
 
-use super::GameConnection;
-
 pub const DISTANCE_ATTENUATION_FACTOR: f32 = 0.001;
 
 #[derive(Error, Debug)]
@@ -134,9 +132,14 @@ impl Plugin for RichterSoundPlugin {
         app.init_resource::<MusicPlayer>()
             .init_resource::<Listener>()
             .add_event::<MixerEvent>()
-            .add_systems(Main, systems::update_mixer);
-        // TODO: Currently the main game state is on the render thread so we can't access it
-        //.add_systems(Main, (update_entities, update_mixer));
+            .add_systems(
+                Main,
+                (
+                    systems::update_entities,
+                    systems::update_mixer,
+                    systems::update_listener,
+                ),
+            );
     }
 }
 
@@ -204,7 +207,7 @@ impl StaticSound {
 }
 
 /// Represents a single audio channel, capable of playing one sound at a time.
-#[derive(Clone, Component)]
+#[derive(Clone, Debug, Component)]
 pub struct Channel {
     channel: i8,
     master_vol: f32,
@@ -212,7 +215,7 @@ pub struct Channel {
     origin: Vector3<f32>,
 }
 
-#[derive(Clone, Component)]
+#[derive(Clone, Debug, Component)]
 pub struct EntityChannel {
     // if None, sound is associated with a temp entity
     id: usize,
@@ -246,11 +249,11 @@ fn make_bundle(
         settings: PlaybackSettings {
             mode: PlaybackMode::Despawn,
             // TODO: Use Bevy's built-in spacialiser
-            // volume: Volume::new(listener.attenuate(
-            //     value.origin.into(),
-            //     value.volume,
-            //     value.attenuation,
-            // )),
+            volume: Volume::new(listener.attenuate(
+                value.origin.into(),
+                value.volume,
+                value.attenuation,
+            )),
             ..Default::default()
         },
     };
@@ -308,6 +311,8 @@ pub enum MixerEvent {
 }
 
 mod systems {
+    use crate::client::Connection;
+
     use super::*;
 
     pub fn update_mixer(
@@ -380,9 +385,9 @@ mod systems {
     pub fn update_entities(
         mut entities: Query<(&mut AudioSink, Option<&EntityChannel>, &mut Channel)>,
         listener: Res<Listener>,
-        conn: Res<GameConnection>,
+        conn: Option<Res<Connection>>,
     ) {
-        let Some(conn) = &conn.0 else {
+        let Some(conn) = conn else {
             return;
         };
 
@@ -392,6 +397,12 @@ mod systems {
             }
 
             chan.update(&mut *sink, &*listener)
+        }
+    }
+
+    pub fn update_listener(mut listener: ResMut<Listener>, conn: Option<Res<Connection>>) {
+        if let Some(new_listener) = conn.and_then(|conn| conn.state.update_listener()) {
+            *listener = new_listener;
         }
     }
 }

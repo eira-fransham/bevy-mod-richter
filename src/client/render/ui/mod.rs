@@ -180,3 +180,25 @@ impl UiRenderer {
             .record_draw(state, queue, pass, target_size, glyph_commands);
     }
 }
+
+pub mod systems {
+    use bevy::ecs::{
+        change_detection::DetectChanges as _,
+        system::{Res, ResMut},
+    };
+
+    use super::*;
+
+    pub fn update_ui(
+        gfx_state: Res<GraphicsState>,
+        vfs: Res<Vfs>,
+        menu: Res<Menu>,
+        device: Res<RenderDevice>,
+        queue: Res<RenderQueue>,
+        mut ui: ResMut<UiRenderer>,
+    ) {
+        if gfx_state.is_changed() || vfs.is_changed() || menu.is_changed() {
+            *ui = UiRenderer::new(&*gfx_state, &*vfs, &*device, &*queue, &*menu);
+        }
+    }
+}

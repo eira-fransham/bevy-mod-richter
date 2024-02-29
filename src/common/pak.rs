@@ -18,7 +18,6 @@
 //! Quake PAK archive manipulation.
 
 use std::{
-    collections::HashMap,
     fs,
     io::{self, Read, Seek, SeekFrom},
     ops::Range,
@@ -36,6 +35,7 @@ use bevy::{
 };
 use byteorder::{LittleEndian, ReadBytesExt};
 use futures::AsyncReadExt as _;
+use fxhash::FxHashMap;
 use memmap2::{Mmap, MmapOptions};
 use thiserror::Error;
 
@@ -103,7 +103,7 @@ impl AsRef<[u8]> for PakBacking {
 #[derive(Asset, TypePath, Debug)]
 pub struct Pak {
     memory: PakBacking,
-    entries: HashMap<PathBuf, PakEntry>,
+    entries: FxHashMap<PathBuf, PakEntry>,
 }
 
 #[derive(Default)]
@@ -230,7 +230,7 @@ impl Pak {
             s => s as u32,
         };
 
-        let mut map = HashMap::new();
+        let mut map = FxHashMap::default();
 
         for i in 0..(table_size as usize / PAK_ENTRY_SIZE) {
             let entry_offset = table_offset as u64 + (i * PAK_ENTRY_SIZE) as u64;

@@ -18,8 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::collections::HashMap;
-
+use fxhash::FxHashMap;
 use serde::Serialize;
 
 /// Client-side debug tracing.
@@ -36,5 +35,5 @@ pub struct TraceFrame {
     pub msg_times_ms: [i64; 2],
     pub time_ms: i64,
     pub lerp_factor: f32,
-    pub entities: HashMap<u32, TraceEntity>,
+    pub entities: FxHashMap<u32, TraceEntity>,
 }

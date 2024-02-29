@@ -16,7 +16,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use std::{
-    collections::HashMap,
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     mem::size_of,
     sync::Arc,
@@ -39,6 +38,7 @@ use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{InnerSpace, Vector3};
 use failure::{bail, ensure, ResultExt as _};
+use fxhash::FxHashMap;
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 use thiserror::Error;
@@ -530,7 +530,7 @@ where
     // maps animated texture names to primary and alternate animations
     // e.g., for textures of the form +#slip, maps "slip" to the ids of
     // [+0slip, +1slip, ...] and [+aslip, +bslip, ...]
-    let mut anim_file_textures: HashMap<String, BspFileTextureAnimations> = HashMap::new();
+    let mut anim_file_textures = FxHashMap::<String, BspFileTextureAnimations>::default();
 
     // final texture array
     let mut textures = Vec::new();
@@ -538,8 +538,8 @@ where
     let mut texture_ids = Vec::new();
 
     // map file texture ids to actual texture ids
-    let mut static_texture_ids = HashMap::new();
-    let mut animated_texture_ids = HashMap::new();
+    let mut static_texture_ids = FxHashMap::default();
+    let mut animated_texture_ids = FxHashMap::default();
 
     debug!("Sequencing textures");
     for (file_texture_id, file_texture) in file_textures.into_iter().enumerate() {

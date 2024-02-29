@@ -21,7 +21,7 @@ use crate::{
             GraphicsState, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT,
             LIGHT_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
         },
-        ClientEntity,
+        ClientEntity, Connection, ConnectionState,
     },
     common::{
         console::CvarRegistry,
@@ -38,6 +38,7 @@ use bevy::{
     render::{
         render_resource::BindGroupLayoutEntry,
         renderer::{RenderDevice, RenderQueue},
+        Extract,
     },
 };
 use bumpalo::Bump;
@@ -307,12 +308,42 @@ enum EntityRenderer {
 }
 
 /// Top-level renderer.
+#[derive(Resource)]
 pub struct WorldRenderer {
     worldmodel_renderer: BrushRenderer,
     entity_renderers: Vec<EntityRenderer>,
 
     world_uniform_block: DynamicUniformBufferBlock<EntityUniforms>,
     entity_uniform_blocks: RwLock<Vec<DynamicUniformBufferBlock<EntityUniforms>>>,
+}
+
+pub fn extract_world_renderer(
+    mut commands: Commands,
+    world_renderer: Option<ResMut<WorldRenderer>>,
+    mut gfx_state: ResMut<GraphicsState>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+    game_state: Res<ConnectionState>,
+) {
+    match &*game_state {
+        ConnectionState::Connected(state) => {
+            let new_renderer = WorldRenderer::new(
+                &mut *gfx_state,
+                &*device,
+                &*queue,
+                state.model_precache.iter(),
+                1,
+            );
+            match world_renderer {
+                // TODO: Actually track changes to the connection
+                Some(mut world_renderer) => *world_renderer = new_renderer,
+                None => commands.insert_resource(new_renderer),
+            }
+        }
+        _ => {
+            commands.remove_resource::<WorldRenderer>();
+        }
+    }
 }
 
 impl WorldRenderer {

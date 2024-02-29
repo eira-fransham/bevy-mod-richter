@@ -20,7 +20,6 @@
 
 use std::{
     borrow::Cow,
-    collections::HashMap,
     mem::size_of,
     num::NonZeroU32,
     ops::Range,
@@ -61,6 +60,7 @@ use bumpalo::Bump;
 use cgmath::{InnerSpace as _, Matrix4, Vector3};
 use chrono::Duration;
 use failure::Error;
+use fxhash::FxHashMap;
 use lazy_static::lazy_static;
 
 pub struct BrushPipeline {
@@ -352,7 +352,7 @@ pub struct BrushRendererBuilder {
 
     vertices: Vec<BrushVertex>,
     faces: Vec<BrushFace>,
-    texture_chains: HashMap<usize, Vec<usize>>,
+    texture_chains: FxHashMap<usize, Vec<usize>>,
     textures: Vec<BrushTexture>,
     lightmaps: Vec<Texture>,
     //lightmap_views: Vec<TextureView>,
@@ -377,7 +377,7 @@ impl BrushRendererBuilder {
             per_face_bind_groups: Vec::new(),
             vertices: Vec::new(),
             faces: Vec::new(),
-            texture_chains: HashMap::new(),
+            texture_chains: FxHashMap::default(),
             textures: Vec::new(),
             lightmaps: Vec::new(),
             //lightmap_views: Vec::new(),
@@ -751,7 +751,7 @@ pub struct BrushRenderer {
 
     // faces are grouped by texture to reduce the number of texture rebinds
     // texture_chains maps texture ids to face ids
-    texture_chains: HashMap<usize, Vec<usize>>,
+    texture_chains: FxHashMap<usize, Vec<usize>>,
     faces: Vec<BrushFace>,
     textures: Vec<BrushTexture>,
     lightmaps: Vec<Texture>,

@@ -18,11 +18,7 @@
 mod entity;
 pub mod phys;
 
-use std::{
-    collections::{HashMap, HashSet},
-    iter,
-    rc::Rc,
-};
+use std::{collections::HashSet, iter, rc::Rc};
 
 use self::{
     entity::Entity,
@@ -55,6 +51,7 @@ use crate::{
 use arrayvec::ArrayVec;
 use bevy::prelude::*;
 use cgmath::{InnerSpace, Vector3, Zero};
+use fxhash::FxHashMap;
 
 const AREA_DEPTH: usize = 4;
 const NUM_AREA_NODES: usize = 2usize.pow(AREA_DEPTH as u32 + 1) - 1;
@@ -381,7 +378,7 @@ impl World {
     /// - `angle`: This allows QuakeEd to write a single value instead of a set of Euler angles.
     ///   The value should be interpreted as the second component of the `angles` field.
     /// - `light`: This is simply an alias for `light_lev`.
-    pub fn alloc_from_map(&mut self, map: HashMap<&str, &str>) -> Result<EntityId, ProgsError> {
+    pub fn alloc_from_map(&mut self, map: FxHashMap<&str, &str>) -> Result<EntityId, ProgsError> {
         let mut ent = Entity::new(self.string_table.clone(), self.type_def.clone());
 
         for (key, val) in map.iter() {

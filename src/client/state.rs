@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Read, iter, sync::Arc};
+use std::{io::Read, iter, sync::Arc};
 
 use super::{sound::MixerEvent, view::BobVars};
 use crate::{
@@ -33,6 +33,7 @@ use bevy::{
 };
 use cgmath::{Angle as _, Deg, InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
+use fxhash::FxHashMap;
 use lazy_static::lazy_static;
 use net::{ClientCmd, ClientStat, EntityState, EntityUpdate, PlayerColor};
 use rand::{
@@ -92,7 +93,7 @@ pub struct ClientState {
     // visible entities, rebuilt per-frame
     pub visible_entity_ids: im::Vector<usize>,
 
-    pub light_styles: HashMap<u8, String>,
+    pub light_styles: FxHashMap<u8, String>,
 
     // various values relevant to the player and level (see common::net::ClientStat)
     pub stats: [i32; MAX_STATS],
@@ -1042,9 +1043,9 @@ impl ClientState {
     }
 
     #[must_use]
-    pub fn update_listener(&self) -> Listener {
+    pub fn update_listener(&self) -> Option<Listener> {
         // TODO: update to self.view_origin()
-        let origin = self.entities[self.view.entity_id()].origin;
+        let origin = self.entities.get(self.view.entity_id()).map(|e| e.origin)?;
         let world_translate = Matrix4::from_translation(origin);
 
         let left_base = Vector3::new(0.0, 4.0, self.view.view_height());
@@ -1055,11 +1056,11 @@ impl ClientState {
         let left_ear = (world_translate * rotate * left_base.extend(1.0)).truncate();
         let right_ear = (world_translate * rotate * right_base.extend(1.0)).truncate();
 
-        Listener {
+        Some(Listener {
             origin,
             left_ear,
             right_ear,
-        }
+        })
     }
 
     fn view_leaf_contents(&self) -> Result<bsp::BspLeafContents, ClientError> {
@@ -1181,8 +1182,8 @@ impl ClientState {
         Ok(())
     }
 
-    pub fn models(&self) -> impl Iterator<Item = &Model> {
-        self.models.iter()
+    pub fn models(&self) -> &im::Vector<Model> {
+        &self.models
     }
 
     pub fn viewmodel_id(&self) -> usize {

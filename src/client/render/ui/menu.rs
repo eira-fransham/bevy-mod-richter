@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{
     client::{
         menu::{Item, Menu, MenuBodyView, MenuState, NamedMenuItem},
@@ -20,6 +18,7 @@ use bevy::{
     render::renderer::{RenderDevice, RenderQueue},
 };
 use chrono::Duration;
+use fxhash::FxHashMap;
 
 // original minimum Quake resolution
 const MENU_WIDTH: i32 = 320;
@@ -54,7 +53,7 @@ impl Align {
 }
 
 pub struct MenuRenderer {
-    textures: HashMap<String, QuadTexture>,
+    textures: FxHashMap<String, QuadTexture>,
 }
 
 impl MenuRenderer {

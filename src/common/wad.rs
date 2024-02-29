@@ -19,7 +19,6 @@
 // SOFTWARE.
 
 use std::{
-    collections::HashMap,
     fmt::{self, Display},
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
 };
@@ -29,6 +28,7 @@ use crate::common::util;
 use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use failure::{bail, Backtrace, Context, Error, Fail};
+use fxhash::FxHashMap;
 
 // see definition of lumpinfo_t:
 // https://github.com/id-Software/Quake/blob/master/WinQuake/wad.h#L54-L63
@@ -150,7 +150,7 @@ struct LumpInfo {
 }
 
 pub struct Wad {
-    files: HashMap<String, Box<[u8]>>,
+    files: FxHashMap<String, Box<[u8]>>,
 }
 
 impl Wad {
@@ -189,7 +189,7 @@ impl Wad {
             lump_infos.push(LumpInfo { offset, size, name });
         }
 
-        let mut files = HashMap::new();
+        let mut files = FxHashMap::default();
 
         for lump_info in lump_infos {
             let mut data = Vec::with_capacity(lump_info.size as usize);

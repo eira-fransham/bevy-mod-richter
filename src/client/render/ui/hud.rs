@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{
     client::{
         render::{
@@ -25,6 +23,7 @@ use bevy::{
     render::renderer::{RenderDevice, RenderQueue},
 };
 use chrono::Duration;
+use fxhash::FxHashMap;
 use num::FromPrimitive as _;
 use num_derive::FromPrimitive;
 use strum::IntoEnumIterator as _;
@@ -45,13 +44,13 @@ pub enum HudState<'a> {
         item_pickup_time: &'a [Duration],
         stats: &'a [i32],
         face_anim_time: Duration,
-        console: &'a Console,
+        console: Option<&'a Console>,
     },
     Intermission {
         kind: &'a IntermissionKind,
         completion_duration: Duration,
         stats: &'a [i32],
-        console: &'a Console,
+        console: Option<&'a Console>,
     },
 }
 
@@ -195,7 +194,7 @@ impl std::fmt::Display for FaceId {
 }
 
 pub struct HudRenderer {
-    textures: HashMap<HudTextureId, QuadTexture>,
+    textures: FxHashMap<HudTextureId, QuadTexture>,
 }
 
 impl HudRenderer {
@@ -257,7 +256,7 @@ impl HudRenderer {
         // unit variants
         ids.extend(vec![Colon, Slash, StatusBar, InvBar, ScoreBar].into_iter());
 
-        let mut textures = HashMap::new();
+        let mut textures = FxHashMap::default();
         for id in ids.into_iter() {
             debug!("Opening {}", id);
             let qpic = state.gfx_wad().open_qpic(id.to_string()).unwrap();
@@ -678,19 +677,21 @@ impl HudRenderer {
                     glyph_cmds,
                 );
 
-                let output = console.output();
-                for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
-                    for (chr_id, chr) in line.chars().enumerate() {
-                        glyph_cmds.push(GlyphRendererCommand::Glyph {
-                            glyph_id: chr as u8,
-                            position: ScreenPosition::Relative {
+                if let Some(console) = console {
+                    let output = console.output();
+                    for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
+                        for (chr_id, chr) in line.chars().enumerate() {
+                            glyph_cmds.push(GlyphRendererCommand::Glyph {
+                                glyph_id: chr as u8,
+                                position: ScreenPosition::Relative {
+                                    anchor: Anchor::TOP_LEFT,
+                                    x_ofs: 8 * chr_id as i32,
+                                    y_ofs: -8 * id as i32,
+                                },
                                 anchor: Anchor::TOP_LEFT,
-                                x_ofs: 8 * chr_id as i32,
-                                y_ofs: -8 * id as i32,
-                            },
-                            anchor: Anchor::TOP_LEFT,
-                            scale,
-                        });
+                                scale,
+                            });
+                        }
                     }
                 }
             }
@@ -702,20 +703,22 @@ impl HudRenderer {
             } => {
                 self.cmd_intermission_overlay(kind, *completion_duration, stats, scale, quad_cmds);
 
-                // TODO: dedup this code
-                let output = console.output();
-                for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
-                    for (chr_id, chr) in line.chars().enumerate() {
-                        glyph_cmds.push(GlyphRendererCommand::Glyph {
-                            glyph_id: chr as u8,
-                            position: ScreenPosition::Relative {
+                if let Some(console) = console {
+                    // TODO: dedup this code
+                    let output = console.output();
+                    for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
+                        for (chr_id, chr) in line.chars().enumerate() {
+                            glyph_cmds.push(GlyphRendererCommand::Glyph {
+                                glyph_id: chr as u8,
+                                position: ScreenPosition::Relative {
+                                    anchor: Anchor::TOP_LEFT,
+                                    x_ofs: 8 * chr_id as i32,
+                                    y_ofs: -8 * id as i32,
+                                },
                                 anchor: Anchor::TOP_LEFT,
-                                x_ofs: 8 * chr_id as i32,
-                                y_ofs: -8 * id as i32,
-                            },
-                            anchor: Anchor::TOP_LEFT,
-                            scale,
-                        });
+                                scale,
+                            });
+                        }
                     }
                 }
             }

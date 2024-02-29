@@ -187,7 +187,7 @@ impl FromWorld for PostProcessRenderer {
         let state = world.resource::<GraphicsState>();
         let device = world.resource::<RenderDevice>();
 
-        PostProcessRenderer::new(state, device, state.deferred_pass_target.color_view())
+        PostProcessRenderer::new(state, device, state.deferred_pass_target().color_view())
     }
 }
 
