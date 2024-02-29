@@ -184,7 +184,7 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<Console>, ResMut<CmdRegistry
             AutoExposure {
                 min: -16.0,
                 max: 16.0,
-                compensation_curve: vec![(-16.0, -8.0).into(), (0.0, -1.0).into()],
+                compensation_curve: vec![(-16.0, -8.0).into(), (0.0, -2.0).into()],
                 ..default()
             },
         ));

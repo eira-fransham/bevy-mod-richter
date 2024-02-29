@@ -1123,8 +1123,6 @@ impl Node for ClientRenderer {
                 {
                     // only postprocess if client is in the game
                     if let ConnectionState::Connected(_) = conn_state {
-                        // self.postprocess_renderer
-                        //     .rebuild(gfx_state, gfx_state.deferred_pass_target().color_view());
                         postprocess_renderer.record_draw(
                             gfx_state,
                             queue,

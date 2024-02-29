@@ -324,12 +324,6 @@ impl ClientState {
         // rebuild the list of visible entities
         self.visible_entity_ids.clear();
 
-        // in the extremely unlikely event that there's only a world entity and nothing else, just
-        // return
-        if self.entities.len() <= 1 {
-            return Ok(());
-        }
-
         // NOTE that we start at entity 1 since we don't need to link the world entity
         for (ent_id, ent) in self.entities.iter_mut().enumerate().skip(1) {
             if ent.model_id == 0 {
