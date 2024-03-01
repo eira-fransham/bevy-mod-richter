@@ -187,13 +187,13 @@ pub struct UiPassLabel;
 pub struct UiPass;
 
 impl ViewNode for UiPass {
-    type ViewQuery = &'static ViewTarget;
+    type ViewQuery = (&'static ViewTarget, &'static Camera3d);
 
     fn run<'w>(
         &self,
         graph: &mut bevy::render::render_graph::RenderGraphContext,
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
-        view_target: &ViewTarget,
+        (view_target, _): (&ViewTarget, &Camera3d),
         world: &'w World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let gfx_state = world.resource::<GraphicsState>();

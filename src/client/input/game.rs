@@ -493,10 +493,10 @@ impl ToString for BindTarget {
 
 #[derive(Clone, Resource, Default)]
 pub struct GameInput {
-    bindings: FxHashMap<BindInput, BindTarget>,
-    action_states: [bool; ACTION_COUNT],
-    mouse_delta: (f64, f64),
-    impulse: u8,
+    pub bindings: FxHashMap<BindInput, BindTarget>,
+    pub action_states: [bool; ACTION_COUNT],
+    pub mouse_delta: (f64, f64),
+    pub impulse: u8,
 }
 
 impl GameInput {

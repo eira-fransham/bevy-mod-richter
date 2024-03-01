@@ -67,7 +67,7 @@ impl Default for Input {
 
 impl Input {
     // TODO: Re-implement input handling
-    pub fn handle_event<T>(
+    pub fn handle_event(
         &mut self,
         // menu: &mut Menu,
         // console: &mut Console,

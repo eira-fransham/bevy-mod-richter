@@ -21,6 +21,7 @@
 use std::{
     collections::{BTreeMap, VecDeque},
     mem,
+    str::FromStr as _,
 };
 
 use beef::Cow;
@@ -33,9 +34,31 @@ use bevy::{
 };
 use chrono::{Duration, Utc};
 use fxhash::FxBuildHasher;
-use serde::{de::value::MapDeserializer, Deserializer};
+use serde::{
+    de::{value::StrDeserializer, MapAccess},
+    Deserializer,
+};
 use serde_lexpr::Value;
 use thiserror::Error;
+
+pub struct RichterConsolePlugin;
+
+impl Plugin for RichterConsolePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ConsoleOutput>()
+            .init_resource::<ConsoleInput>()
+            .init_resource::<Registry>()
+            .init_resource::<ConsoleAlertSettings>()
+            .add_systems(Startup, systems::startup::init_alert_output)
+            .add_systems(
+                PostUpdate,
+                (
+                    systems::write_to_screen,
+                    console_text::systems::update_atlas_text,
+                ),
+            );
+    }
+}
 
 type CName = Cow<'static, str>;
 
@@ -44,7 +67,7 @@ pub enum ConsoleError {
     #[error("{0}")]
     CmdError(CName),
     #[error("Could not parse cvar: {name} = \"{value}\"")]
-    CvarParseFailed { name: CName, value: CName },
+    CvarParseFailed { name: CName, value: Value },
     #[error("Could not parse cvar")]
     CvarParseInvalid,
     #[error("No such command: {0}")]
@@ -59,7 +82,7 @@ impl serde::de::Error for ConsoleError {
     where
         T: std::fmt::Display,
     {
-        Self::CmdError(format!("{}", msg))
+        Self::CmdError(format!("{}", msg).into())
     }
 
     // Provided methods
@@ -95,20 +118,21 @@ pub fn cvar_error_handler(In(result): In<Result<(), ConsoleError>>) {
 // TODO: Add more-complex scripting language
 #[derive(Clone)]
 pub enum CmdKind {
-    Builtin(SystemId<Box<[String]>, Option<ExecResult>>),
+    Builtin(SystemId<Box<[String]>, ExecResult>),
     Alias(CName),
     Cvar(Cvar),
 }
 
 #[derive(Clone)]
-struct CmdInfo {
-    kind: CmdKind,
-    help: CName,
+pub struct CmdInfo {
+    pub kind: CmdKind,
+    pub help: CName,
 }
 
-struct RunCmd(CName, Box<[CName]>);
+#[derive(Clone)]
+pub struct RunCmd(CName, Box<[String]>);
 
-#[derive(Event)]
+#[derive(Event, Clone)]
 enum OutputCmd {
     EchoInput(CName),
     Run(RunCmd),
@@ -124,10 +148,10 @@ pub trait RegisterCmdExt {
     fn command<N, I, S, M>(&mut self, name: N, run: S, usage: I) -> &mut Self
     where
         N: Into<CName>,
-        S: IntoSystem<Box<[String]>, Option<ExecResult>, M> + 'static,
+        S: IntoSystem<Box<[String]>, ExecResult, M> + 'static,
         I: Into<CName>;
 
-    fn cvar<N, I, C, M>(&mut self, name: N, value: C, usage: I) -> &mut Self
+    fn cvar<N, I, C>(&mut self, name: N, value: C, usage: I) -> &mut Self
     where
         N: Into<CName>,
         C: Into<Cvar>,
@@ -138,7 +162,7 @@ impl RegisterCmdExt for App {
     fn command<N, I, S, M>(&mut self, name: N, run: S, usage: I) -> &mut Self
     where
         N: Into<CName>,
-        S: IntoSystem<Box<[String]>, Option<ExecResult>, M> + 'static,
+        S: IntoSystem<Box<[String]>, ExecResult, M> + 'static,
         I: Into<CName>,
     {
         let sys = self.world.register_system(run);
@@ -149,7 +173,7 @@ impl RegisterCmdExt for App {
         self
     }
 
-    fn cvar<N, I, C, M>(&mut self, name: N, value: C, usage: I) -> &mut Self
+    fn cvar<N, I, C>(&mut self, name: N, value: C, usage: I) -> &mut Self
     where
         N: Into<CName>,
         C: Into<Cvar>,
@@ -168,22 +192,49 @@ pub trait CmdExt {
     fn println_alert<T: Into<CName>>(&self, text: T);
 }
 
-#[derive(Default)]
+#[derive(Default, Copy, Clone, PartialEq, Eq)]
 pub enum OutputType {
     #[default]
     Console,
     Alert,
 }
 
-#[derive(Default)]
 pub struct ExecResult {
     pub extra_commands: Box<dyn Iterator<Item = RunCmd>>,
-    pub output: String,
+    pub output: CName,
     pub output_ty: OutputType,
+}
+
+impl Default for ExecResult {
+    fn default() -> Self {
+        Self {
+            extra_commands: Box::new(<[RunCmd; 0]>::into_iter([])),
+            output: default(),
+            output_ty: default(),
+        }
+    }
 }
 
 impl From<String> for ExecResult {
     fn from(value: String) -> Self {
+        Self {
+            output: value.into(),
+            ..default()
+        }
+    }
+}
+
+impl From<&'static str> for ExecResult {
+    fn from(value: &'static str) -> Self {
+        Self {
+            output: value.into(),
+            ..default()
+        }
+    }
+}
+
+impl From<CName> for ExecResult {
+    fn from(value: CName) -> Self {
         Self {
             output: value,
             ..default()
@@ -195,6 +246,7 @@ impl From<String> for ExecResult {
 #[derive(Resource, Default, Clone)]
 pub struct Registry {
     // We store a history so that we can remove functions and see the previously-defined ones
+    // TODO: Implement a compression pass (e.g. after a removal)
     layers: Vec<im::HashMap<CName, CmdInfo, FxBuildHasher>>,
     names: im::OrdSet<CName>,
 }
@@ -229,7 +281,7 @@ impl Registry {
             name.into(),
             CmdInfo {
                 kind: CmdKind::Cvar(cvar.into()),
-                help: todo!(),
+                help: help.into(),
             },
         );
     }
@@ -237,7 +289,9 @@ impl Registry {
     fn insert<N: Into<CName>>(&mut self, name: N, value: CmdInfo) {
         let name = name.into();
 
-        if self.contains(&*name) {
+        if self.layers.is_empty() {
+            self.layers.push(default());
+        } else if self.contains(&*name) {
             let new_layer = self.layers.last().cloned().unwrap_or_default();
             self.layers.push(new_layer);
         }
@@ -248,12 +302,8 @@ impl Registry {
     /// Registers a new command with the given name.
     ///
     /// Returns an error if a command with the specified name already exists.
-    fn command<N, C, H>(
-        &mut self,
-        name: N,
-        cmd: SystemId<Box<[String]>, Option<ExecResult>>,
-        help: H,
-    ) where
+    fn command<N, H>(&mut self, name: N, cmd: SystemId<Box<[String]>, ExecResult>, help: H)
+    where
         N: Into<CName>,
         H: Into<CName>,
     {
@@ -315,7 +365,8 @@ impl Registry {
                     remove_from_names = false;
                     break;
                 }
-            } else if let im::hashmap::Entry::Occupied(entry) = layer.entry(name) {
+                // TODO: Remove clone
+            } else if let im::hashmap::Entry::Occupied(entry) = layer.entry(name.clone()) {
                 if let CmdKind::Alias(_) = entry.get().kind {
                     entry.remove();
                     found_command = true;
@@ -334,15 +385,31 @@ impl Registry {
         }
     }
 
-    /// Executes a command.
+    /// Get a command.
     ///
     /// Returns an error if no command with the specified name exists.
-    fn get<S>(&self, name: S) -> Option<CmdInfo>
+    pub fn get<S>(&self, name: S) -> Option<&CmdInfo>
+    where
+        S: AsRef<str>,
+    {
+        for layer in self.layers.iter().rev() {
+            if let Some(info) = layer.get(name.as_ref()) {
+                return Some(info);
+            }
+        }
+
+        None
+    }
+
+    /// Get a command.
+    ///
+    /// Returns an error if no command with the specified name exists.
+    pub fn get_mut<S>(&mut self, name: S) -> Option<&mut CmdInfo>
     where
         S: AsRef<str>,
     {
         for layer in self.layers.iter_mut().rev() {
-            if let Some(info) = layer.get(name.as_ref()) {
+            if let Some(info) = layer.get_mut(name.as_ref()) {
                 return Some(info);
             }
         }
@@ -354,7 +421,7 @@ impl Registry {
     where
         S: AsRef<str>,
     {
-        for layer in self.layers.iter_mut().rev() {
+        for layer in self.layers.iter().rev() {
             if layer.contains_key(name.as_ref()) {
                 return true;
             }
@@ -365,7 +432,7 @@ impl Registry {
 
     // We handle getting cvars differently, as they are needed internally
     fn get_cvar<S: AsRef<str>>(&self, name: S) -> Option<&Cvar> {
-        for layer in self.layers.iter_mut().rev() {
+        for layer in self.layers.iter().rev() {
             if let Some(info) = layer.get(name.as_ref()) {
                 if let CmdKind::Cvar(cvar) = &info.kind {
                     return Some(cvar);
@@ -410,7 +477,78 @@ impl Registry {
             inner: &'a Registry,
         }
 
-        impl<'a> Deserializer<'a> for &'a CvarDeserializer<'a> {
+        struct LexprArrayDeserializer<T, V> {
+            values: T,
+            cur: Option<V>,
+        }
+
+        impl<'a, T>
+            LexprArrayDeserializer<
+                T,
+                (
+                    StrDeserializer<'a, ConsoleError>,
+                    serde_lexpr::value::de::Deserializer<'a>,
+                ),
+            >
+        where
+            T: Iterator<
+                Item = (
+                    StrDeserializer<'a, ConsoleError>,
+                    serde_lexpr::value::de::Deserializer<'a>,
+                ),
+            >,
+        {
+            fn new(mut values: T) -> Self {
+                let cur = values.next();
+
+                Self { values, cur }
+            }
+        }
+
+        impl<'a, T> MapAccess<'a>
+            for LexprArrayDeserializer<
+                T,
+                (
+                    StrDeserializer<'a, ConsoleError>,
+                    serde_lexpr::value::de::Deserializer<'a>,
+                ),
+            >
+        where
+            T: Iterator<
+                Item = (
+                    StrDeserializer<'a, ConsoleError>,
+                    serde_lexpr::value::de::Deserializer<'a>,
+                ),
+            >,
+        {
+            type Error = ConsoleError;
+
+            fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
+            where
+                K: serde::de::DeserializeSeed<'a>,
+            {
+                let out = match &mut self.cur {
+                    Some((k, _)) => Ok(Some(seed.deserialize(*k)?)),
+                    None => Ok(None),
+                };
+
+                out
+            }
+
+            fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
+            where
+                V: serde::de::DeserializeSeed<'a>,
+            {
+                match mem::replace(&mut self.cur, self.values.next()) {
+                    Some((_, mut v)) => Ok(seed
+                        .deserialize(&mut v)
+                        .map_err(|_| ConsoleError::CvarParseInvalid)?),
+                    None => Err(ConsoleError::CvarParseInvalid),
+                }
+            }
+        }
+
+        impl<'a> Deserializer<'a> for CvarDeserializer<'a> {
             type Error = ConsoleError;
 
             fn deserialize_struct<V>(
@@ -422,14 +560,16 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                let deserializer = MapDeserializer::new(
-                    fields
-                        .into_iter()
-                        .filter_map(|name| {
-                            self.inner.get_cvar(name).map(|c| (*name, serde_lexpr::value::de::Deserializer::from_value(c.value())))
-                        }));
+                let de = LexprArrayDeserializer::new(fields.into_iter().filter_map(|name| {
+                    self.inner.get_cvar(name).map(|c| {
+                        (
+                            StrDeserializer::new(*name),
+                            serde_lexpr::value::de::Deserializer::from_value(c.value()),
+                        )
+                    })
+                }));
 
-                visitor.visit_map(deserializer)
+                visitor.visit_map(de)
             }
 
             fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -647,7 +787,7 @@ impl Registry {
             }
         }
 
-        V::deserialize(CvarDeserializer { inner: self })
+        V::deserialize(CvarDeserializer { inner: self }).ok()
     }
 
     pub fn cmd_names(&self) -> impl Iterator<Item = &str> + '_ {
@@ -685,21 +825,32 @@ impl Registry {
 /// A configuration variable.
 ///
 /// Cvars are the primary method of configuring the game.
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Cvar {
     // Value of this variable
-    val: Option<Value>,
+    pub value: Option<Value>,
 
     // If true, this variable should be archived in vars.rc
-    archive: bool,
+    pub archive: bool,
 
     // If true:
     // - If a server cvar, broadcast updates to clients
     // - If a client cvar, update userinfo
-    notify: bool,
+    pub notify: bool,
 
     // The default value of this variable
-    default: Value,
+    pub default: Value,
+}
+
+impl Default for Cvar {
+    fn default() -> Self {
+        Self {
+            value: default(),
+            archive: default(),
+            notify: default(),
+            default: Value::Nil,
+        }
+    }
 }
 
 impl From<&'static str> for Cvar {
@@ -712,7 +863,7 @@ impl Cvar {
     pub fn new<D: Into<CName>>(default: D) -> Self {
         Self {
             // TODO: Error handling
-            default: Value::from_str(default.into()).unwrap(),
+            default: Value::from_str(default.into().as_ref()).unwrap(),
             ..Default::default()
         }
     }
@@ -730,7 +881,7 @@ impl Cvar {
     }
 
     fn value(&self) -> &Value {
-        self.val.as_ref().unwrap_or(&self.default)
+        self.value.as_ref().unwrap_or(&self.default)
     }
 }
 
@@ -784,7 +935,7 @@ impl ConsoleInput {
     }
 
     pub fn history_up(&mut self) {
-        if let Some(line) = self.hist.line_up().map(ToOwned::to_owned)  {
+        if let Some(line) = self.hist.line_up().map(ToOwned::to_owned) {
             self.set_text(line);
         }
     }
@@ -816,8 +967,8 @@ impl ConsoleInput {
         ConsoleInput {
             text: Default::default(),
             curs: 0,
-            hist: todo!(),
-            commands: todo!(),
+            hist: default(),
+            commands: default(),
         }
     }
 
@@ -939,12 +1090,12 @@ impl History {
     }
 }
 
-struct Line {
+pub struct Line {
     output_type: OutputType,
     text: CName,
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct ConsoleOutput {
     // A ring buffer of lines of text. Each line has an optional timestamp used
     // to determine whether it should be displayed on screen. If the timestamp
@@ -963,7 +1114,7 @@ impl ConsoleOutput {
 
     pub fn println_alert<S>(&mut self, s: S, timestamp: i64)
     where
-        S: AsRef<str>,
+        S: Into<CName>,
     {
         self.push_line(s, timestamp, OutputType::Console);
     }
@@ -983,7 +1134,7 @@ impl ConsoleOutput {
         );
     }
 
-    pub fn set_center_print<S: Into<imstr::ImString>>(&mut self, print: S) {
+    pub fn set_center_print<S: Into<String>>(&mut self, print: S) {
         self.center_print = (print.into(), Utc::now().timestamp());
     }
 
@@ -1007,14 +1158,22 @@ impl ConsoleOutput {
     /// `max_candidates` specifies the maximum number of lines to consider,
     /// while `max_results` specifies the maximum number of lines that should
     /// be returned.
-    pub fn recent_lines(&self, since: i64) -> impl Iterator<Item = &Line> + '_ {
-        self.lines.range(since..).map(|(_, line)| line)
+    pub fn recent_lines(&self, since: i64) -> impl Iterator<Item = (i64, &Line)> + '_ {
+        self.lines.range(since..).map(|(k, v)| (*k, v))
     }
 }
 
 #[derive(Component)]
 struct AlertOutput {
-    since: i64,
+    last_timestamp: Option<i64>,
+}
+
+impl Default for AlertOutput {
+    fn default() -> Self {
+        Self {
+            last_timestamp: Some(0),
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -1032,31 +1191,14 @@ impl Default for ConsoleAlertSettings {
     }
 }
 
-pub struct RichterConsolePlugin;
-
-impl Plugin for RichterConsolePlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<ConsoleOutput>()
-            .init_resource::<ConsoleInput>()
-            .add_systems(Startup, systems::startup::init_alert_output)
-            .add_systems(
-                PostUpdate,
-                (
-                    systems::write_to_screen,
-                    console_text::systems::update_atlas_text,
-                ),
-            );
-    }
-}
-
 // TODO: Extract this so that it can be used elsewhere in the UI
 mod console_text {
     use super::*;
 
-    #[derive(Component)]
+    #[derive(Component, Debug)]
     pub struct AtlasText {
         pub text: String,
-        pub image: Handle<Image>,
+        pub image: UiImage,
         pub layout: Handle<TextureAtlasLayout>,
         pub glyph_size: (Val, Val),
     }
@@ -1065,48 +1207,99 @@ mod console_text {
         use super::*;
 
         pub fn update_atlas_text(
-            commands: Commands,
+            mut commands: Commands,
             text: Query<(Entity, &AtlasText), Changed<AtlasText>>,
+            asset_server: Res<AssetServer>,
         ) {
-            for (ent, text) in text {
+            for (ent, text) in text.iter() {
                 let mut commands = commands.entity(ent);
 
                 commands.clear_children();
 
-                for (line_id, line) in text.0.lines().enumerate() {
-                    let glyph_y = text.glyph_size.1 * line_id as f32;
+                commands.with_children(|commands| {
+                    for (line_id, line) in text.text.lines().enumerate() {
+                        let glyph_y = text.glyph_size.1 * line_id as f32;
 
-                    for (char_id, chr) in line.chars().enumerate() {
-                        let glyph_x = text.glyph_size.0 * char_id as f32;
+                        for (char_id, chr) in line.chars().enumerate() {
+                            let glyph_x = text.glyph_size.0 * char_id as f32;
 
-                        commands.spawn(AtlasImageBundle {
-                            style: Style {
-                                width: text.glyph_size.0,
-                                height: text.glyph_size.1,
-                                left: glyph_x,
-                                top: glyph_y,
-                                ..default()
-                            },
-                            ..default()
-                        });
+                            commands.spawn(
+                                AtlasImageBundle {
+                                    image: text.image.clone(),
+                                    texture_atlas: TextureAtlas { layout: text.layout.clone(), index: chr as _ } ,
+                                    style: Style {
+                                    position_type: PositionType::Absolute,
+                                        width: text.glyph_size.0,
+                                        height: text.glyph_size.1,
+                                        left: glyph_x,
+                                        top: glyph_y,
+                                        ..default()
+                                    },
+                                    ..default()
+                                },
+                            );
+                        }
                     }
-                }
+                });
             }
         }
     }
 }
 
 mod systems {
-    use bevy::ecs::event::ManualEventReader;
+    use chrono::TimeDelta;
 
     use self::console_text::AtlasText;
 
     use super::*;
 
     pub mod startup {
+        use bevy::render::render_asset::RenderAssetUsages;
+        use wgpu::{Extent3d, TextureDimension};
+
+        use crate::{
+            client::render::{Palette, TextureData},
+            common::{vfs::Vfs, wad::Wad},
+        };
+
         use super::*;
 
-        pub fn init_alert_output(mut commands: Commands, assets: AssetServer) {
+        pub fn init_alert_output(mut commands: Commands, vfs: Res<Vfs>, assets: Res<AssetServer>) {
+            commands.spawn(Camera2dBundle {
+                camera: Camera {
+                    order: 1,
+                    ..default()
+                },
+                ..default()
+            });
+
+            let palette = Palette::load(&vfs, "gfx/palette.lmp");
+            let gfx_wad = Wad::load(vfs.open("gfx.wad").unwrap()).unwrap();
+
+            let conchars = gfx_wad.open_conchars().unwrap();
+
+            // TODO: validate conchars dimensions
+
+            let indices = conchars
+                .indices()
+                .iter()
+                .map(|i| if *i == 0 { 0xFF } else { *i })
+                .collect::<Vec<_>>();
+
+            // reorder indices from atlas order to array order
+            let mut array_order = Vec::new();
+            for glyph_id in 0..GLYPH_COUNT {
+                for glyph_r in 0..GLYPH_HEIGHT {
+                    for glyph_c in 0..GLYPH_WIDTH {
+                        let atlas_r = GLYPH_HEIGHT * (glyph_id / GLYPH_COLS) + glyph_r;
+                        let atlas_c = GLYPH_WIDTH * (glyph_id % GLYPH_COLS) + glyph_c;
+                        array_order.push(indices[atlas_r * GLYPH_TEXTURE_WIDTH + atlas_c]);
+                    }
+                }
+            }
+            let (diffuse_data, _) = palette.translate(&indices);
+            let diffuse_data = TextureData::Diffuse(diffuse_data);
+
             // TODO: Deduplicate with glyph.rs
             const GLYPH_WIDTH: usize = 8;
             const GLYPH_HEIGHT: usize = 8;
@@ -1116,16 +1309,27 @@ mod systems {
             const GLYPH_TEXTURE_WIDTH: usize = GLYPH_WIDTH * GLYPH_COLS;
 
             let layout = assets.add(TextureAtlasLayout::from_grid(
-                Vec2::new(GLYPH_WIDTH, GLYPH_HEIGHT),
+                Vec2::new(GLYPH_WIDTH as _, GLYPH_HEIGHT as _),
                 GLYPH_COLS,
-                GLYPH_ROWS,
+                GLYPH_COLS,
                 None,
                 None,
             ));
-            let image = assets
-                .load_with_settings("gfx/conchars.lmp", |s: &mut Option<(u32, u32)>| {
-                    *s = Some((128, 128))
-                });
+
+            let image = Image::new(
+                Extent3d {
+                    width: GLYPH_TEXTURE_WIDTH as _,
+                    height: GLYPH_TEXTURE_WIDTH as _,
+                    depth_or_array_layers: 1,
+                },
+                TextureDimension::D2,
+                diffuse_data.data().to_owned(),
+                diffuse_data.format(),
+                RenderAssetUsages::RENDER_WORLD,
+            );
+            let image = assets.add(image);
+            let image = image.into();
+
             commands.spawn((
                 NodeBundle {
                     style: Style {
@@ -1139,8 +1343,9 @@ mod systems {
                     text: format!("Test!"),
                     image,
                     layout,
-                    glyph_size: (Val::Px(GLYPH_WIDTH as _), Val::Px(GLYPH_HEIGHT as _)),
+                    glyph_size: (Val::Percent(GLYPH_WIDTH as _), Val::Percent(GLYPH_HEIGHT as _)),
                 },
+                AlertOutput::default(),
             ));
         }
     }
@@ -1149,31 +1354,46 @@ mod systems {
         settings: Res<ConsoleAlertSettings>,
         time: Res<Time<Virtual>>,
         console_out: Res<ConsoleOutput>,
-        mut alert: Query<(&mut AtlasText, &mut AlertOutput), Changed<AtlasText>>,
+        mut alert: Query<(&mut AtlasText, &mut AlertOutput)>,
     ) {
-        for text in alert.iter_mut() {
-            let since = time.timestamp() - settings.timeout.timestamp();
+        // TODO
+        return;
+        for (mut text, alert_out) in alert.iter_mut() {
+            let since = (TimeDelta::from_std(time.elapsed()).unwrap() - settings.timeout)
+                .num_milliseconds();
             let mut lines = console_out
                 .recent_lines(since)
-                .filter(|line| line.output_type == OutputType::Alert)
-                .take(settings.max_lines)
-                .map(|l| l.text);
-            let Some(first) = lines.next() else {
+                .filter(|(_, line)| line.output_type == OutputType::Alert)
+                .map(|(ts, line)| (ts, &line.text))
+                .take(settings.max_lines);
+
+            let first = lines.next();
+            let last_timestamp = first.map(|(ts, _)| ts);
+            if last_timestamp == alert_out.last_timestamp {
+                continue;
+            }
+
+            alert_out.last_timestamp;
+
+            text.text.clear();
+
+            let Some((_, first)) = first else {
                 continue;
             };
-            text.0.clear();
-            text.0.push_str(first);
+            text.text.push_str(first.as_ref());
 
-            for line in lines {
-                text.0.push_str(&**line);
-                text.0.push('\n');
+            for (_, line) in lines {
+                text.text.push_str(&*line);
+                text.text.push('\n');
             }
         }
     }
 
-    pub fn execute_console(reader: Local<ManualEventReader<OutputCmd>>, world: &mut World) {
+    pub fn execute_console(world: &mut World) {
         let time = world.resource::<Time<Real>>();
-        let timestamp = time.timestamp();
+        let timestamp = TimeDelta::from_std(time.elapsed())
+            .unwrap()
+            .num_milliseconds();
         // fn parse_commands<'a, 'b, O, F: FnMut(Vec<&'b str>) -> O + 'a>(
         //     input: &'b str,
         //     mut func: F,
@@ -1199,87 +1419,91 @@ mod systems {
         //     error!("Couldn't parse commands");
         // };
 
-        let run_events = mem::take(&mut *world.resource_mut::<Events<OutputCmd>>());
-        let mut events_iter = reader.read(&run_events);
-        let mut commands = VecDeque::new();
+        let mut commands = world
+            .resource_mut::<Events<OutputCmd>>()
+            .drain()
+            .collect::<VecDeque<_>>();
 
-        while let Some(cmd) = commands.pop_front().or_else(|| events_iter.next()) {
+        while let Some(cmd) = commands.pop_front() {
             let RunCmd(name, args) = match cmd {
                 OutputCmd::EchoInput(input) => {
                     world
                         .resource_mut::<ConsoleOutput>()
-                        .println(input, timestamp);
+                        .println(input.clone(), timestamp);
                     continue;
                 }
                 OutputCmd::Run(cmd) => cmd,
             };
 
-            let mut name = CName::from(name.as_ref());
+            let mut name = CName::from(name.into_owned());
             loop {
-                match world.resource::<Registry>().get_mut(name) {
+                let (output, output_ty) = match world.resource_mut::<Registry>().get_mut(&*name) {
                     // TODO: Implement helptext
                     Some(CmdInfo { kind, help }) => {
                         match kind {
                             CmdKind::Cvar(cvar) => {
                                 match args.split_first() {
-                                    None => world.resource_mut::<ConsoleOutput>().println(
-                                        format!("\"{}\" is \"{}\"", name, cvar.value()),
-                                        timestamp,
+                                    None => (
+                                        Cow::from(format!("\"{}\" is \"{}\"", name, cvar.value())),
+                                        OutputType::Console,
                                     ),
                                     Some((new_value, [])) => {
-                                        *cvar.value = Value::from_str(new_value)
-                                            .unwrap_or_else(|| Value::String(new_value.into()))
+                                        cvar.value =
+                                            Some(Value::from_str(new_value).unwrap_or_else(|_| {
+                                                Value::String(new_value.clone().into())
+                                            }));
+                                        continue;
                                     }
                                     Some(_) => {
                                         // TODO: Collect into vector
-                                        world
-                                            .resource_mut::<ConsoleOutput>()
-                                            .println("Too many arguments, expected 1", timestamp);
+
+                                        (
+                                            Cow::from("Too many arguments, expected 1"),
+                                            OutputType::Console,
+                                        )
                                     }
                                 }
                             }
                             CmdKind::Alias(alias) => {
-                                name = alias;
+                                name = alias.clone();
                                 continue;
                             }
                             CmdKind::Builtin(cmd) => {
-                                match world.run_system_with_input(cmd, args.into()) {
+                                let args = args.clone();
+                                let cmd = *cmd;
+
+                                match world.run_system_with_input(cmd, args) {
                                     Err(_) => {
                                         error!("Command handler was registered in console but not in world");
+                                        continue;
                                     }
 
-                                    Ok(Some(ExecResult {
+                                    Ok(ExecResult {
                                         extra_commands,
                                         output,
                                         output_ty,
-                                    })) => {
+                                    }) => {
                                         // TODO: Merge this so that commands just return a string again
-                                        commands.extend(extra_commands);
+                                        commands.extend(extra_commands.map(OutputCmd::Run));
 
-                                        match output_ty {
-                                            OutputType::Normal => world
-                                                .resource_mut::<ConsoleOutput>()
-                                                .println(output, timestamp),
-                                            OutputType::Alert => world
-                                                .resource_mut::<ConsoleOutput>()
-                                                .println_alert(output, timestamp),
-                                        }
-                                    }
-
-                                    Ok(None) => {
-                                        world
-                                            .resource_mut::<ConsoleOutput>()
-                                            .println(format!("usage: {}", help), timestamp);
+                                        (output, output_ty)
                                     }
                                 }
                             }
                         }
                     }
-                    None => {
-                        world
-                            .resource_mut::<ConsoleOutput>()
-                            .println(format!("Unrecognized command \"{}\"", timestamp), timestamp);
-                    }
+                    None => (
+                        Cow::from(format!("Unrecognized command \"{}\"", &*name)),
+                        OutputType::Console,
+                    ),
+                };
+                match output_ty {
+                    OutputType::Console => world
+                        .resource_mut::<ConsoleOutput>()
+                        .println(output, timestamp),
+                    OutputType::Alert => world
+                        .resource_mut::<ConsoleOutput>()
+                        .println_alert(output, timestamp),
                 }
             }
         }

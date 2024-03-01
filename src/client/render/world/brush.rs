@@ -490,7 +490,7 @@ impl BrushRendererBuilder {
         let mut lightmap_ids = Vec::new();
         for lightmap in lightmaps {
             let lightmap_data = TextureData::Lightmap(LightmapData {
-                lightmap: Cow::Borrowed(lightmap.data()),
+                lightmap: Cow::borrowed(lightmap.data()),
             });
 
             let texture = state.create_texture(

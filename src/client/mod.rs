@@ -49,12 +49,17 @@ use crate::{
         view::{IdleVars, KickVars, MouseVars, RollVars},
     },
     common::{
-        self, console::{ConsoleError, RichterConsolePlugin}, engine, model::{Model, ModelError}, net::{
+        self,
+        console::{ConsoleError, RichterConsolePlugin},
+        engine,
+        model::{Model, ModelError},
+        net::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
-            BlockingMode, ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState, GameType,
-            NetError, PlayerColor, QSocket, ServerCmd, SignOnStage,
-        }, vfs::{Vfs, VfsError}
+            BlockingMode, ClientCmd, ClientStat, EntityEffects, EntityState, GameType, NetError,
+            PlayerColor, QSocket, ServerCmd, SignOnStage,
+        },
+        vfs::{Vfs, VfsError},
     },
 };
 use fxhash::FxHashMap;
@@ -65,7 +70,6 @@ use bevy::{
     ecs::{
         event::EventWriter,
         system::{In, Res, ResMut, Resource},
-        world::World,
     },
     prelude::*,
     render::extract_resource::ExtractResource,
@@ -112,37 +116,38 @@ pub struct RichterGameSettings {
 
 impl Plugin for RichterPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
-        let app = app.insert_resource(RichterGameSettings {
-            base_dir: self
-                .base_dir
-                .clone()
-                .unwrap_or_else(|| common::default_base_dir()),
-            game: self.game.clone(),
-        })
-        .insert_resource(self.main_menu.clone())
-        .init_resource::<Vfs>()
-        .init_resource::<Input>()
-        .init_resource::<MusicPlayer>()
-        .init_resource::<DemoQueue>()
-        // TODO: Use bevy's state system
-        .insert_resource(ConnectionState::SignOn(SignOnStage::Not))
-        .add_systems(
-            Main,
-            (
-                systems::set_resolution.run_if(any_with_component::<PrimaryWindow>),
-                systems::handle_input.pipe(|In(res)| {
-                    // TODO: Error handling
-                    let _ = res;
-                }),
-                systems::frame.pipe(|In(res)| {
-                    // TODO: Error handling
-                    let _ = res;
-                }),
-            ),
-        )
-        .add_plugins(RichterConsolePlugin)
-        .add_plugins(RichterRenderPlugin)
-        .add_plugins(RichterSoundPlugin);
+        let app = app
+            .insert_resource(RichterGameSettings {
+                base_dir: self
+                    .base_dir
+                    .clone()
+                    .unwrap_or_else(|| common::default_base_dir()),
+                game: self.game.clone(),
+            })
+            .insert_resource(self.main_menu.clone())
+            .init_resource::<Vfs>()
+            .init_resource::<Input>()
+            .init_resource::<MusicPlayer>()
+            .init_resource::<DemoQueue>()
+            // TODO: Use bevy's state system
+            .insert_resource(ConnectionState::SignOn(SignOnStage::Not))
+            .add_systems(
+                Main,
+                (
+                    systems::set_resolution.run_if(any_with_component::<PrimaryWindow>),
+                    systems::handle_input.pipe(|In(res)| {
+                        // TODO: Error handling
+                        let _ = res;
+                    }),
+                    systems::frame.pipe(|In(res)| {
+                        // TODO: Error handling
+                        let _ = res;
+                    }),
+                ),
+            )
+            .add_plugins(RichterConsolePlugin)
+            .add_plugins(RichterRenderPlugin)
+            .add_plugins(RichterSoundPlugin);
     }
 
     fn finish(&self, app: &mut bevy::prelude::App) {
@@ -208,7 +213,7 @@ impl From<ConsoleError> for ClientError {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Copy, Clone, Debug)]
 pub struct MoveVars {
     #[serde(rename(deserialize = "cl_anglespeedkey"))]
     cl_anglespeedkey: f32,
@@ -879,7 +884,7 @@ impl Connection {
         kick_vars: KickVars,
         roll_vars: RollVars,
         bob_vars: BobVars,
-        cl_nolerp: f32,
+        cl_nolerp: bool,
         sv_gravity: f32,
     ) -> Result<ConnectionStatus, ClientError> {
         debug!("frame time: {}ms", frame_time.num_milliseconds());
@@ -887,13 +892,7 @@ impl Connection {
         // do this _before_ parsing server messages so that we know when to
         // request the next message from the demo server.
         self.state.advance_time(frame_time);
-        match self.parse_server_msg(
-            state.reborrow(),
-            vfs,
-            asset_server,
-            mixer_events,
-            kick_vars,
-        )? {
+        match self.parse_server_msg(state.reborrow(), vfs, asset_server, mixer_events, kick_vars)? {
             ConnectionStatus::Maintain => {}
             // if Disconnect or NextDemo, delegate up the chain
             s => return Ok(s),
@@ -1057,13 +1056,14 @@ mod systems {
 
     pub fn handle_input(
         // mut console: ResMut<Console>,
-        registry: Mut<Registry>,
+        registry: ResMut<Registry>,
         mut conn: Option<ResMut<Connection>>,
         mut input: ResMut<Input>,
         frame_time: Res<Time<Virtual>>,
     ) -> Result<(), ClientError> {
-        let move_vars: MoveVars = registry.read_cvars()?;
-        let mouse_vars: MouseVars = registry.read_cvars()?;
+        // TODO: Error handling
+        let move_vars: MoveVars = registry.read_cvars().unwrap();
+        let mouse_vars: MouseVars = registry.read_cvars().unwrap();
 
         match conn.as_deref_mut() {
             Some(Connection {
@@ -1106,18 +1106,31 @@ mod systems {
         cvars: Res<Registry>,
         vfs: Res<Vfs>,
         asset_server: Res<AssetServer>,
-        mut registry: ResMut<Registry>,
         mut mixer_events: EventWriter<MixerEvent>,
         mut demo_queue: ResMut<DemoQueue>,
         mut input: ResMut<Input>,
         mut conn: Option<ResMut<Connection>>,
         mut conn_state: ResMut<ConnectionState>,
     ) -> Result<(), ClientError> {
-        let NetworkVars { disable_lerp,gravity } = cvars.read_cvars()?;
-        let idle_vars: IdleVars = cvars.read_cvars();
-        let kick_vars: KickVars = cvars.read_cvars();
-        let roll_vars: RollVars = cvars.read_cvars();
-        let bob_vars: BobVars = cvars.read_cvars();
+        dbg!();
+        let NetworkVars {
+            disable_lerp,
+            gravity,
+        } = cvars
+            .read_cvars()
+            .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
+        let idle_vars: IdleVars = cvars
+            .read_cvars()
+            .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
+        let kick_vars: KickVars = cvars
+            .read_cvars()
+            .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
+        let roll_vars: RollVars = cvars
+            .read_cvars()
+            .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
+        let bob_vars: BobVars = cvars
+            .read_cvars()
+            .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
 
         let status = match conn.as_deref_mut() {
             Some(ref mut conn) => conn.frame(

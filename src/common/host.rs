@@ -54,15 +54,14 @@ pub enum Control {
 pub mod cvars {
     use bevy::app::App;
 
-    use crate::common::console::Cvar;
+    use crate::common::console::{Cvar, RegisterCmdExt as _};
 
     pub fn register_cvars(app: &mut App) {
         app.cvar(
             "host_maxfps",
             Cvar::new("72"),
             "sets the maximum desired frames per second",
-        )
-        .unwrap();
+        );
     }
 }
 

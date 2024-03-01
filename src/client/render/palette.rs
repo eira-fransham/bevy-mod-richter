@@ -74,10 +74,10 @@ impl Palette {
 
         (
             DiffuseData {
-                rgba: Cow::Owned(rgba),
+                rgba: Cow::owned(rgba),
             },
             FullbrightData {
-                fullbright: Cow::Owned(fullbright),
+                fullbright: Cow::owned(fullbright),
             },
         )
     }

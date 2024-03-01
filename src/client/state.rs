@@ -246,8 +246,8 @@ impl ClientState {
     ///
     /// This calculates the ratio used to interpolate entities between the last
     /// two updates from the server.
-    pub fn update_interp_ratio(&mut self, cl_nolerp: f32) {
-        if cl_nolerp != 0.0 {
+    pub fn update_interp_ratio(&mut self, cl_nolerp: bool) {
+        if cl_nolerp {
             self.time = self.msg_times[0];
             self.lerp_factor = 1.0;
             return;

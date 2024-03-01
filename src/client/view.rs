@@ -253,7 +253,7 @@ pub struct KickVars {
     pub kick_time: f32,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Deserialize, Clone, Copy, Debug, Default)]
 pub struct BobVars {
     pub cl_bob: f32,
     pub cl_bobcycle: f32,
@@ -276,7 +276,7 @@ pub fn bob(time: Duration, velocity: Vector3<f32>, vars: BobVars) -> f32 {
     bob.max(-7.0).min(4.0)
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Deserialize, Clone, Copy, Debug)]
 pub struct RollVars {
     pub cl_rollangle: f32,
     pub cl_rollspeed: f32,
@@ -297,7 +297,7 @@ pub fn roll(angles: Angles, velocity: Vector3<f32>, vars: RollVars) -> Deg<f32> 
     Deg(roll_abs * sign)
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Deserialize, Clone, Copy, Debug)]
 pub struct IdleVars {
     pub v_idlescale: f32,
     pub v_ipitch_cycle: f32,

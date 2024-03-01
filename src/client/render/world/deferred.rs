@@ -1,7 +1,7 @@
 use std::{cell::RefCell, mem::size_of, num::NonZeroU64};
 
 use bevy::{
-    core_pipeline::prepass::ViewPrepassTextures,
+    core_pipeline::{core_3d::Camera3d, prepass::ViewPrepassTextures},
     ecs::system::Resource,
     prelude::default,
     render::{
@@ -15,7 +15,7 @@ use bevy::{
     },
 };
 use bumpalo::Bump;
-use cgmath::{Matrix4, SquareMatrix as _, Vector3, Zero as _};
+use cgmath::{Deg, Matrix4, SquareMatrix as _, Vector3, Zero as _};
 
 use crate::{
     client::{
@@ -337,13 +337,13 @@ pub struct DeferredPassLabel;
 pub struct DeferredPass;
 
 impl ViewNode for DeferredPass {
-    type ViewQuery = (&'static ViewTarget, &'static ViewPrepassTextures);
+    type ViewQuery = (&'static ViewTarget, &'static ViewPrepassTextures, &'static Camera3d);
 
     fn run<'w>(
         &self,
         graph: &mut bevy::render::render_graph::RenderGraphContext,
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
-        (target, prepass): (&ViewTarget, &ViewPrepassTextures),
+        (target, prepass, _): (&ViewTarget, &ViewPrepassTextures, &Camera3d),
         world: &'w bevy::prelude::World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         thread_local! {
@@ -413,10 +413,10 @@ impl ViewNode for DeferredPass {
                 // if client is fully connected, draw world
                 let camera = match kind {
                     RenderConnectionKind::Demo => {
-                        cl_state.demo_camera(width as f32 / height as f32, render_vars.fov)
+                        cl_state.demo_camera(width as f32 / height as f32, Deg(render_vars.fov))
                     }
                     RenderConnectionKind::Server => {
-                        cl_state.camera(width as f32 / height as f32, render_vars.fov)
+                        cl_state.camera(width as f32 / height as f32, Deg(render_vars.fov))
                     }
                 };
 

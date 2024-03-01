@@ -1,10 +1,21 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, default};
 
+use beef::Cow;
 use bevy::prelude::*;
 
-use crate::{common::{console::{ExecResult, RegisterCmdExt as _, Registry}, net::SignOnStage, vfs::Vfs}, server::ClientState};
+use crate::common::{
+    console::{ExecResult, RegisterCmdExt as _, Registry},
+    net::SignOnStage,
+    vfs::Vfs,
+};
 
-use super::{connect, demo::DemoServer, input::{Input, InputFocus}, sound::{MixerEvent, MusicSource}, Connection, ConnectionKind, ConnectionState, DemoQueue};
+use super::{
+    connect,
+    demo::DemoServer,
+    input::{Input, InputFocus},
+    sound::{MixerEvent, MusicSource},
+    Connection, ConnectionKind, ConnectionState, DemoQueue,
+};
 
 pub fn register_commands(app: &mut App) {
     // set up overlay/ui toggles
@@ -28,13 +39,13 @@ pub fn register_commands(app: &mut App) {
 
     app.command(
         "echo",
-        |In(args), _: &mut World| {
+        |In(args): In<Box<[String]>>, _: &mut World| -> ExecResult {
             let msg = match args.len() {
-                0 => "".to_owned(),
-                _ => args.join(" "),
+                0 => Cow::from(""),
+                _ => args.join(" ").into(),
             };
 
-            msg
+            msg.into()
         },
         "TODO: Documentation",
     );
@@ -77,18 +88,18 @@ pub fn register_commands(app: &mut App) {
 
     app.command(
         "find",
-        move |In(args), cmds: Res<Registry>| {
+        move |In(args): In<Box<[String]>>, cmds: Res<Registry>| -> ExecResult {
             match args.len() {
                 1 => {
                     // Take every item starting with the target.
                     let it = cmds
-                        .names()
-                        .skip_while(move |item| !item.starts_with(&args[0]))
-                        .take_while(move |item| item.starts_with(&args[0]))
+                        .all_names()
+                        .skip_while(|item| !item.starts_with(&args[0]))
+                        .take_while(|item| item.starts_with(&args[0]))
                         .collect::<Vec<_>>()
                         .join("\n");
 
-                    it
+                    it.into()
                 }
 
                 _ => "usage: find <cvar or command>".into(),
@@ -99,7 +110,7 @@ pub fn register_commands(app: &mut App) {
 }
 
 // implements the "toggleconsole" command
-pub fn cmd_toggleconsole(In(_): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_toggleconsole(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
     let has_conn = world.contains_resource::<Connection>();
     let mut input = world.resource_mut::<Input>();
     let focus = input.focus();
@@ -116,11 +127,11 @@ pub fn cmd_toggleconsole(In(_): In<&[&str]>, world: &mut World) -> String {
             InputFocus::Menu => input.set_focus(InputFocus::Console),
         }
     }
-    String::new()
+    default()
 }
 
 // implements the "togglemenu" command
-pub fn cmd_togglemenu(In(_): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_togglemenu(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
     let has_conn = world.contains_resource::<Connection>();
     let mut input = world.resource_mut::<Input>();
     let focus = input.focus();
@@ -137,62 +148,62 @@ pub fn cmd_togglemenu(In(_): In<&[&str]>, world: &mut World) -> String {
             InputFocus::Menu => input.set_focus(InputFocus::Console),
         }
     }
-    String::new()
+    default()
 }
 
 // TODO: this will hang while connecting. ideally, input should be handled in a
 // separate thread so the OS doesn't think the client has gone unresponsive.
-pub fn cmd_connect(In(args): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_connect(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult {
     if args.len() < 1 {
         // TODO: print to console
-        return "usage: connect <server_ip>:<server_port>".to_owned();
+        return "usage: connect <server_ip>:<server_port>".into();
     }
 
-    match connect(args[0]) {
+    match connect(&*args[0]) {
         Ok((new_conn, new_state)) => {
             world.resource_mut::<Input>().set_focus(InputFocus::Game);
             world.insert_resource(new_conn);
             world.insert_resource(new_state);
-            String::new()
+            default()
         }
-        Err(e) => format!("{}", e),
+        Err(e) => format!("{}", e).into(),
     }
 }
 
-pub fn cmd_reconnect(In(args): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_reconnect(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult {
     match world.get_resource_mut::<ConnectionState>() {
         Some(mut conn) => {
             // TODO: clear client state
             *conn = ConnectionState::SignOn(SignOnStage::Prespawn);
             world.resource_mut::<Input>().set_focus(InputFocus::Game);
-            String::new()
+            default()
         }
         // TODO: log message, e.g. "can't reconnect while disconnected"
-        None => "not connected".to_string(),
+        None => "not connected".into(),
     }
 }
 
-pub fn cmd_disconnect(In(_): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_disconnect(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
     if world.remove_resource::<Connection>().is_some() {
         world.resource_mut::<Input>().set_focus(InputFocus::Console);
-        String::new()
+        default()
     } else {
-        "not connected".to_string()
+        "not connected".into()
     }
 }
 
-pub fn cmd_playdemo(In(args): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_playdemo(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult {
     if args.len() != 1 {
-        return "usage: playdemo [DEMOFILE]".to_owned();
+        return "usage: playdemo [DEMOFILE]".into();
     }
 
-    let demo = args[0];
+    let demo = &args[0];
 
     let (new_conn, new_state) = {
         let mut demo_file = match world.resource::<Vfs>().open(format!("{}.dem", demo)) {
             Ok(f) => f,
             Err(e) => {
-                return format!("{}", e);
+                return format!("{}", e).into();
             }
         };
 
@@ -200,12 +211,12 @@ pub fn cmd_playdemo(In(args): In<&[&str]>, world: &mut World) -> String {
             Ok(d) => (
                 Connection {
                     kind: ConnectionKind::Demo(d),
-                    state: ClientState::new(),
+                    state: todo!(), // ClientState::new(),
                 },
                 ConnectionState::SignOn(SignOnStage::Prespawn),
             ),
             Err(e) => {
-                return format!("{}", e);
+                return format!("{}", e).into();
             }
         }
     };
@@ -215,12 +226,12 @@ pub fn cmd_playdemo(In(args): In<&[&str]>, world: &mut World) -> String {
     world.insert_resource(new_conn);
     *world.resource_mut::<ConnectionState>() = new_state;
 
-    String::new()
+    default()
 }
 
-pub fn cmd_startdemos(In(args): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_startdemos(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult {
     if args.len() == 0 {
-        return "usage: startdemos [DEMOS]".to_owned();
+        return "usage: startdemos [DEMOS]".into();
     }
 
     let mut demo_queue = args
@@ -237,7 +248,7 @@ pub fn cmd_startdemos(In(args): In<&[&str]>, world: &mut World) -> String {
                 Ok(f) => f,
                 Err(e) => {
                     // log the error, dump the demo queue and disconnect
-                    return format!("{}", e);
+                    return format!("{}", e).into();
                 }
             };
 
@@ -250,27 +261,27 @@ pub fn cmd_startdemos(In(args): In<&[&str]>, world: &mut World) -> String {
                     ConnectionState::SignOn(SignOnStage::Prespawn),
                 ),
                 Err(e) => {
-                    return format!("{}", e);
+                    return format!("{}", e).into();
                 }
             }
         }
 
         // if there are no more demos in the queue, disconnect
-        None => return "usage: startdemos [DEMOS]".to_owned(),
+        None => return "usage: startdemos [DEMOS]".into(),
     };
 
-        world.insert_resource(DemoQueue(demo_queue));
+    world.insert_resource(DemoQueue(demo_queue));
     world.resource_mut::<Input>().set_focus(InputFocus::Game);
 
     world.insert_resource(new_conn);
     *world.resource_mut::<ConnectionState>() = new_state;
 
-    String::new()
+    default()
 }
 
-pub fn cmd_music(In(args): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_music(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult {
     if args.len() != 1 {
-        return "usage: music [TRACKNAME]".to_owned();
+        return "usage: music [TRACKNAME]".into();
     }
 
     world.send_event(MixerEvent::StartMusic(Some(MusicSource::Named(
@@ -284,20 +295,20 @@ pub fn cmd_music(In(args): In<&[&str]>, world: &mut World) -> String {
     //         format!("{}", e)
     //     }
     // }
-    String::new()
+    default()
 }
 
-pub fn cmd_music_stop(In(_): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_music_stop(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
     world.send_event(MixerEvent::StopMusic);
-    String::new()
+    default()
 }
 
-pub fn cmd_music_pause(In(_): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_music_pause(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
     world.send_event(MixerEvent::PauseMusic);
-    String::new()
+    default()
 }
 
-pub fn cmd_music_resume(In(_): In<&[&str]>, world: &mut World) -> String {
+pub fn cmd_music_resume(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
     world.send_event(MixerEvent::StartMusic(None));
-    String::new()
+    default()
 }

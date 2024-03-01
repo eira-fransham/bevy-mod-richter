@@ -31,10 +31,7 @@ use crate::{
     trace::{cmd_trace_begin, cmd_trace_end},
 };
 
-use richter::{
-    client::{input::Input, render::GraphicsState},
-    common::console::CmdRegistry,
-};
+use richter::client::input::Input;
 
 use chrono::{Duration, TimeDelta, Utc};
 
@@ -98,20 +95,20 @@ enum VideoState {
     Recording(RecordingState),
 }
 
-pub fn setup(mut cmds: ResMut<CmdRegistry>, input: Res<Input>) {
-    // set up screenshots
-    cmds.insert("screenshot", cmd_screenshot).unwrap();
+// pub fn setup(mut cmds: ResMut<CmdRegistry>, input: Res<Input>) {
+//     // set up screenshots
+//     cmds.insert("screenshot", cmd_screenshot).unwrap();
 
-    // set up frame tracing
-    // let trace = Rc::new(RefCell::new(None));
-    cmds.insert("trace_begin", cmd_trace_begin).unwrap();
-    cmds.insert("trace_end", cmd_trace_end).unwrap();
+//     // set up frame tracing
+//     // let trace = Rc::new(RefCell::new(None));
+//     cmds.insert("trace_begin", cmd_trace_begin).unwrap();
+//     cmds.insert("trace_end", cmd_trace_end).unwrap();
 
-    cmds.insert("startvideo", cmd_startvideo).unwrap();
-    cmds.insert("stopvideo", cmd_stopvideo).unwrap();
+//     cmds.insert("startvideo", cmd_startvideo).unwrap();
+//     cmds.insert("stopvideo", cmd_stopvideo).unwrap();
 
-    input.register_cmds(&mut *cmds);
-}
+//     input.register_cmds(&mut *cmds);
+// }
 
 // impl Game {
 //     pub fn new(world: &mut World) -> Result<Game, Error> {

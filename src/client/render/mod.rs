@@ -47,7 +47,7 @@ mod atlas;
 mod blit;
 mod cvars;
 mod error;
-mod palette;
+pub mod palette;
 mod pipeline;
 mod target;
 mod ui;
@@ -117,11 +117,7 @@ use crate::{
             },
         },
     },
-    common::{
-        console::{cvar_error_handler, ConsoleInput, ConsoleOutput, Registry},
-        vfs::Vfs,
-        wad::Wad,
-    },
+    common::{console::Registry, vfs::Vfs, wad::Wad},
 };
 
 use self::{
@@ -133,7 +129,6 @@ use self::{
     },
 };
 
-use cgmath::Deg;
 use failure::Error;
 
 use super::{state::ClientState, Connection, ConnectionKind, ConnectionState};
@@ -154,8 +149,6 @@ impl Plugin for RichterRenderPlugin {
         struct RenderSetup;
 
         app.add_plugins((
-            ExtractResourcePlugin::<ConsoleOutput>::default(),
-            ExtractResourcePlugin::<ConsoleInput>::default(),
             ExtractResourcePlugin::<Menu>::default(),
             ExtractResourcePlugin::<RenderState>::default(),
             ExtractResourcePlugin::<RenderResolution>::default(),
@@ -164,8 +157,9 @@ impl Plugin for RichterRenderPlugin {
             ExtractResourcePlugin::<ConnectionState>::default(),
             // TODO: Do all loading on the main thread (this is currently just for the palette and gfx wad)
             ExtractResourcePlugin::<Vfs>::default(),
-        ))
-        .add_systems(Startup, register_cvars.pipe(cvar_error_handler));
+        ));
+
+        register_cvars(app);
 
         extract_now::<Menu, Menu>(app);
         extract_now::<Vfs, Vfs>(app);
@@ -189,10 +183,10 @@ impl Plugin for RichterRenderPlugin {
                     ),
                     systems::create_menu_renderer.run_if(
                         resource_exists::<GraphicsState>
-                            .and_then(not(resource_exists::<UiRenderer>))
-                            .or_else(resource_changed::<Menu>),
+                            .and_then(not(resource_exists::<UiRenderer>).or_else(resource_changed::<Menu>))
+                            ,
                     ),
-                    extract_world_renderer.run_if(resource_changed::<ConnectionState>),
+                    extract_world_renderer.run_if(resource_changed::<ConnectionState>.and_then(resource_exists::<GraphicsState>)),
                 )
                     .chain()
                     .in_set(RenderSet::Prepare),
@@ -756,18 +750,28 @@ impl GraphicsState {
 
 #[derive(Resource, Deserialize)]
 pub struct RenderVars {
-    pub fov: Deg<f32>,
+    pub fov: f32,
     #[serde(rename(deserialize = "r_lightmap"))]
     pub lightmap: bool,
     #[serde(rename(deserialize = "r_msaa_samples"))]
-    pub msaa_samples: u8,
+    pub msaa_samples: u32,
+}
+
+impl Default for RenderVars {
+    fn default() -> Self {
+        Self {
+            fov: 90.,
+            lightmap: false,
+            msaa_samples: 1,
+        }
+    }
 }
 
 impl ExtractResource for RenderVars {
     type Source = Registry;
 
     fn extract_resource(source: &Self::Source) -> Self {
-        source.read_cvars()
+        source.read_cvars().unwrap_or_default()
     }
 }
 
@@ -775,7 +779,7 @@ mod systems {
     use super::*;
 
     pub fn create_graphics_state(
-        targets: Query<(Entity, &ViewTarget)>,
+        targets: Query<(Entity, &ViewTarget), With<Camera3d>>,
         mut commands: Commands,
         device: Res<RenderDevice>,
         queue: Res<RenderQueue>,
@@ -783,7 +787,7 @@ mod systems {
         vfs: Res<Vfs>,
         render_vars: Res<RenderVars>,
     ) {
-        let mut sample_count = render_vars.msaa_samples.unwrap_or(2.0) as u32;
+        let mut sample_count = render_vars.msaa_samples;
         if !&[2, 4].contains(&sample_count) {
             sample_count = 2;
         }
@@ -814,12 +818,14 @@ mod systems {
 
     pub fn create_menu_renderer(
         mut commands: Commands,
-        state: Res<GraphicsState>,
+        state: Option<Res<GraphicsState>>,
         vfs: Res<Vfs>,
         device: Res<RenderDevice>,
         queue: Res<RenderQueue>,
         menu: Res<Menu>,
     ) {
-        commands.insert_resource(UiRenderer::new(&*state, &*vfs, &*device, &*queue, &*menu));
+        if let Some(state) = state.as_ref() {
+            commands.insert_resource(UiRenderer::new(&*state, &*vfs, &*device, &*queue, &*menu));
+        }
     }
 }

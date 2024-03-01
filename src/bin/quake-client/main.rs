@@ -52,9 +52,8 @@ use richter::{
         RichterPlugin,
     },
     common::{
-        console::{CmdRegistry, Console, CvarRegistry, ExecResult},
+        console::ConsoleInput,
         host::{Control, Program},
-        vfs::Vfs,
     },
 };
 use structopt::StructOpt;
@@ -75,7 +74,6 @@ impl Program for ClientProgram {
     ) -> Control {
         let input: &mut Input = todo!();
         let menu: &mut Menu = todo!();
-        let console: &mut Console = todo!();
         match event {
             Event::WindowEvent {
                 event: WindowEvent::Resized(_),
@@ -85,7 +83,7 @@ impl Program for ClientProgram {
                 Control::Continue
             }
 
-            e => input.handle_event(menu, console, e).unwrap(),
+            e => input.handle_event().unwrap(),
         }
     }
 
@@ -98,19 +96,10 @@ impl Program for ClientProgram {
 
         let gfx_state: &mut GraphicsState = todo!();
         let input: &mut Input = todo!();
-        let cvars: &CvarRegistry = todo!();
-        let console: &mut Console = todo!();
         let window: &Window = todo!();
         let render_device: &RenderDevice = todo!();
 
         let size: Extent2d = window.inner_size().into();
-
-        // TODO: warn user if r_msaa_samples is invalid
-        let mut sample_count = cvars.get_value("r_msaa_samples").unwrap_or(2.0) as u32;
-        if !&[2, 4].contains(&sample_count) {
-            sample_count = 2;
-        }
-        sample_count = 1;
 
         // recreate attachments and rebuild pipelines if necessary
         // gfx_state.update(render_device, size, sample_count);
@@ -136,7 +125,7 @@ impl Program for ClientProgram {
         }
 
         // run console commands
-        console.execute(todo!());
+        // console.execute(todo!());
 
         // TODO
         // self.render();
@@ -170,8 +159,8 @@ struct Opt {
     game: Option<String>,
 }
 
-fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<Console>, ResMut<CmdRegistry>) {
-    move |mut commands, mut console, mut cmds| {
+fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<ConsoleInput>) {
+    move |mut commands, mut console| {
         // camera
         commands.spawn((
             Camera3dBundle {
@@ -194,32 +183,6 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<Console>, ResMut<CmdRegistry
                 ..default()
             },
         ));
-
-        cmds.insert_or_replace("exec", move |args, world| {
-            let vfs = world.resource::<Vfs>();
-            match args.len() {
-                // exec (filename): execute a script file
-                1 => {
-                    let mut script_file = match vfs.open(args[0]) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            return format!("Couldn't exec {}: {:?}", args[0], e).into();
-                        }
-                    };
-
-                    let mut script = String::new();
-                    script_file.read_to_string(&mut script).unwrap();
-
-                    ExecResult {
-                        extra_commands: script,
-                        ..default()
-                    }
-                }
-
-                _ => format!("exec (filename): execute a script file").into(),
-            }
-        })
-        .unwrap();
 
         console.append_text("exec quake.rc\n");
 
@@ -257,7 +220,7 @@ fn main() -> ExitCode {
             ..Default::default()
         }),
         ..Default::default()
-    }))
+    }).set(ImagePlugin::default_nearest()))
     .insert_resource(Msaa::Off)
     .add_plugins(AutoExposurePlugin)
     .add_plugins(RichterPlugin {
