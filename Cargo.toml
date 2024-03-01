@@ -8,6 +8,7 @@ resolver = "2"
 [dependencies]
 arrayvec = "0.7"
 bitflags = "1.0.1"
+beef = "0.5"
 bevy = { version = "0.13", features = ["vorbis", "wav", "flac"] }
 bevy_mod_auto_exposure = { git = "https://github.com/Kurble/bevy_mod_auto_exposure.git" }
 bevy_mod_debugdump = "0.10"
@@ -31,6 +32,7 @@ rand = { version = "0.7", features = ["small_rng"] }
 regex = "0.2.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde-lexpr = { git = "https://github.com/eira-fransham/lexpr.git" }
 shaderc = "0.6.2"
 slab = "0.4"
 structopt = "0.3.12"

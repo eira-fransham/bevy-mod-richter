@@ -21,18 +21,13 @@ use crate::{
         },
     },
     common::{
-        console::{Console, ConsoleInput, ConsoleOutput, CvarRegistry},
+        console::{ConsoleInput, ConsoleOutput},
         vfs::Vfs,
     },
 };
 
 use bevy::{
-    ecs::{
-        component::Component,
-        system::Resource,
-        world::{FromWorld, World},
-    },
-    prelude::default,
+    prelude::*,
     render::{
         render_graph::{RenderLabel, ViewNode},
         renderer::{RenderDevice, RenderQueue},
@@ -42,7 +37,7 @@ use bevy::{
 use cgmath::{Matrix4, Vector2};
 use chrono::Duration;
 
-use super::{Fov, RenderResolution, RenderState, WorldRenderer};
+use super::{RenderResolution, RenderState, RenderVars, WorldRenderer};
 
 pub fn screen_space_vertex_translate(
     display_w: u32,
@@ -135,7 +130,6 @@ impl UiRenderer {
         state: &'this GraphicsState,
         queue: &'a RenderQueue,
         pass: &'a mut wgpu::RenderPass<'this>,
-        cvars: &'a CvarRegistry,
         target_size: Extent2d,
         time: Duration,
         ui_state: &'a UiState<'this>,
@@ -149,7 +143,7 @@ impl UiRenderer {
 
         if let Some(hstate) = hud_state {
             self.hud_renderer
-                .generate_commands(hstate, time, cvars, quad_commands, glyph_commands);
+                .generate_commands(hstate, time, quad_commands, glyph_commands);
         }
 
         if let Some(o) = overlay {
@@ -204,7 +198,6 @@ impl ViewNode for UiPass {
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let gfx_state = world.resource::<GraphicsState>();
         let ui_renderer = world.resource::<UiRenderer>();
-        let cvars = world.resource::<CvarRegistry>();
         let renderer = world.get_resource::<WorldRenderer>();
         let conn = world.get_resource::<RenderState>();
         let queue = world.resource::<RenderQueue>();
@@ -217,7 +210,6 @@ impl ViewNode for UiPass {
         let console_in = world.get_resource::<ConsoleInput>();
         let menu = world.get_resource::<Menu>();
         let focus = world.resource::<InputFocus>();
-        let fov = world.resource::<Fov>();
 
         // quad_commands must outlive final pass
         let mut quad_commands = Vec::new();
@@ -288,7 +280,6 @@ impl ViewNode for UiPass {
                     &*gfx_state,
                     queue,
                     &mut final_pass,
-                    cvars,
                     Extent2d { width, height },
                     // use client time when in game, renderer time otherwise
                     elapsed,

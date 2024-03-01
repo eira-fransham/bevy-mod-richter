@@ -55,6 +55,7 @@ mod uniform;
 mod warp;
 mod world;
 
+use beef::Cow;
 use bevy::{
     app::Plugin,
     core_pipeline::{
@@ -83,6 +84,7 @@ pub use palette::Palette;
 use parking_lot::RwLock;
 pub use pipeline::Pipeline;
 pub use postprocess::PostProcessRenderer;
+use serde::Deserialize;
 pub use target::{PreferredFormat, RenderTarget, RenderTargetResolve};
 pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
 pub use world::{
@@ -91,7 +93,6 @@ pub use world::{
 };
 
 use std::{
-    borrow::Cow,
     cell::RefCell,
     mem::size_of,
     num::NonZeroU64,
@@ -117,7 +118,7 @@ use crate::{
         },
     },
     common::{
-        console::{cvar_error_handler, ConsoleInput, ConsoleOutput, CvarRegistry},
+        console::{cvar_error_handler, ConsoleInput, ConsoleOutput, Registry},
         vfs::Vfs,
         wad::Wad,
     },
@@ -132,8 +133,7 @@ use self::{
     },
 };
 
-use bumpalo::Bump;
-use cgmath::{Deg, Vector3, Zero};
+use cgmath::Deg;
 use failure::Error;
 
 use super::{state::ClientState, Connection, ConnectionKind, ConnectionState};
@@ -156,19 +156,17 @@ impl Plugin for RichterRenderPlugin {
         app.add_plugins((
             ExtractResourcePlugin::<ConsoleOutput>::default(),
             ExtractResourcePlugin::<ConsoleInput>::default(),
-            ExtractResourcePlugin::<CvarRegistry>::default(),
             ExtractResourcePlugin::<Menu>::default(),
             ExtractResourcePlugin::<RenderState>::default(),
             ExtractResourcePlugin::<RenderResolution>::default(),
             ExtractResourcePlugin::<InputFocus>::default(),
-            ExtractResourcePlugin::<Fov>::default(),
+            ExtractResourcePlugin::<RenderVars>::default(),
             ExtractResourcePlugin::<ConnectionState>::default(),
             // TODO: Do all loading on the main thread (this is currently just for the palette and gfx wad)
             ExtractResourcePlugin::<Vfs>::default(),
         ))
         .add_systems(Startup, register_cvars.pipe(cvar_error_handler));
 
-        extract_now::<CvarRegistry, CvarRegistry>(app);
         extract_now::<Menu, Menu>(app);
         extract_now::<Vfs, Vfs>(app);
         extract_now::<ConnectionState, ConnectionState>(app);
@@ -756,8 +754,22 @@ impl GraphicsState {
     }
 }
 
-#[derive(Resource)]
-pub struct Fov(pub Deg<f32>);
+#[derive(Resource, Deserialize)]
+pub struct RenderVars {
+    pub fov: Deg<f32>,
+    #[serde(rename(deserialize = "r_lightmap"))]
+    pub lightmap: bool,
+    #[serde(rename(deserialize = "r_msaa_samples"))]
+    pub msaa_samples: u8,
+}
+
+impl ExtractResource for RenderVars {
+    type Source = Registry;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        source.read_cvars()
+    }
+}
 
 mod systems {
     use super::*;
@@ -768,10 +780,10 @@ mod systems {
         device: Res<RenderDevice>,
         queue: Res<RenderQueue>,
         render_resolution: Res<RenderResolution>,
-        cvars: Res<CvarRegistry>,
         vfs: Res<Vfs>,
+        render_vars: Res<RenderVars>,
     ) {
-        let mut sample_count = cvars.get_value("r_msaa_samples").unwrap_or(2.0) as u32;
+        let mut sample_count = render_vars.msaa_samples.unwrap_or(2.0) as u32;
         if !&[2, 4].contains(&sample_count) {
             sample_count = 2;
         }

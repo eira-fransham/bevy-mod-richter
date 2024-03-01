@@ -23,7 +23,6 @@ use std::rc::Rc;
 
 use crate::{
     common::{
-        console::CvarRegistry,
         engine::{duration_from_f32, duration_to_f32},
         math::Hyperplane,
         model::Model,
@@ -163,15 +162,9 @@ pub struct SessionLoading {
 }
 
 impl SessionLoading {
-    pub fn new(
-        vfs: &Vfs,
-        cvars: &mut CvarRegistry,
-        progs: LoadProgs,
-        models: Vec<Model>,
-        entmap: String,
-    ) -> SessionLoading {
+    pub fn new(vfs: &Vfs, progs: LoadProgs, models: Vec<Model>, entmap: String) -> SessionLoading {
         SessionLoading {
-            level: LevelState::new(progs, models, entmap, vfs, cvars),
+            level: LevelState::new(progs, models, entmap, vfs),
         }
     }
 
@@ -214,7 +207,6 @@ impl Session {
     pub fn new(
         max_clients: usize,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
         progs: LoadProgs,
         models: Vec<Model>,
         entmap: String,
@@ -222,7 +214,7 @@ impl Session {
         Session {
             persist: SessionPersistent::new(max_clients),
             state: SessionState::Loading(SessionLoading {
-                level: LevelState::new(progs, models, entmap, vfs, cvars),
+                level: LevelState::new(progs, models, entmap, vfs),
             }),
         }
     }
@@ -322,13 +314,7 @@ pub struct LevelState {
 }
 
 impl LevelState {
-    pub fn new(
-        progs: LoadProgs,
-        models: Vec<Model>,
-        entmap: String,
-        vfs: &Vfs,
-        cvars: &mut CvarRegistry,
-    ) -> LevelState {
+    pub fn new(progs: LoadProgs, models: Vec<Model>, entmap: String, vfs: &Vfs) -> LevelState {
         let LoadProgs {
             cx,
             globals,
@@ -365,7 +351,7 @@ impl LevelState {
         };
 
         for entity in entity_list {
-            level.spawn_entity_from_map(entity, vfs, cvars).unwrap();
+            level.spawn_entity_from_map(entity, vfs).unwrap();
         }
 
         level
@@ -401,12 +387,7 @@ impl LevelState {
     }
 
     /// Execute a QuakeC function in the VM.
-    pub fn execute_program(
-        &mut self,
-        f: FunctionId,
-        vfs: &Vfs,
-        cvars: &mut CvarRegistry,
-    ) -> Result<(), ProgsError> {
+    pub fn execute_program(&mut self, f: FunctionId, vfs: &Vfs) -> Result<(), ProgsError> {
         let mut runaway = 100000;
 
         let exit_depth = self.cx.call_stack_depth();
@@ -481,7 +462,7 @@ impl LevelState {
                         use progs::functions::BuiltinFunctionId::*;
                         match b {
                             MakeVectors => self.globals.make_vectors()?,
-                            SetOrigin => self.builtin_set_origin(vfs, cvars)?,
+                            SetOrigin => self.builtin_set_origin(vfs)?,
                             SetModel => self.builtin_set_model()?,
                             SetSize => self.builtin_set_size()?,
                             Break => unimplemented!(),
@@ -492,7 +473,7 @@ impl LevelState {
                             ObjError => unimplemented!(),
                             VLen => self.globals.builtin_v_len()?,
                             VecToYaw => self.globals.builtin_vec_to_yaw()?,
-                            Spawn => self.builtin_spawn(vfs, cvars)?,
+                            Spawn => self.builtin_spawn(vfs)?,
                             Remove => self.builtin_remove()?,
                             TraceLine => unimplemented!(),
                             CheckClient => unimplemented!(),
@@ -512,7 +493,7 @@ impl LevelState {
                             EPrint => unimplemented!(),
                             WalkMove => unimplemented!(),
 
-                            DropToFloor => self.builtin_drop_to_floor(vfs, cvars)?,
+                            DropToFloor => self.builtin_drop_to_floor(vfs)?,
                             LightStyle => self.builtin_light_style()?,
                             RInt => self.globals.builtin_r_int()?,
                             Floor => self.globals.builtin_floor()?,
@@ -521,7 +502,7 @@ impl LevelState {
                             PointContents => unimplemented!(),
                             FAbs => self.globals.builtin_f_abs()?,
                             Aim => unimplemented!(),
-                            Cvar => self.builtin_cvar(cvars)?,
+                            Cvar => self.builtin_cvar(todo!())?,
                             LocalCmd => unimplemented!(),
                             NextEnt => unimplemented!(),
                             Particle => unimplemented!(),
@@ -539,7 +520,7 @@ impl LevelState {
                             PrecacheFile => unimplemented!(),
                             MakeStatic => unimplemented!(),
                             ChangeLevel => unimplemented!(),
-                            CvarSet => self.builtin_cvar_set(cvars)?,
+                            CvarSet => self.builtin_cvar_set(todo!())?,
                             CenterPrint => unimplemented!(),
                             AmbientSound => self.builtin_ambient_sound()?,
                             PrecacheModel2 => unimplemented!(),
@@ -618,17 +599,12 @@ impl LevelState {
         Ok(())
     }
 
-    pub fn execute_program_by_name<S>(
-        &mut self,
-        name: S,
-        vfs: &Vfs,
-        cvars: &mut CvarRegistry,
-    ) -> Result<(), ProgsError>
+    pub fn execute_program_by_name<S>(&mut self, name: S, vfs: &Vfs) -> Result<(), ProgsError>
     where
         S: AsRef<str>,
     {
         let func_id = self.cx.find_function_by_name(name)?;
-        self.execute_program(func_id, vfs, cvars)?;
+        self.execute_program(func_id, vfs)?;
         Ok(())
     }
 
@@ -641,25 +617,20 @@ impl LevelState {
         ent_id: EntityId,
         touch_triggers: bool,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<(), ProgsError> {
         self.world.link_entity(ent_id)?;
 
         if touch_triggers {
-            self.touch_triggers(ent_id, vfs, cvars)?;
+            self.touch_triggers(ent_id, vfs)?;
         }
 
         Ok(())
     }
 
-    pub fn spawn_entity(
-        &mut self,
-        vfs: &Vfs,
-        cvars: &mut CvarRegistry,
-    ) -> Result<EntityId, ProgsError> {
+    pub fn spawn_entity(&mut self, vfs: &Vfs) -> Result<EntityId, ProgsError> {
         let ent_id = self.world.alloc_uninitialized()?;
 
-        self.link_entity(ent_id, false, vfs, cvars)?;
+        self.link_entity(ent_id, false, vfs)?;
 
         Ok(ent_id)
     }
@@ -668,7 +639,6 @@ impl LevelState {
         &mut self,
         map: FxHashMap<&str, &str>,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<EntityId, ProgsError> {
         let classname = match map.get("classname") {
             Some(c) => c.to_owned(),
@@ -683,9 +653,9 @@ impl LevelState {
         self.globals
             .put_entity_id(ent_id, GlobalAddrEntity::Self_ as i16)?;
 
-        self.execute_program_by_name(classname, vfs, cvars)?;
+        self.execute_program_by_name(classname, vfs)?;
 
-        self.link_entity(ent_id, true, vfs, cvars)?;
+        self.link_entity(ent_id, true, vfs)?;
 
         Ok(ent_id)
     }
@@ -695,12 +665,11 @@ impl LevelState {
         ent_id: EntityId,
         origin: Vector3<f32>,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<(), ProgsError> {
         self.world
             .entity_mut(ent_id)?
             .store(FieldAddrVector::Origin, origin.into())?;
-        self.link_entity(ent_id, false, vfs, cvars)?;
+        self.link_entity(ent_id, false, vfs)?;
 
         Ok(())
     }
@@ -738,7 +707,6 @@ impl LevelState {
         ent_id: EntityId,
         frame_time: Duration,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<(), ProgsError> {
         let ent = self.world.entity_mut(ent_id)?;
         let think_time = duration_from_f32(ent.load(FieldAddrFloat::NextThink)?);
@@ -757,7 +725,7 @@ impl LevelState {
             .store(GlobalAddrFloat::Time, duration_to_f32(think_time))?;
         self.globals.store(GlobalAddrEntity::Self_, ent_id)?;
         self.globals.store(GlobalAddrEntity::Other, EntityId(0))?;
-        self.execute_program(think, vfs, cvars)?;
+        self.execute_program(think, vfs)?;
 
         Ok(())
     }
@@ -767,7 +735,6 @@ impl LevelState {
         clients: &ClientSlots,
         frame_time: Duration,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<(), ProgsError> {
         self.globals.store(GlobalAddrEntity::Self_, EntityId(0))?;
         self.globals.store(GlobalAddrEntity::Other, EntityId(0))?;
@@ -777,7 +744,7 @@ impl LevelState {
         let start_frame = self
             .globals
             .function_id(GlobalAddrFunction::StartFrame as i16)?;
-        self.execute_program(start_frame, vfs, cvars)?;
+        self.execute_program(start_frame, vfs)?;
 
         // TODO: don't alloc
         let mut ent_ids = Vec::new();
@@ -797,23 +764,23 @@ impl LevelState {
                 // Quake solves this by using a linked list and always spawning
                 // at the end so that newly spawned entities always have physics
                 // run this frame.
-                self.link_entity(ent_id, true, vfs, cvars)?;
+                self.link_entity(ent_id, true, vfs)?;
             }
 
             let max_clients = clients.limit();
             if ent_id.0 != 0 && ent_id.0 < max_clients {
-                self.physics_player(clients, ent_id, cvars)?;
+                self.physics_player(clients, ent_id)?;
             } else {
                 match self.world.entity(ent_id).move_kind()? {
                     MoveKind::Walk => {
                         todo!("MoveKind::Walk");
                     }
 
-                    MoveKind::Push => self.physics_push(ent_id, frame_time, vfs, cvars)?,
+                    MoveKind::Push => self.physics_push(ent_id, frame_time, vfs)?,
                     // No actual physics for this entity, but still let it think.
-                    MoveKind::None => self.think(ent_id, frame_time, vfs, cvars)?,
-                    MoveKind::NoClip => self.physics_noclip(ent_id, frame_time, vfs, cvars)?,
-                    MoveKind::Step => self.physics_step(ent_id, frame_time, vfs, cvars)?,
+                    MoveKind::None => self.think(ent_id, frame_time, vfs)?,
+                    MoveKind::NoClip => self.physics_noclip(ent_id, frame_time, vfs)?,
+                    MoveKind::Step => self.physics_step(ent_id, frame_time, vfs)?,
 
                     // all airborne entities have the same physics
                     _ => unimplemented!(),
@@ -835,7 +802,6 @@ impl LevelState {
         &mut self,
         clients: &ClientSlots,
         ent_id: EntityId,
-        cvars: &CvarRegistry,
     ) -> Result<(), ProgsError> {
         let client_id = ent_id.0.checked_sub(1).ok_or_else(|| {
             ProgsError::with_msg(format!("Invalid client entity ID: {:?}", ent_id))
@@ -847,7 +813,8 @@ impl LevelState {
         }
 
         let ent = self.world.entity_mut(ent_id)?;
-        ent.limit_velocity(cvars.get_value("sv_maxvelocity").unwrap())?;
+        // ent.limit_velocity(cvars.get_value("sv_maxvelocity").unwrap())?;
+        ent.limit_velocity(todo!())?;
         unimplemented!();
     }
 
@@ -856,7 +823,6 @@ impl LevelState {
         ent_id: EntityId,
         frame_time: Duration,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<(), ProgsError> {
         let ent = self.world.entity_mut(ent_id)?;
 
@@ -891,7 +857,7 @@ impl LevelState {
                 .put_entity_id(EntityId(0), GlobalAddrEntity::Other as i16)?;
 
             let think = ent.function_id(FieldAddrFunctionId::Think as i16)?;
-            self.execute_program(think, vfs, cvars)?;
+            self.execute_program(think, vfs)?;
         }
 
         Ok(())
@@ -902,10 +868,9 @@ impl LevelState {
         ent_id: EntityId,
         frame_time: Duration,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<(), ProgsError> {
         // Let entity think, then move if it didn't remove itself.
-        self.think(ent_id, frame_time, vfs, cvars)?;
+        self.think(ent_id, frame_time, vfs)?;
 
         if let Ok(ent) = self.world.entity_mut(ent_id) {
             let frame_time_f = duration_to_f32(frame_time);
@@ -929,7 +894,6 @@ impl LevelState {
         ent_id: EntityId,
         frame_time: Duration,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<(), ProgsError> {
         let in_freefall = !self
             .world
@@ -938,7 +902,7 @@ impl LevelState {
             .intersects(EntityFlags::ON_GROUND | EntityFlags::FLY | EntityFlags::IN_WATER);
 
         if in_freefall {
-            let sv_gravity = cvars.get_value("sv_gravity").unwrap();
+            let sv_gravity = todo!(); // cvars.get_value("sv_gravity").unwrap();
             let vel: Vector3<f32> = self
                 .world
                 .entity(ent_id)
@@ -952,14 +916,14 @@ impl LevelState {
                 .entity_mut(ent_id)?
                 .apply_gravity(sv_gravity, frame_time)?;
 
-            let sv_maxvelocity = cvars.get_value("sv_maxvelocity").unwrap();
+            let sv_maxvelocity = todo!(); // cvars.get_value("sv_maxvelocity").unwrap();
             self.world
                 .entity_mut(ent_id)?
                 .limit_velocity(sv_maxvelocity)?;
 
             // Move the entity and relink it.
-            self.move_ballistic(frame_time, ent_id, vfs, cvars)?;
-            self.link_entity(ent_id, true, vfs, cvars)?;
+            self.move_ballistic(frame_time, ent_id, vfs)?;
+            self.link_entity(ent_id, true, vfs)?;
 
             let ent = self.world.entity_mut(ent_id)?;
 
@@ -969,7 +933,7 @@ impl LevelState {
             }
         }
 
-        self.think(ent_id, frame_time, vfs, cvars)?;
+        self.think(ent_id, frame_time, vfs)?;
 
         todo!("SV_CheckWaterTransition");
 
@@ -1007,7 +971,6 @@ impl LevelState {
         sim_time: Duration,
         ent_id: EntityId,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<(CollisionFlags, Option<Trace>), ProgsError> {
         let mut sim_time_f = duration_to_f32(sim_time);
 
@@ -1087,7 +1050,7 @@ impl LevelState {
                 out_trace = Some(trace.clone());
             }
 
-            self.impact_entities(ent_id, hit_entity, vfs, cvars)?;
+            self.impact_entities(ent_id, hit_entity, vfs)?;
             if !self.world.entity_exists(ent_id) {
                 // Entity removed by touch function.
                 break;
@@ -1150,7 +1113,6 @@ impl LevelState {
         &mut self,
         ent_id: EntityId,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<bool, ProgsError> {
         debug!("Finding floor for entity with ID {}", ent_id.0);
         let origin = self.world.entity(ent_id).origin()?;
@@ -1175,7 +1137,7 @@ impl LevelState {
             self.world
                 .entity_mut(ent_id)?
                 .put_vector(trace.end_point().into(), FieldAddrVector::Origin as i16)?;
-            self.link_entity(ent_id, false, vfs, cvars)?;
+            self.link_entity(ent_id, false, vfs)?;
             self.world
                 .entity_mut(ent_id)?
                 .add_flags(EntityFlags::ON_GROUND)?;
@@ -1187,12 +1149,7 @@ impl LevelState {
         }
     }
 
-    pub fn touch_triggers(
-        &mut self,
-        ent_id: EntityId,
-        vfs: &Vfs,
-        cvars: &mut CvarRegistry,
-    ) -> Result<(), ProgsError> {
+    pub fn touch_triggers(&mut self, ent_id: EntityId, vfs: &Vfs) -> Result<(), ProgsError> {
         // TODO: alloc once
         let mut touched = Vec::new();
         self.world.list_touched_triggers(&mut touched, ent_id, 0)?;
@@ -1210,7 +1167,7 @@ impl LevelState {
 
             self.globals.store(GlobalAddrEntity::Self_, trigger_id)?;
             self.globals.store(GlobalAddrEntity::Other, ent_id)?;
-            self.execute_program(trigger_touch, vfs, cvars)?;
+            self.execute_program(trigger_touch, vfs)?;
         }
 
         // Restore state.
@@ -1226,7 +1183,6 @@ impl LevelState {
         ent_a: EntityId,
         ent_b: EntityId,
         vfs: &Vfs,
-        cvars: &mut CvarRegistry,
     ) -> Result<(), ProgsError> {
         let restore_self = self.globals.load(GlobalAddrEntity::Self_)?;
         let restore_other = self.globals.load(GlobalAddrEntity::Other)?;
@@ -1240,7 +1196,7 @@ impl LevelState {
         if touch_a.0 != 0 && solid_a != EntitySolid::Not {
             self.globals.store(GlobalAddrEntity::Self_, ent_a)?;
             self.globals.store(GlobalAddrEntity::Other, ent_b)?;
-            self.execute_program(touch_a, vfs, cvars)?;
+            self.execute_program(touch_a, vfs)?;
         }
 
         // Set up and run Entity B's touch function.
@@ -1249,7 +1205,7 @@ impl LevelState {
         if touch_b.0 != 0 && solid_b != EntitySolid::Not {
             self.globals.store(GlobalAddrEntity::Self_, ent_b)?;
             self.globals.store(GlobalAddrEntity::Other, ent_a)?;
-            self.execute_program(touch_b, vfs, cvars)?;
+            self.execute_program(touch_b, vfs)?;
         }
 
         self.globals.store(GlobalAddrEntity::Self_, restore_self)?;
@@ -1504,14 +1460,10 @@ impl LevelState {
 
     // QuakeC built-in functions ==============================================
 
-    pub fn builtin_set_origin(
-        &mut self,
-        vfs: &Vfs,
-        cvars: &mut CvarRegistry,
-    ) -> Result<(), ProgsError> {
+    pub fn builtin_set_origin(&mut self, vfs: &Vfs) -> Result<(), ProgsError> {
         let e_id = self.globals.entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
         let origin = self.globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
-        self.set_entity_origin(e_id, Vector3::from(origin), vfs, cvars)?;
+        self.set_entity_origin(e_id, Vector3::from(origin), vfs)?;
 
         Ok(())
     }
@@ -1541,8 +1493,8 @@ impl LevelState {
         Ok(())
     }
 
-    pub fn builtin_spawn(&mut self, vfs: &Vfs, cvars: &mut CvarRegistry) -> Result<(), ProgsError> {
-        let ent_id = self.spawn_entity(vfs, cvars)?;
+    pub fn builtin_spawn(&mut self, vfs: &Vfs) -> Result<(), ProgsError> {
+        let ent_id = self.spawn_entity(vfs)?;
         self.globals
             .put_entity_id(ent_id, GLOBAL_ADDR_RETURN as i16)?;
 
@@ -1591,13 +1543,9 @@ impl LevelState {
         Ok(())
     }
 
-    pub fn builtin_drop_to_floor(
-        &mut self,
-        vfs: &Vfs,
-        cvars: &mut CvarRegistry,
-    ) -> Result<(), ProgsError> {
+    pub fn builtin_drop_to_floor(&mut self, vfs: &Vfs) -> Result<(), ProgsError> {
         let ent_id = self.globals.entity_id(GlobalAddrEntity::Self_ as i16)?;
-        let hit_floor = self.drop_entity_to_floor(ent_id, vfs, cvars)?;
+        let hit_floor = self.drop_entity_to_floor(ent_id, vfs)?;
         self.globals
             .put_float(hit_floor as u32 as f32, GLOBAL_ADDR_RETURN as i16)?;
 
@@ -1615,17 +1563,17 @@ impl LevelState {
         Ok(())
     }
 
-    pub fn builtin_cvar(&mut self, cvars: &CvarRegistry) -> Result<(), ProgsError> {
+    pub fn builtin_cvar(&mut self) -> Result<(), ProgsError> {
         let s_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
         let strs = &self.string_table;
         let s = strs.get(s_id).unwrap();
-        let f = cvars.get_value(&*s).unwrap();
+        let f = todo!(); // cvars.get_value(&*s).unwrap();
         self.globals.put_float(f, GLOBAL_ADDR_RETURN as i16)?;
 
         Ok(())
     }
 
-    pub fn builtin_cvar_set(&mut self, cvars: &mut CvarRegistry) -> Result<(), ProgsError> {
+    pub fn builtin_cvar_set(&mut self) -> Result<(), ProgsError> {
         let strs = &self.string_table;
 
         let var_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
@@ -1633,7 +1581,8 @@ impl LevelState {
         let val_id = self.globals.string_id(GLOBAL_ADDR_ARG_1 as i16)?;
         let val = strs.get(val_id).unwrap();
 
-        cvars.set(&*var, &*val).unwrap();
+        // TODO: Re-implement server-side cvar functionality
+        // cvars.set(&*var, &*val).unwrap();
 
         Ok(())
     }

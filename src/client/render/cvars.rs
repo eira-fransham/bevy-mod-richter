@@ -18,13 +18,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use bevy::ecs::system::ResMut;
+use bevy::prelude::*;
 
-use crate::common::console::{ConsoleError, CvarRegistry};
+use crate::common::console::RegisterCmdExt;
 
-pub fn register_cvars(mut cvars: ResMut<CvarRegistry>) -> Result<(), ConsoleError> {
-    cvars.register("r_lightmap", "0")?;
-    cvars.register("r_msaa_samples", "1")?;
-
-    Ok(())
+pub fn register_cvars(app: &mut App) {
+    // TODO: Implement this
+    app.cvar(
+        "r_lightmap",
+        "0",
+        "only render the lightmap, and not the main texture",
+    );
+    // TODO: Re-implement MSAA
+    app.cvar(
+        "r_msaa_samples",
+        "1",
+        "set the multi-sampled anti-aliasing sample count",
+    );
 }

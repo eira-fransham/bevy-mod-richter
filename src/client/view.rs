@@ -11,6 +11,7 @@ use crate::{
 use super::IntermissionKind;
 use cgmath::{Angle as _, Deg, InnerSpace as _, Vector3, Zero as _};
 use chrono::Duration;
+use serde::Deserialize;
 
 #[derive(Clone)]
 pub struct View {
@@ -137,8 +138,8 @@ impl View {
         self.input_angles.pitch += Deg(speed * cl_pitchspeed * (lookdown_factor - lookup_factor));
 
         if mlook {
-            let pitch_factor = mouse_vars.m_pitch * mouse_vars.sensitivity;
-            let yaw_factor = mouse_vars.m_yaw * mouse_vars.sensitivity;
+            let pitch_factor = mouse_vars.pitch_factor * mouse_vars.sensitivity;
+            let yaw_factor = mouse_vars.yaw_factor * mouse_vars.sensitivity;
             self.input_angles.pitch += Deg(game_input.mouse_delta().1 as f32 * pitch_factor);
             self.input_angles.yaw -= Deg(game_input.mouse_delta().0 as f32 * yaw_factor);
         }
@@ -162,7 +163,7 @@ impl View {
         src_origin: Vector3<f32>,
         vars: KickVars,
     ) {
-        self.damage_time = time + duration_from_f32(vars.v_kicktime);
+        self.damage_time = time + duration_from_f32(vars.kick_time);
 
         // dmg_factor is at most 10.0
         let dmg_factor = (armor_dmg + health_dmg).min(20.0) / 2.0;
@@ -170,10 +171,10 @@ impl View {
         let rot = view_ent_angles.mat3_quake();
 
         let roll_factor = dmg_vector.dot(-rot.x);
-        self.damage_angles.roll = Deg(dmg_factor * roll_factor * vars.v_kickroll);
+        self.damage_angles.roll = Deg(dmg_factor * roll_factor * vars.kick_roll);
 
         let pitch_factor = dmg_vector.dot(rot.y);
-        self.damage_angles.pitch = Deg(dmg_factor * pitch_factor * vars.v_kickpitch);
+        self.damage_angles.pitch = Deg(dmg_factor * pitch_factor * vars.kick_pitch);
     }
 
     pub fn calc_final_angles(
@@ -191,7 +192,7 @@ impl View {
             yaw: Deg(0.0),
         };
 
-        let kick_factor = duration_to_f32(self.damage_time - time).max(0.0) / kick_vars.v_kicktime;
+        let kick_factor = duration_to_f32(self.damage_time - time).max(0.0) / kick_vars.kick_time;
         let damage_angles = self.damage_angles * kick_factor;
 
         // always idle during intermission
@@ -232,18 +233,24 @@ impl View {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 pub struct MouseVars {
-    pub m_pitch: f32,
-    pub m_yaw: f32,
+    #[serde(rename(deserialize = "m_pitch"))]
+    pub pitch_factor: f32,
+    #[serde(rename(deserialize = "m_yaw"))]
+    pub yaw_factor: f32,
+    #[serde(rename(deserialize = "sensitivity"))]
     pub sensitivity: f32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 pub struct KickVars {
-    pub v_kickpitch: f32,
-    pub v_kickroll: f32,
-    pub v_kicktime: f32,
+    #[serde(rename(deserialize = "v_kickpitch"))]
+    pub kick_pitch: f32,
+    #[serde(rename(deserialize = "v_kickroll"))]
+    pub kick_roll: f32,
+    #[serde(rename(deserialize = "v_kicktime"))]
+    pub kick_time: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

@@ -18,6 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod commands;
 mod cvars;
 pub mod demo;
 pub mod entity;
@@ -31,8 +32,8 @@ pub mod view;
 
 pub use self::cvars::register_cvars;
 use self::{
-    render::{Fov, RenderResolution, RichterRenderPlugin},
-    sound::{MixerEvent, MusicSource, RichterSoundPlugin},
+    render::{RenderResolution, RichterRenderPlugin},
+    sound::{MixerEvent, RichterSoundPlugin},
 };
 
 use std::{collections::VecDeque, io::BufReader, net::ToSocketAddrs, path::PathBuf, sync::Arc};
@@ -48,19 +49,12 @@ use crate::{
         view::{IdleVars, KickVars, MouseVars, RollVars},
     },
     common::{
-        self,
-        console::{
-            cvar_error_handler, CmdRegistry, Console, ConsoleError, ConsoleOutput, CvarRegistry,
-        },
-        engine,
-        model::{Model, ModelError},
-        net::{
+        self, console::{ConsoleError, RichterConsolePlugin}, engine, model::{Model, ModelError}, net::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
-            ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState, GameType, NetError,
-            PlayerColor, ServerCmd, SignOnStage,
-        },
-        vfs::{Vfs, VfsError},
+            BlockingMode, ClientCmd, ClientStat, ColorShift, EntityEffects, EntityState, GameType,
+            NetError, PlayerColor, QSocket, ServerCmd, SignOnStage,
+        }, vfs::{Vfs, VfsError}
     },
 };
 use fxhash::FxHashMap;
@@ -78,11 +72,11 @@ use bevy::{
     time::{Time, Virtual},
     window::PrimaryWindow,
 };
-use cgmath::Deg;
 use chrono::Duration;
 use input::InputFocus;
 use menu::Menu;
 use num_derive::FromPrimitive;
+use serde::Deserialize;
 use sound::SoundError;
 use thiserror::Error;
 use view::BobVars;
@@ -118,7 +112,7 @@ pub struct RichterGameSettings {
 
 impl Plugin for RichterPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
-        app.insert_resource(RichterGameSettings {
+        let app = app.insert_resource(RichterGameSettings {
             base_dir: self
                 .base_dir
                 .clone()
@@ -127,22 +121,11 @@ impl Plugin for RichterPlugin {
         })
         .insert_resource(self.main_menu.clone())
         .init_resource::<Vfs>()
-        .init_resource::<CmdRegistry>()
-        .init_resource::<CvarRegistry>()
-        .init_resource::<Console>()
         .init_resource::<Input>()
         .init_resource::<MusicPlayer>()
         .init_resource::<DemoQueue>()
         // TODO: Use bevy's state system
         .insert_resource(ConnectionState::SignOn(SignOnStage::Not))
-        .add_systems(
-            PreStartup,
-            (
-                register_cvars.pipe(cvar_error_handler),
-                systems::init_client,
-            ),
-        )
-        .add_systems(Main, systems::run_console)
         .add_systems(
             Main,
             (
@@ -155,14 +138,15 @@ impl Plugin for RichterPlugin {
                     // TODO: Error handling
                     let _ = res;
                 }),
-                systems::clear_output,
             ),
         )
+        .add_plugins(RichterConsolePlugin)
         .add_plugins(RichterRenderPlugin)
         .add_plugins(RichterSoundPlugin);
     }
 
     fn finish(&self, app: &mut bevy::prelude::App) {
+        register_cvars(app);
         app.init_resource::<RenderResolution>();
     }
 }
@@ -224,14 +208,23 @@ impl From<ConsoleError> for ClientError {
     }
 }
 
+#[derive(Deserialize)]
 pub struct MoveVars {
+    #[serde(rename(deserialize = "cl_anglespeedkey"))]
     cl_anglespeedkey: f32,
+    #[serde(rename(deserialize = "cl_pitchspeed"))]
     cl_pitchspeed: f32,
+    #[serde(rename(deserialize = "cl_yawspeed"))]
     cl_yawspeed: f32,
+    #[serde(rename(deserialize = "cl_sidespeed"))]
     cl_sidespeed: f32,
+    #[serde(rename(deserialize = "cl_upspeed"))]
     cl_upspeed: f32,
+    #[serde(rename(deserialize = "cl_forwardspeed"))]
     cl_forwardspeed: f32,
+    #[serde(rename(deserialize = "cl_backspeed"))]
     cl_backspeed: f32,
+    #[serde(rename(deserialize = "cl_movespeedkey"))]
     cl_movespeedkey: f32,
 }
 
@@ -284,12 +277,11 @@ enum ConnectionState {
 }
 
 /// Possible targets that a client can be connected to.
-#[derive(Clone)]
 enum ConnectionKind {
     /// A regular Quake server.
     Server {
         /// The [`QSocket`](crate::net::QSocket) used to communicate with the server.
-        qsock: (), // QSocket,
+        qsock: QSocket,
 
         /// The client's packet composition buffer.
         compose: Vec<u8>,
@@ -302,7 +294,7 @@ enum ConnectionKind {
 /// A connection to a game server of some kind.
 ///
 /// The exact nature of the connected server is specified by [`ConnectionKind`].
-#[derive(Resource, Clone)]
+#[derive(Resource)]
 pub struct Connection {
     state: ClientState,
     kind: ConnectionKind,
@@ -435,8 +427,6 @@ impl Connection {
         mut state: Mut<ConnectionState>,
         vfs: &Vfs,
         asset_server: &AssetServer,
-        cmds: &mut CmdRegistry,
-        console: &mut Console,
         mixer_events: &mut EventWriter<MixerEvent>,
         kick_vars: KickVars,
     ) -> Result<ConnectionStatus, ClientError> {
@@ -444,17 +434,16 @@ impl Connection {
 
         let (msg, demo_view_angles, track_override) = match self.kind {
             ConnectionKind::Server { ref mut qsock, .. } => {
-                // let msg = qsock.recv_msg(match self.conn_state {
-                //     // if we're in the game, don't block waiting for messages
-                //     ConnectionState::Connected(_) => BlockingMode::NonBlocking,
+                let msg = qsock.recv_msg(match &*state {
+                    // if we're in the game, don't block waiting for messages
+                    ConnectionState::Connected(_) => BlockingMode::NonBlocking,
 
-                //     // otherwise, give the server some time to respond
-                //     // TODO: might make sense to make this a future or something
-                //     ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::seconds(5)),
-                // })?;
+                    // otherwise, give the server some time to respond
+                    // TODO: might make sense to make this a future or something
+                    ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::seconds(5)),
+                })?;
 
-                // (msg, None, None)
-                todo!()
+                (msg, None, None)
             }
 
             ConnectionKind::Demo(ref mut demo_srv) => {
@@ -513,7 +502,8 @@ impl Connection {
                 }
 
                 ServerCmd::CenterPrint { text } => {
-                    console.set_center_print(text);
+                    todo!("Reimplement console");
+                    // console.set_center_print(text);
                 }
 
                 ServerCmd::PlayerData(player_data) => self.state.update_player(player_data),
@@ -592,7 +582,7 @@ impl Connection {
                     }
                 }
 
-                ServerCmd::Print { text } => console.print_alert(&text),
+                ServerCmd::Print { text } => todo!("Reimplement console"), //console.print_alert(&text),
 
                 ServerCmd::ServerInfo {
                     protocol_version,
@@ -607,9 +597,10 @@ impl Connection {
                         Err(ClientError::UnrecognizedProtocol(protocol_version))?;
                     }
 
-                    console.println(CONSOLE_DIVIDER);
-                    console.println(message);
-                    console.println(CONSOLE_DIVIDER);
+                    todo!("Reimplement console");
+                    // console.println(CONSOLE_DIVIDER);
+                    // console.println(message);
+                    // console.println(CONSOLE_DIVIDER);
 
                     let _server_info = ServerInfo {
                         _max_clients: max_clients,
@@ -624,18 +615,19 @@ impl Connection {
                         sound_precache,
                     )?;
 
-                    cmds.insert_or_replace("bf", move |_, world: &mut World| {
-                        if let Some(Connection { ref mut state, .. }) =
-                            world.get_resource_mut::<Connection>().as_deref_mut()
-                        {
-                            state.color_shifts[ColorShiftCode::Bonus as usize] = ColorShift {
-                                dest_color: [215, 186, 69],
-                                percent: 50,
-                            };
-                        }
-                        String::new()
-                    })
-                    .unwrap();
+                    // TODO: Reimplement `bf`
+                    // cmds.insert_or_replace("bf", move |_, world: &mut World| {
+                    //     if let Some(Connection { ref mut state, .. }) =
+                    //         world.get_resource_mut::<Connection>().as_deref_mut()
+                    //     {
+                    //         state.color_shifts[ColorShiftCode::Bonus as usize] = ColorShift {
+                    //             dest_color: [215, 186, 69],
+                    //             percent: 50,
+                    //         };
+                    //     }
+                    //     String::new()
+                    // })
+                    // .unwrap();
                 }
 
                 ServerCmd::SetAngle { angles } => self.state.set_view_angles(angles),
@@ -757,7 +749,7 @@ impl Connection {
                     self.state.spawn_temp_entity(mixer_events, &temp_entity)
                 }
 
-                ServerCmd::StuffText { text } => console.append_text(text),
+                ServerCmd::StuffText { text } => todo!("Reimplement console"), // console.append_text(text),
 
                 ServerCmd::Time { time } => {
                     self.state.msg_times[1] = self.state.msg_times[0];
@@ -882,8 +874,6 @@ impl Connection {
         frame_time: Duration,
         vfs: &Vfs,
         asset_server: &AssetServer,
-        cmds: &mut CmdRegistry,
-        console: &mut Console,
         mixer_events: &mut EventWriter<MixerEvent>,
         idle_vars: IdleVars,
         kick_vars: KickVars,
@@ -901,8 +891,6 @@ impl Connection {
             state.reborrow(),
             vfs,
             asset_server,
-            cmds,
-            console,
             mixer_events,
             kick_vars,
         )? {
@@ -931,11 +919,10 @@ impl Connection {
         } = self.kind
         {
             // respond to the server
-            // if qsock.can_send() && !compose.is_empty() {
-            //     qsock.begin_send_msg(&compose)?;
-            //     compose.clear();
-            // }
-            todo!()
+            if qsock.can_send() && !compose.is_empty() {
+                qsock.begin_send_msg(&compose)?;
+                compose.clear();
+            }
         }
 
         // these all require the player entity to have spawned
@@ -969,81 +956,6 @@ impl ExtractResource for InputFocus {
 
     fn extract_resource(source: &Self::Source) -> Self {
         source.focus()
-    }
-}
-
-impl ExtractResource for Fov {
-    type Source = CvarRegistry;
-
-    fn extract_resource(source: &Self::Source) -> Self {
-        Self(Deg(source.get_value("fov").unwrap()))
-    }
-}
-
-trait CvarsExt {
-    fn move_vars(&self) -> Result<MoveVars, ClientError>;
-    fn idle_vars(&self) -> Result<IdleVars, ClientError>;
-    fn kick_vars(&self) -> Result<KickVars, ClientError>;
-    fn mouse_vars(&self) -> Result<MouseVars, ClientError>;
-    fn roll_vars(&self) -> Result<RollVars, ClientError>;
-    fn bob_vars(&self) -> Result<BobVars, ClientError>;
-}
-
-impl CvarsExt for CvarRegistry {
-    fn move_vars(&self) -> Result<MoveVars, ClientError> {
-        Ok(MoveVars {
-            cl_anglespeedkey: self.get_value("cl_anglespeedkey")?,
-            cl_pitchspeed: self.get_value("cl_pitchspeed")?,
-            cl_yawspeed: self.get_value("cl_yawspeed")?,
-            cl_sidespeed: self.get_value("cl_sidespeed")?,
-            cl_upspeed: self.get_value("cl_upspeed")?,
-            cl_forwardspeed: self.get_value("cl_forwardspeed")?,
-            cl_backspeed: self.get_value("cl_backspeed")?,
-            cl_movespeedkey: self.get_value("cl_movespeedkey")?,
-        })
-    }
-
-    fn idle_vars(&self) -> Result<IdleVars, ClientError> {
-        Ok(IdleVars {
-            v_idlescale: self.get_value("v_idlescale")?,
-            v_ipitch_cycle: self.get_value("v_ipitch_cycle")?,
-            v_ipitch_level: self.get_value("v_ipitch_level")?,
-            v_iroll_cycle: self.get_value("v_iroll_cycle")?,
-            v_iroll_level: self.get_value("v_iroll_level")?,
-            v_iyaw_cycle: self.get_value("v_iyaw_cycle")?,
-            v_iyaw_level: self.get_value("v_iyaw_level")?,
-        })
-    }
-
-    fn kick_vars(&self) -> Result<KickVars, ClientError> {
-        Ok(KickVars {
-            v_kickpitch: self.get_value("v_kickpitch")?,
-            v_kickroll: self.get_value("v_kickroll")?,
-            v_kicktime: self.get_value("v_kicktime")?,
-        })
-    }
-
-    fn mouse_vars(&self) -> Result<MouseVars, ClientError> {
-        Ok(MouseVars {
-            m_pitch: self.get_value("m_pitch")?,
-            m_yaw: self.get_value("m_yaw")?,
-            sensitivity: self.get_value("sensitivity")?,
-        })
-    }
-
-    fn roll_vars(&self) -> Result<RollVars, ClientError> {
-        Ok(RollVars {
-            cl_rollangle: self.get_value("cl_rollangle")?,
-            cl_rollspeed: self.get_value("cl_rollspeed")?,
-        })
-    }
-
-    fn bob_vars(&self) -> Result<BobVars, ClientError> {
-        Ok(BobVars {
-            cl_bob: self.get_value("cl_bob")?,
-            cl_bobcycle: self.get_value("cl_bobcycle")?,
-            cl_bobup: self.get_value("cl_bobup")?,
-        })
     }
 }
 
@@ -1124,7 +1036,7 @@ where
         Connection {
             state: ClientState::new(),
             kind: ConnectionKind::Server {
-                qsock: todo!(),
+                qsock,
                 compose: Vec::new(),
             },
         },
@@ -1136,230 +1048,22 @@ where
 // OutputStreamHandle needs to be reconstructed so it doesn't pass out
 // references to a dead output stream
 
-mod commands {
-    use super::*;
-
-    // implements the "toggleconsole" command
-    pub fn cmd_toggleconsole(_: &[&str], world: &mut World) -> String {
-        let has_conn = world.contains_resource::<Connection>();
-        let mut input = world.resource_mut::<Input>();
-        let focus = input.focus();
-        if has_conn {
-            match focus {
-                InputFocus::Game => input.set_focus(InputFocus::Console),
-                InputFocus::Console => input.set_focus(InputFocus::Game),
-                InputFocus::Menu => input.set_focus(InputFocus::Console),
-            }
-        } else {
-            match focus {
-                InputFocus::Console => input.set_focus(InputFocus::Menu),
-                InputFocus::Game => unreachable!(),
-                InputFocus::Menu => input.set_focus(InputFocus::Console),
-            }
-        }
-        String::new()
-    }
-
-    // implements the "togglemenu" command
-    pub fn cmd_togglemenu(_: &[&str], world: &mut World) -> String {
-        let has_conn = world.contains_resource::<Connection>();
-        let mut input = world.resource_mut::<Input>();
-        let focus = input.focus();
-        if has_conn {
-            match focus {
-                InputFocus::Game => input.set_focus(InputFocus::Menu),
-                InputFocus::Console => input.set_focus(InputFocus::Menu),
-                InputFocus::Menu => input.set_focus(InputFocus::Game),
-            }
-        } else {
-            match focus {
-                InputFocus::Console => input.set_focus(InputFocus::Menu),
-                InputFocus::Game => unreachable!(),
-                InputFocus::Menu => input.set_focus(InputFocus::Console),
-            }
-        }
-        String::new()
-    }
-
-    // TODO: this will hang while connecting. ideally, input should be handled in a
-    // separate thread so the OS doesn't think the client has gone unresponsive.
-    pub fn cmd_connect(args: &[&str], world: &mut World) -> String {
-        if args.len() < 1 {
-            // TODO: print to console
-            return "usage: connect <server_ip>:<server_port>".to_owned();
-        }
-
-        match connect(args[0]) {
-            Ok((new_conn, new_state)) => {
-                world.resource_mut::<Input>().set_focus(InputFocus::Game);
-                world.insert_resource(new_conn);
-                world.insert_resource(new_state);
-                String::new()
-            }
-            Err(e) => format!("{}", e),
-        }
-    }
-
-    pub fn cmd_reconnect(args: &[&str], world: &mut World) -> String {
-        match world.get_resource_mut::<ConnectionState>() {
-            Some(mut conn) => {
-                // TODO: clear client state
-                *conn = ConnectionState::SignOn(SignOnStage::Prespawn);
-                world.resource_mut::<Input>().set_focus(InputFocus::Game);
-                String::new()
-            }
-            // TODO: log message, e.g. "can't reconnect while disconnected"
-            None => "not connected".to_string(),
-        }
-    }
-
-    pub fn cmd_disconnect(_: &[&str], world: &mut World) -> String {
-        if world.remove_resource::<Connection>().is_some() {
-            world.resource_mut::<Input>().set_focus(InputFocus::Console);
-            String::new()
-        } else {
-            "not connected".to_string()
-        }
-    }
-
-    pub fn cmd_playdemo(args: &[&str], world: &mut World) -> String {
-        if args.len() != 1 {
-            return "usage: playdemo [DEMOFILE]".to_owned();
-        }
-
-        let demo = args[0];
-
-        let (new_conn, new_state) = {
-            let mut demo_file = match world.resource::<Vfs>().open(format!("{}.dem", demo)) {
-                Ok(f) => f,
-                Err(e) => {
-                    return format!("{}", e);
-                }
-            };
-
-            match DemoServer::new(&mut demo_file) {
-                Ok(d) => (
-                    Connection {
-                        kind: ConnectionKind::Demo(d),
-                        state: ClientState::new(),
-                    },
-                    ConnectionState::SignOn(SignOnStage::Prespawn),
-                ),
-                Err(e) => {
-                    return format!("{}", e);
-                }
-            }
-        };
-
-        world.resource_mut::<Input>().set_focus(InputFocus::Game);
-
-        world.insert_resource(new_conn);
-        *world.resource_mut::<ConnectionState>() = new_state;
-
-        String::new()
-    }
-
-    pub fn cmd_startdemos(args: &[&str], world: &mut World) -> String {
-        if args.len() == 0 {
-            return "usage: startdemos [DEMOS]".to_owned();
-        }
-
-        let mut demo_queue = args
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect::<VecDeque<_>>();
-        let (new_conn, new_state) = match demo_queue.pop_front() {
-            Some(demo) => {
-                let vfs = world.resource::<Vfs>();
-                let mut demo_file = match vfs
-                    .open(format!("{}.dem", demo))
-                    .or_else(|_| vfs.open(format!("demos/{}.dem", demo)))
-                {
-                    Ok(f) => f,
-                    Err(e) => {
-                        // log the error, dump the demo queue and disconnect
-                        return format!("{}", e);
-                    }
-                };
-
-                match DemoServer::new(&mut demo_file) {
-                    Ok(d) => (
-                        Connection {
-                            kind: ConnectionKind::Demo(d),
-                            state: ClientState::new(),
-                        },
-                        ConnectionState::SignOn(SignOnStage::Prespawn),
-                    ),
-                    Err(e) => {
-                        return format!("{}", e);
-                    }
-                }
-            }
-
-            // if there are no more demos in the queue, disconnect
-            None => return "usage: startdemos [DEMOS]".to_owned(),
-        };
-
-        world.insert_resource(DemoQueue(demo_queue));
-        world.resource_mut::<Input>().set_focus(InputFocus::Game);
-
-        world.insert_resource(new_conn);
-        *world.resource_mut::<ConnectionState>() = new_state;
-
-        String::new()
-    }
-
-    pub fn cmd_music(args: &[&str], world: &mut World) -> String {
-        if args.len() != 1 {
-            return "usage: music [TRACKNAME]".to_owned();
-        }
-
-        world.send_event(MixerEvent::StartMusic(Some(MusicSource::Named(
-            args[0].to_owned(),
-        ))));
-        // TODO: Handle failure correctly
-        // match res {
-        //     Ok(()) => String::new(),
-        //     Err(e) => {
-        //         music_player.stop(commands);
-        //         format!("{}", e)
-        //     }
-        // }
-        String::new()
-    }
-
-    pub fn cmd_music_stop(_: &[&str], world: &mut World) -> String {
-        world.send_event(MixerEvent::StopMusic);
-        String::new()
-    }
-
-    pub fn cmd_music_pause(_: &[&str], world: &mut World) -> String {
-        world.send_event(MixerEvent::PauseMusic);
-        String::new()
-    }
-
-    pub fn cmd_music_resume(_: &[&str], world: &mut World) -> String {
-        world.send_event(MixerEvent::StartMusic(None));
-        String::new()
-    }
-}
-
 mod systems {
-    use std::iter;
+    use serde::Deserialize;
 
-    use self::{common::console::ExecResult, render::RenderResolution, sound::Listener};
+    use self::{common::console::Registry, render::RenderResolution};
 
     use super::*;
 
     pub fn handle_input(
-        cvars: Res<CvarRegistry>,
-        mut console: ResMut<Console>,
+        // mut console: ResMut<Console>,
+        registry: Mut<Registry>,
         mut conn: Option<ResMut<Connection>>,
         mut input: ResMut<Input>,
         frame_time: Res<Time<Virtual>>,
     ) -> Result<(), ClientError> {
-        let move_vars = cvars.move_vars()?;
-        let mouse_vars = cvars.mouse_vars()?;
+        let move_vars: MoveVars = registry.read_cvars()?;
+        let mouse_vars: MouseVars = registry.read_cvars()?;
 
         match conn.as_deref_mut() {
             Some(Connection {
@@ -1379,7 +1083,7 @@ mod systems {
                 // qsock.send_msg_unreliable(&msg)?;
 
                 // clear mouse and impulse
-                input.game_input_mut().unwrap().refresh(&mut *console);
+                input.game_input_mut().unwrap().refresh(todo!());
             }
 
             _ => (),
@@ -1388,26 +1092,32 @@ mod systems {
         Ok(())
     }
 
+    #[derive(Deserialize)]
+    struct NetworkVars {
+        #[serde(rename(deserialize = "cl_nolerp"))]
+        disable_lerp: bool,
+        #[serde(rename(deserialize = "sv_gravity"))]
+        gravity: f32,
+    }
+
     pub fn frame(
         mut commands: Commands,
         frame_time: Res<Time<Virtual>>,
-        cvars: Res<CvarRegistry>,
+        cvars: Res<Registry>,
         vfs: Res<Vfs>,
         asset_server: Res<AssetServer>,
-        mut cmds: ResMut<CmdRegistry>,
-        mut console: ResMut<Console>,
+        mut registry: ResMut<Registry>,
         mut mixer_events: EventWriter<MixerEvent>,
         mut demo_queue: ResMut<DemoQueue>,
         mut input: ResMut<Input>,
         mut conn: Option<ResMut<Connection>>,
         mut conn_state: ResMut<ConnectionState>,
     ) -> Result<(), ClientError> {
-        let cl_nolerp = cvars.get_value("cl_nolerp")?;
-        let sv_gravity = cvars.get_value("sv_gravity")?;
-        let idle_vars = cvars.idle_vars()?;
-        let kick_vars = cvars.kick_vars()?;
-        let roll_vars = cvars.roll_vars()?;
-        let bob_vars = cvars.bob_vars()?;
+        let NetworkVars { disable_lerp,gravity } = cvars.read_cvars()?;
+        let idle_vars: IdleVars = cvars.read_cvars();
+        let kick_vars: KickVars = cvars.read_cvars();
+        let roll_vars: RollVars = cvars.read_cvars();
+        let bob_vars: BobVars = cvars.read_cvars();
 
         let status = match conn.as_deref_mut() {
             Some(ref mut conn) => conn.frame(
@@ -1415,15 +1125,13 @@ mod systems {
                 Duration::from_std(frame_time.delta()).unwrap(),
                 &*vfs,
                 &*asset_server,
-                &mut *cmds,
-                &mut *console,
                 &mut mixer_events,
                 idle_vars,
                 kick_vars,
                 roll_vars,
                 bob_vars,
-                cl_nolerp,
-                sv_gravity,
+                disable_lerp,
+                gravity,
             )?,
             None => ConnectionStatus::Disconnect,
         };
@@ -1454,7 +1162,8 @@ mod systems {
                                     Ok(f) => Some(f),
                                     Err(e) => {
                                         // log the error, dump the demo queue and disconnect
-                                        console.println(format!("{}", e));
+                                        todo!("Reimplement console");
+                                        // console.println(format!("{}", e));
                                         demo_queue.0.clear();
                                         None
                                     }
@@ -1466,7 +1175,8 @@ mod systems {
                                         state: ClientState::new(),
                                     }),
                                     Err(e) => {
-                                        console.println(format!("{}", e));
+                                        todo!("Reimplement console");
+                                        // console.println(format!("{}", e));
                                         demo_queue.0.clear();
                                         None
                                     }
@@ -1510,20 +1220,6 @@ mod systems {
         Ok(())
     }
 
-    pub fn clear_output(mut console: ResMut<Console>, conn_state: Res<ConnectionState>) {
-        if conn_state.is_changed() {
-            console.set_center_print("");
-        }
-    }
-
-    pub fn run_console(world: &mut World) {
-        let console = world.remove_resource::<Console>();
-        if let Some(mut console) = console {
-            console.execute(world);
-            world.insert_resource(console);
-        }
-    }
-
     pub fn set_resolution(
         window: Query<&Window, With<PrimaryWindow>>,
         mut target_resource: ResMut<RenderResolution>,
@@ -1533,102 +1229,5 @@ mod systems {
         if *target_resource != res {
             *target_resource = res;
         }
-    }
-
-    pub fn init_client(mut cmds: ResMut<CmdRegistry>) {
-        // TODO
-        // commands.init_resource();
-
-        // set up overlay/ui toggles
-        cmds.insert_or_replace("toggleconsole", commands::cmd_toggleconsole)
-            .unwrap();
-        cmds.insert_or_replace("togglemenu", commands::cmd_togglemenu)
-            .unwrap();
-
-        // set up connection console commands
-        cmds.insert_or_replace("connect", commands::cmd_connect)
-            .unwrap();
-        cmds.insert_or_replace("reconnect", commands::cmd_reconnect)
-            .unwrap();
-        cmds.insert_or_replace("disconnect", commands::cmd_disconnect)
-            .unwrap();
-
-        // set up demo playback
-        cmds.insert_or_replace("playdemo", commands::cmd_playdemo)
-            .unwrap();
-
-        cmds.insert_or_replace("startdemos", commands::cmd_startdemos)
-            .unwrap();
-
-        cmds.insert_or_replace("music", commands::cmd_music)
-            .unwrap();
-        cmds.insert_or_replace("music_stop", commands::cmd_music_stop)
-            .unwrap();
-        cmds.insert_or_replace("music_pause", commands::cmd_music_pause)
-            .unwrap();
-        cmds.insert_or_replace("music_resume", commands::cmd_music_resume)
-            .unwrap();
-
-        cmds.insert("echo", |args, _| {
-            let msg = match args.len() {
-                0 => "".to_owned(),
-                _ => args.join(" "),
-            };
-
-            msg
-        })
-        .unwrap();
-
-        cmds.insert("alias", move |args, world| -> ExecResult {
-            match args.len() {
-                0 => {
-                    let console = world.resource::<Console>();
-
-                    // TODO: We remove the console from the world, we should probably pass it to the
-                    //       commands instead
-                    let aliases = console.aliases();
-                    let num_aliases = aliases.len();
-
-                    aliases
-                        .map(|(name, script)| format!("    {}: {}\n", name, script))
-                        .chain(iter::once(format!("{} alias command(s)", num_aliases)))
-                        .collect::<String>()
-                        .into()
-                }
-
-                2 => {
-                    let name = args[0].to_string();
-                    let script = args[1].to_string();
-
-                    ExecResult {
-                        aliases: vec![(name, script)],
-                        ..Default::default()
-                    }
-                }
-
-                _ => String::new().into(),
-            }
-        })
-        .unwrap();
-
-        cmds.insert("find", move |args, world| {
-            match args.len() {
-                1 => {
-                    let cmds = world.resource::<CmdRegistry>();
-                    // Take every item starting with the target.
-                    let it = cmds
-                        .names()
-                        .skip_while(move |item| !item.starts_with(&args[0]))
-                        .take_while(move |item| item.starts_with(&args[0]))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-
-                    it
-                }
-
-                _ => "usage: find <cvar or command>".into(),
-            }
-        })
-        .unwrap();
     }
 }

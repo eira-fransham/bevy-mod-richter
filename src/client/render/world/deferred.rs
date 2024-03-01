@@ -23,8 +23,8 @@ use crate::{
         input::InputFocus,
         menu::Menu,
         render::{
-            pipeline::Pipeline, ui::quad::QuadPipeline, Fov, GraphicsState, RenderConnectionKind,
-            RenderResolution, RenderState, WorldRenderer,
+            pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, RenderConnectionKind,
+            RenderResolution, RenderState, RenderVars, WorldRenderer,
         },
     },
     common::{
@@ -363,7 +363,7 @@ impl ViewNode for DeferredPass {
         };
         let menu = world.get_resource::<Menu>();
         let focus = world.resource::<InputFocus>();
-        let fov = world.resource::<Fov>();
+        let render_vars = world.resource::<RenderVars>();
 
         let PostProcessWrite {
             source: diffuse_input,
@@ -413,10 +413,10 @@ impl ViewNode for DeferredPass {
                 // if client is fully connected, draw world
                 let camera = match kind {
                     RenderConnectionKind::Demo => {
-                        cl_state.demo_camera(width as f32 / height as f32, fov.0)
+                        cl_state.demo_camera(width as f32 / height as f32, render_vars.fov)
                     }
                     RenderConnectionKind::Server => {
-                        cl_state.camera(width as f32 / height as f32, fov.0)
+                        cl_state.camera(width as f32 / height as f32, render_vars.fov)
                     }
                 };
 

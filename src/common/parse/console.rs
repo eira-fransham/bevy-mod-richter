@@ -19,8 +19,8 @@ use crate::common::parse::quoted;
 
 use nom::{
     branch::alt,
-    bytes::complete::tag,
-    character::complete::{line_ending, not_line_ending, one_of, space0},
+    bytes::streaming::tag,
+    character::streaming::{line_ending, not_line_ending, one_of, space0},
     combinator::{opt, recognize},
     multi::{many0, many1},
     sequence::{delimited, preceded, terminated, tuple},

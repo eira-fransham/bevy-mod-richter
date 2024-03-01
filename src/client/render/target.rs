@@ -23,21 +23,16 @@ use std::cell::RefCell;
 use bevy::{
     core_pipeline::prepass::ViewPrepassTextures,
     render::{
-        extract_resource::ExtractResource as _,
         render_graph::{RenderLabel, ViewNode},
         render_resource::{RenderPassColorAttachment, Texture, TextureView},
-        renderer::{RenderDevice, RenderQueue},
+        renderer::RenderQueue,
         view::ViewTarget,
     },
 };
 use bumpalo::Bump;
 
-use crate::{
-    client::render::{
-        Extent2d, Fov, GraphicsState, RenderConnectionKind, RenderResolution, RenderState,
-        WorldRenderer,
-    },
-    common::console::CvarRegistry,
+use crate::client::render::{
+    GraphicsState, RenderConnectionKind, RenderResolution, RenderState, RenderVars, WorldRenderer,
 };
 
 /// Intermediate object that can generate `RenderPassDescriptor`s.
@@ -108,9 +103,8 @@ impl ViewNode for InitPass {
         let queue = world.resource::<RenderQueue>();
         let render_state = world.get_resource::<RenderState>();
         let world_renderer = world.get_resource::<WorldRenderer>();
-        let cvars = world.resource::<CvarRegistry>();
         let &RenderResolution(width, height) = world.resource::<RenderResolution>();
-        let fov = Fov::extract_resource(cvars).0;
+        let render_vars = world.resource::<RenderVars>();
 
         let diffuse_target = target.get_unsampled_color_attachment().view;
         let ViewPrepassTextures {
@@ -147,26 +141,25 @@ impl ViewNode for InitPass {
                 // if client is fully connected, draw world
                 let camera = match kind {
                     RenderConnectionKind::Demo => {
-                        cl_state.demo_camera(width as f32 / height as f32, fov)
+                        cl_state.demo_camera(width as f32 / height as f32, render_vars.fov)
                     }
                     RenderConnectionKind::Server => {
-                        cl_state.camera(width as f32 / height as f32, fov)
+                        cl_state.camera(width as f32 / height as f32, render_vars.fov)
                     }
                 };
 
                 // initial render pass
                 {
-                    if let Ok(lightstyle) = cl_state.lightstyle_values() {
-                        world.update_uniform_buffers(
-                            gfx_state,
-                            queue,
-                            &camera,
-                            cl_state.time(),
-                            cl_state.iter_visible_entities(),
-                            lightstyle.as_slice(),
-                            cvars,
-                        );
-                    }
+                    let lightstyle_values = cl_state.lightstyle_values();
+                    world.update_uniform_buffers(
+                        gfx_state,
+                        queue,
+                        &camera,
+                        cl_state.time(),
+                        cl_state.iter_visible_entities(),
+                        lightstyle_values.as_deref().unwrap_or_default(),
+                        render_vars,
+                    );
 
                     let mut init_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("Initial pass"),

@@ -23,9 +23,9 @@ use std::{
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
 };
 
-use crate::common::util;
+use crate::{client::render::Palette, common::util};
 
-use bevy::prelude::*;
+use bevy::{asset::AssetLoader, prelude::*};
 use byteorder::{LittleEndian, ReadBytesExt};
 use failure::{bail, Backtrace, Context, Error, Fail};
 use fxhash::FxHashMap;

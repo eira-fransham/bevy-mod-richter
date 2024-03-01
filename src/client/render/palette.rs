@@ -1,10 +1,12 @@
-use std::{borrow::Cow, io::BufReader};
+use std::io::BufReader;
 
 use crate::{
     client::render::{DiffuseData, FullbrightData},
     common::vfs::Vfs,
 };
 
+use beef::Cow;
+use bevy::{asset::AssetLoader, prelude::*};
 use byteorder::ReadBytesExt;
 
 pub struct Palette {
@@ -78,5 +80,28 @@ impl Palette {
                 fullbright: Cow::Owned(fullbright),
             },
         )
+    }
+}
+
+pub struct PalettedImageLoader {
+    pub palette: Palette,
+}
+
+impl AssetLoader for PalettedImageLoader {
+    type Asset = Image;
+    type Settings = Option<(u32, u32)>;
+    type Error = failure::Error;
+
+    fn load<'a>(
+        &'a self,
+        reader: &'a mut bevy::asset::io::Reader,
+        settings: &'a Self::Settings,
+        load_context: &'a mut bevy::asset::LoadContext,
+    ) -> bevy::utils::BoxedFuture<'a, Result<Self::Asset, Self::Error>> {
+        todo!()
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["lmp"]
     }
 }

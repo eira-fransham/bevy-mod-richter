@@ -17,55 +17,53 @@
 
 use crate::{
     client::menu::Menu,
-    common::{console::Console, host::Control},
+    common::{console::ConsoleInput, host::Control},
 };
 
 use failure::Error;
-use winit::{
-    event::{ElementState, Event, KeyEvent, WindowEvent},
-    keyboard::{Key, NamedKey},
-};
+use winit::event::Event;
 
 pub fn handle_event<T>(
     menu: &mut Menu,
-    console: &mut Console,
+    console: &mut ConsoleInput,
     event: Event<T>,
 ) -> Result<Control, Error> {
-    match event {
-        Event::WindowEvent { event, .. } => match event {
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        logical_key: Key::Named(key),
-                        state: ElementState::Pressed,
-                        ..
-                    },
-                ..
-            } => match key {
-                NamedKey::Escape => {
-                    if menu.at_root() {
-                        console.append_text("togglemenu");
-                    } else {
-                        menu.back()?;
-                    }
-                }
+    // TODO: Re-implement input handling
+    // match event {
+    //     Event::WindowEvent { event, .. } => match event {
+    //         WindowEvent::KeyboardInput {
+    //             event:
+    //                 KeyEvent {
+    //                     logical_key: Key::Named(key),
+    //                     state: ElementState::Pressed,
+    //                     ..
+    //                 },
+    //             ..
+    //         } => match key {
+    //             NamedKey::Escape => {
+    //                 if menu.at_root() {
+    //                     console.append_text("togglemenu");
+    //                 } else {
+    //                     menu.back()?;
+    //                 }
+    //             }
 
-                NamedKey::ArrowUp => menu.prev()?,
-                NamedKey::ArrowDown => menu.next()?,
-                NamedKey::Enter => {
-                    return menu.activate();
-                }
-                NamedKey::ArrowLeft => menu.left()?,
-                NamedKey::ArrowRight => menu.right()?,
+    //             NamedKey::ArrowUp => menu.prev()?,
+    //             NamedKey::ArrowDown => menu.next()?,
+    //             NamedKey::Enter => {
+    //                 return menu.activate();
+    //             }
+    //             NamedKey::ArrowLeft => menu.left()?,
+    //             NamedKey::ArrowRight => menu.right()?,
 
-                _ => (),
-            },
+    //             _ => (),
+    //         },
 
-            _ => (),
-        },
+    //         _ => (),
+    //     },
 
-        _ => (),
-    }
+    //     _ => (),
+    // }
 
     Ok(Control::Continue)
 }

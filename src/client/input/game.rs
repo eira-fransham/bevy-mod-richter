@@ -17,10 +17,7 @@
 
 use std::{str::FromStr, string::ToString};
 
-use crate::common::{
-    console::{CmdRegistry, Console},
-    parse,
-};
+use crate::common::{console::ConsoleInput, parse};
 
 use bevy::prelude::*;
 use failure::{bail, Error};
@@ -620,162 +617,84 @@ impl GameInput {
         self.bindings.get(&input.into()).map(|t| t.clone())
     }
 
-    pub fn handle_event<T>(&mut self, console: &mut Console, outer_event: Event<T>) {
-        let (input, state): (BindInput, _) = match outer_event {
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            state,
-                            logical_key: key,
-                            ..
-                        },
-                    ..
-                } => (key.into(), state),
+    pub fn handle_event<T>(&mut self, console: &mut ConsoleInput, outer_event: Event<T>) {
+        // TODO: Re-implement input handling
+        // let (input, state): (BindInput, _) = match outer_event {
+        //     Event::WindowEvent { event, .. } => match event {
+        //         WindowEvent::KeyboardInput {
+        //             event:
+        //                 KeyEvent {
+        //                     state,
+        //                     logical_key: key,
+        //                     ..
+        //                 },
+        //             ..
+        //         } => (key.into(), state),
 
-                WindowEvent::MouseInput { state, button, .. } => (button.into(), state),
-                WindowEvent::MouseWheel { delta, .. } => (delta.into(), ElementState::Pressed),
-                _ => return,
-            },
+        //         WindowEvent::MouseInput { state, button, .. } => (button.into(), state),
+        //         WindowEvent::MouseWheel { delta, .. } => (delta.into(), ElementState::Pressed),
+        //         _ => return,
+        //     },
 
-            Event::DeviceEvent { event, .. } => match event {
-                DeviceEvent::MouseMotion { delta } => {
-                    self.mouse_delta.0 += delta.0;
-                    self.mouse_delta.1 += delta.1;
-                    return;
-                }
+        //     Event::DeviceEvent { event, .. } => match event {
+        //         DeviceEvent::MouseMotion { delta } => {
+        //             self.mouse_delta.0 += delta.0;
+        //             self.mouse_delta.1 += delta.1;
+        //             return;
+        //         }
 
-                _ => return,
-            },
+        //         _ => return,
+        //     },
 
-            _ => return,
-        };
+        //     _ => return,
+        // };
 
-        self.handle_input(console, input, state);
+        // self.handle_input(console, input, state);
     }
 
-    pub fn handle_input<I>(&mut self, console: &mut Console, input: I, state: ElementState)
+    pub fn handle_input<I>(&mut self, console: &mut ConsoleInput, input: I, state: ElementState)
     where
         I: Into<BindInput>,
     {
-        let bind_input = input.into();
+        // TODO: Re-implement input handling
+        // let bind_input = input.into();
 
-        // debug!("handle input {:?}: {:?}", &bind_input, state);
-        if let Some(target) = self.bindings.get(&bind_input) {
-            match *target {
-                BindTarget::Action { trigger, action } => {
-                    self.action_states[action as usize] = state == trigger;
-                    debug!(
-                        "{}{}",
-                        if state == trigger { '+' } else { '-' },
-                        action.to_string()
-                    );
-                }
+        // // debug!("handle input {:?}: {:?}", &bind_input, state);
+        // if let Some(target) = self.bindings.get(&bind_input) {
+        //     match *target {
+        //         BindTarget::Action { trigger, action } => {
+        //             self.action_states[action as usize] = state == trigger;
+        //             debug!(
+        //                 "{}{}",
+        //                 if state == trigger { '+' } else { '-' },
+        //                 action.to_string()
+        //             );
+        //         }
 
-                BindTarget::ConsoleInput { ref text } => {
-                    if state == ElementState::Pressed {
-                        console.append_text(text);
-                    }
-                }
-            }
-        }
+        //         BindTarget::ConsoleInput { ref text } => {
+        //             if state == ElementState::Pressed {
+        //                 console.append_text(text);
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     pub fn action_state(&self, action: Action) -> bool {
         self.action_states[action as usize]
     }
 
-    // TODO: roll actions into a loop
-    pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
-        let states = [("+", true), ("-", false)];
-        for action in Action::iter() {
-            for (state_str, state_bool) in states.iter().cloned() {
-                let cmd_name = format!("{}{}", state_str, action.to_string());
-                cmds.insert_or_replace(&cmd_name, move |_, world| {
-                    let mut game_input = world.resource_mut::<GameInput>();
-                    game_input.action_states[action as usize] = state_bool;
-                    String::new()
-                })
-                .unwrap();
-            }
-        }
-
-        // "bind"
-        cmds.insert_or_replace("bind", move |args, world| {
-            let mut game_input = world.resource_mut::<GameInput>();
-            match args.len() {
-                // bind (key)
-                // queries what (key) is bound to, if anything
-                1 => match BindInput::from_str(args[0]) {
-                    Ok(i) => match game_input.bindings.get(&i) {
-                        Some(t) => format!("\"{}\" = \"{}\"", i.to_string(), t.to_string()),
-                        None => format!("\"{}\" is not bound", i.to_string()),
-                    },
-
-                    Err(_) => format!("\"{}\" isn't a valid key", args[0]),
-                },
-
-                // bind (key) [command]
-                2 => match BindInput::from_str(args[0]) {
-                    Ok(input) => match BindTarget::from_str(args[1]) {
-                        Ok(target) => {
-                            game_input.bindings.insert(input.clone(), target);
-                            debug!("Bound {:?} to {:?}", input, args[1]);
-                            String::new()
-                        }
-                        Err(_) => {
-                            format!("\"{}\" isn't a valid bind target", args[1])
-                        }
-                    },
-
-                    Err(_) => format!("\"{}\" isn't a valid key", args[0]),
-                },
-
-                _ => "bind [key] (command): attach a command to a key".to_owned(),
-            }
-        })
-        .unwrap();
-
-        // "unbindall"
-        cmds.insert_or_replace("unbindall", move |args, world| match args.len() {
-            0 => {
-                let mut game_input = world.resource_mut::<GameInput>();
-                game_input.bindings = FxHashMap::default();
-                String::new()
-            }
-            _ => "unbindall: delete all keybindings".to_owned(),
-        })
-        .unwrap();
-
-        // "impulse"
-        cmds.insert_or_replace("impulse", move |args, world| {
-            println!("args: {}", args.len());
-            match args.len() {
-                1 => match u8::from_str(args[0]) {
-                    Ok(i) => {
-                        let mut game_input = world.resource_mut::<GameInput>();
-                        game_input.impulse = i;
-                        String::new()
-                    }
-                    Err(_) => "Impulse must be a number between 0 and 255".to_owned(),
-                },
-
-                _ => "usage: impulse [number]".to_owned(),
-            }
-        })
-        .unwrap();
-    }
-
     // must be called every frame!
-    pub fn refresh(&mut self, console: &mut Console) {
-        self.clear_mouse(console);
-        self.clear_impulse();
+    pub fn refresh(&mut self, console: &mut ConsoleInput) {
+        // TODO: Re-implement input handling
+        // self.clear_mouse(console);
+        // self.clear_impulse();
     }
 
-    fn clear_mouse(&mut self, console: &mut Console) {
-        self.handle_input(console, MouseWheel::Up, ElementState::Released);
-        self.handle_input(console, MouseWheel::Down, ElementState::Released);
-        self.mouse_delta = (0.0, 0.0);
+    fn clear_mouse(&mut self, console: &mut ConsoleInput) {
+        // self.handle_input(console, MouseWheel::Up, ElementState::Released);
+        // self.handle_input(console, MouseWheel::Down, ElementState::Released);
+        // self.mouse_delta = (0.0, 0.0);
     }
 
     fn clear_impulse(&mut self) {

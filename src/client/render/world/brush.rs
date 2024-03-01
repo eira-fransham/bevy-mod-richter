@@ -19,7 +19,6 @@
 // SOFTWARE.
 
 use std::{
-    borrow::Cow,
     mem::size_of,
     num::NonZeroU32,
     ops::Range,
@@ -46,6 +45,7 @@ use crate::{
     },
 };
 
+use beef::Cow;
 use bevy::{
     ecs::component::Component,
     render::{

@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-
 use crate::{
     client::{
         render::{
@@ -13,7 +11,7 @@ use crate::{
         IntermissionKind,
     },
     common::{
-        console::{Console, ConsoleOutput, CvarRegistry},
+        console::ConsoleOutput,
         net::{ClientStat, ItemFlags},
         vfs::Vfs,
         wad::QPic,
@@ -654,7 +652,6 @@ impl HudRenderer {
         &'a self,
         hud_state: &HudState<'a>,
         time: Duration,
-        cvars: &CvarRegistry,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
     ) {
@@ -694,43 +691,43 @@ impl HudRenderer {
             }
         };
 
-        if let Some(console) = console {
-            for (id, line) in console.recent_lines(console_timeout, 100, 10).enumerate() {
-                glyph_cmds.push(GlyphRendererCommand::Text {
-                    text: line.to_owned(),
-                    position: ScreenPosition::Relative {
-                        anchor: Anchor::TOP_LEFT,
-                        x_ofs: 0,
-                        y_ofs: -8 * id as i32,
-                    },
-                    anchor: Anchor::TOP_LEFT,
-                    scale,
-                });
-            }
+        // if let Some(console) = console {
+        //     for (id, line) in console.recent_lines(console_timeout, 100, 10).enumerate() {
+        //         glyph_cmds.push(GlyphRendererCommand::Text {
+        //             text: line.to_owned(),
+        //             position: ScreenPosition::Relative {
+        //                 anchor: Anchor::TOP_LEFT,
+        //                 x_ofs: 0,
+        //                 y_ofs: -8 * id as i32,
+        //             },
+        //             anchor: Anchor::TOP_LEFT,
+        //             scale,
+        //         });
+        //     }
 
-            if let HudState::InGame { .. } = hud_state {
-                let Ok(scr_centertime) = Duration::from_std(std::time::Duration::from_secs_f32(
-                    cvars.get_value("scr_centertime").unwrap() as _,
-                )) else {
-                    return;
-                };
-                let Some(center_text) = console.center_print(scr_centertime) else {
-                    return;
-                };
-                for (id, line) in center_text.lines().enumerate() {
-                    glyph_cmds.push(GlyphRendererCommand::Text {
-                        text: line.to_owned(),
-                        position: ScreenPosition::Relative {
-                            anchor: Anchor::CENTER,
-                            x_ofs: 0,
-                            // TODO: Magic number
-                            y_ofs: 64 - 8 * id as i32,
-                        },
-                        anchor: Anchor::CENTER,
-                        scale,
-                    });
-                }
-            }
-        }
+        //     if let HudState::InGame { .. } = hud_state {
+        //         let Ok(scr_centertime) = Duration::from_std(std::time::Duration::from_secs_f32(
+        //             cvars.get_value("scr_centertime").unwrap() as _,
+        //         )) else {
+        //             return;
+        //         };
+        //         let Some(center_text) = console.center_print(scr_centertime) else {
+        //             return;
+        //         };
+        //         for (id, line) in center_text.lines().enumerate() {
+        //             glyph_cmds.push(GlyphRendererCommand::Text {
+        //                 text: line.to_owned(),
+        //                 position: ScreenPosition::Relative {
+        //                     anchor: Anchor::CENTER,
+        //                     x_ofs: 0,
+        //                     // TODO: Magic number
+        //                     y_ofs: 64 - 8 * id as i32,
+        //                 },
+        //                 anchor: Anchor::CENTER,
+        //                 scale,
+        //             });
+        //         }
+        //     }
+        // }
     }
 }

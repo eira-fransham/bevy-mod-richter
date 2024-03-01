@@ -18,9 +18,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::common::console::CvarRegistry;
-
-use bevy::ecs::system::ResMut;
 use chrono::{DateTime, Duration, Utc};
 use winit::{
     event::{Event, WindowEvent},
@@ -54,8 +51,19 @@ pub enum Control {
     Exit,
 }
 
-pub fn init_host(mut cvars: ResMut<CvarRegistry>) {
-    cvars.register_archive("host_maxfps", "72").unwrap();
+pub mod cvars {
+    use bevy::app::App;
+
+    use crate::common::console::Cvar;
+
+    pub fn register_cvars(app: &mut App) {
+        app.cvar(
+            "host_maxfps",
+            Cvar::new("72"),
+            "sets the maximum desired frames per second",
+        )
+        .unwrap();
+    }
 }
 
 impl<P> Host<P>

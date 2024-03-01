@@ -15,17 +15,12 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+pub mod commands;
 pub mod console;
 pub mod game;
 pub mod menu;
 
-use crate::{
-    client::menu::Menu,
-    common::{
-        console::{CmdRegistry, Console},
-        host::Control,
-    },
-};
+use crate::{client::menu::Menu, common::host::Control};
 
 use bevy::ecs::system::Resource;
 use failure::Error;
@@ -71,35 +66,36 @@ impl Default for Input {
 }
 
 impl Input {
+    // TODO: Re-implement input handling
     pub fn handle_event<T>(
         &mut self,
-        menu: &mut Menu,
-        console: &mut Console,
-        event: Event<T>,
+        // menu: &mut Menu,
+        // console: &mut Console,
+        // event: Event<T>,
     ) -> Result<Control, Error> {
-        match event {
-            // we're polling for hardware events, so we have to check window focus ourselves
-            Event::WindowEvent {
-                event: WindowEvent::Focused(focused),
-                ..
-            } => {
-                self.window_focused = if focused {
-                    WindowFocusState::Focused
-                } else {
-                    WindowFocusState::Unfocused
-                }
-            }
+        // match event {
+        //     // we're polling for hardware events, so we have to check window focus ourselves
+        //     Event::WindowEvent {
+        //         event: WindowEvent::Focused(focused),
+        //         ..
+        //     } => {
+        //         self.window_focused = if focused {
+        //             WindowFocusState::Focused
+        //         } else {
+        //             WindowFocusState::Unfocused
+        //         }
+        //     }
 
-            _ => {
-                if self.window_focused == WindowFocusState::Focused {
-                    match self.focus {
-                        InputFocus::Game => self.game_input.handle_event(console, event),
-                        InputFocus::Console => self::console::handle_event(console, event)?,
-                        InputFocus::Menu => return self::menu::handle_event(menu, console, event),
-                    }
-                }
-            }
-        }
+        //     _ => {
+        //         if self.window_focused == WindowFocusState::Focused {
+        //             match self.focus {
+        //                 InputFocus::Game => self.game_input.handle_event(console, event),
+        //                 InputFocus::Console => self::console::handle_event(console, event)?,
+        //                 InputFocus::Menu => return self::menu::handle_event(menu, console, event),
+        //             }
+        //         }
+        //     }
+        // }
 
         Ok(Control::Continue)
     }
@@ -139,9 +135,5 @@ impl Input {
         } else {
             None
         }
-    }
-
-    pub fn register_cmds(&self, cmds: &mut CmdRegistry) {
-        self.game_input.register_cmds(cmds);
     }
 }

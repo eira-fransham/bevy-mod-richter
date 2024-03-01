@@ -23,7 +23,6 @@ use crate::{
         ClientEntity, ConnectionState,
     },
     common::{
-        console::CvarRegistry,
         engine,
         math::Angles,
         model::{Model, ModelKind},
@@ -45,6 +44,8 @@ use cgmath::{Euler, InnerSpace, Matrix4, SquareMatrix as _, Vector3, Vector4};
 use chrono::Duration;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
+
+use super::RenderVars;
 
 lazy_static! {
     static ref BIND_GROUP_LAYOUT_DESCRIPTOR_BINDINGS: [Vec<BindGroupLayoutEntry>; 2] = [
@@ -416,7 +417,7 @@ impl WorldRenderer {
         time: Duration,
         entities: I,
         lightstyle_values: &[f32],
-        cvars: &CvarRegistry,
+        render_vars: &RenderVars,
     ) where
         I: Iterator<Item = &'a ClientEntity>,
     {
@@ -432,7 +433,7 @@ impl WorldRenderer {
                 },
                 camera_pos: camera.origin.extend(1.0),
                 time: engine::duration_to_f32(time),
-                r_lightmap: UniformBool::new(cvars.get_value("r_lightmap").unwrap() != 0.0),
+                r_lightmap: UniformBool::new(render_vars.lightmap),
             })
         });
 
