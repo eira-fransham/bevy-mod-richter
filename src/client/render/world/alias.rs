@@ -35,10 +35,17 @@ impl AliasPipeline {
         device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
         world_bind_group_layouts: &[BindGroupLayout],
+        diffuse_format: wgpu::TextureFormat,
+        normal_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> AliasPipeline {
-        let (pipeline, bind_group_layouts) =
-            AliasPipeline::create(device, compiler, world_bind_group_layouts, sample_count, ());
+        let (pipeline, bind_group_layouts) = AliasPipeline::create(
+            device,
+            compiler,
+            world_bind_group_layouts,
+            sample_count,
+            (diffuse_format, normal_format),
+        );
 
         AliasPipeline {
             pipeline,
@@ -50,13 +57,21 @@ impl AliasPipeline {
         &mut self,
         device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
+        diffuse_format: wgpu::TextureFormat,
+        normal_format: wgpu::TextureFormat,
         world_bind_group_layouts: &[BindGroupLayout],
         sample_count: u32,
     ) {
         let layout_refs = world_bind_group_layouts
             .iter()
             .chain(self.bind_group_layouts.iter());
-        self.pipeline = Self::recreate(device, compiler, layout_refs, sample_count, ());
+        self.pipeline = Self::recreate(
+            device,
+            compiler,
+            layout_refs,
+            sample_count,
+            (diffuse_format, normal_format),
+        );
     }
 
     pub fn pipeline(&self) -> &RenderPipeline {
@@ -94,7 +109,7 @@ impl Pipeline for AliasPipeline {
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
 
-    type Args = ();
+    type Args = <WorldPipelineBase as Pipeline>::Args;
 
     fn name() -> &'static str {
         "alias"
@@ -131,8 +146,8 @@ impl Pipeline for AliasPipeline {
         WorldPipelineBase::primitive_state()
     }
 
-    fn color_target_states_with_args(_: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
-        WorldPipelineBase::color_target_states()
+    fn color_target_states_with_args(args: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
+        WorldPipelineBase::color_target_states_with_args(args)
     }
 
     fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {
@@ -441,14 +456,16 @@ impl AliasRenderer {
         keyframe_id: usize,
         texture_id: usize,
     ) {
-        pass.set_pipeline(state.alias_pipeline().pipeline());
-        pass.set_vertex_buffer(0, *self.vertex_buffer.slice(..));
+        if let Some(keyframe) = self.keyframes.get(keyframe_id).map(|k| k.animate(time)) {
+            pass.set_pipeline(state.alias_pipeline().pipeline());
+            pass.set_vertex_buffer(0, *self.vertex_buffer.slice(..));
 
-        pass.set_bind_group(
-            BindGroupLayoutId::PerTexture as u32,
-            self.textures[texture_id].animate(time),
-            &[],
-        );
-        pass.draw(self.keyframes[keyframe_id].animate(time), 0..1)
+            pass.set_bind_group(
+                BindGroupLayoutId::PerTexture as u32,
+                self.textures[texture_id].animate(time),
+                &[],
+            );
+            pass.draw(keyframe, 0..1)
+        }
     }
 }

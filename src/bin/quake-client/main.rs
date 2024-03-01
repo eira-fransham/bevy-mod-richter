@@ -33,7 +33,10 @@ mod trace;
 use std::{fs, io::Read, net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use bevy::{
-    core_pipeline::tonemapping::Tonemapping,
+    core_pipeline::{
+        prepass::{DepthPrepass, NormalPrepass},
+        tonemapping::Tonemapping,
+    },
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
     render::{camera::Exposure, renderer::RenderDevice},
@@ -110,7 +113,7 @@ impl Program for ClientProgram {
         sample_count = 1;
 
         // recreate attachments and rebuild pipelines if necessary
-        gfx_state.update(render_device, size, sample_count);
+        // gfx_state.update(render_device, size, sample_count);
         // self.game.frame(&*gfx_state, frame_duration);
 
         match input.focus() {
@@ -182,6 +185,8 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<Console>, ResMut<CmdRegistry
                 tonemapping: Tonemapping::BlenderFilmic,
                 ..default()
             },
+            DepthPrepass,
+            NormalPrepass,
             AutoExposure {
                 min: -16.0,
                 max: 16.0,
@@ -198,10 +203,7 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<Console>, ResMut<CmdRegistry
                     let mut script_file = match vfs.open(args[0]) {
                         Ok(s) => s,
                         Err(e) => {
-                            return ExecResult {
-                                extra_commands: String::new(),
-                                output: format!("Couldn't exec {}: {:?}", args[0], e),
-                            };
+                            return format!("Couldn't exec {}: {:?}", args[0], e).into();
                         }
                     };
 
@@ -210,14 +212,11 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<Console>, ResMut<CmdRegistry
 
                     ExecResult {
                         extra_commands: script,
-                        output: String::new(),
+                        ..default()
                     }
                 }
 
-                _ => ExecResult {
-                    extra_commands: String::new(),
-                    output: format!("exec (filename): execute a script file"),
-                },
+                _ => format!("exec (filename): execute a script file").into(),
             }
         })
         .unwrap();
@@ -259,6 +258,7 @@ fn main() -> ExitCode {
         }),
         ..Default::default()
     }))
+    .insert_resource(Msaa::Off)
     .add_plugins(AutoExposurePlugin)
     .add_plugins(RichterPlugin {
         base_dir: opt.base_dir.clone(),

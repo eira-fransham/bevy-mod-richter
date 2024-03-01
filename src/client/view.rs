@@ -246,7 +246,7 @@ pub struct KickVars {
     pub v_kicktime: f32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct BobVars {
     pub cl_bob: f32,
     pub cl_bobcycle: f32,

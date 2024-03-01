@@ -7,6 +7,7 @@ pub mod quad;
 
 use crate::{
     client::{
+        input::InputFocus,
         menu::Menu,
         render::{
             ui::{
@@ -19,15 +20,29 @@ use crate::{
             Extent2d, GraphicsState,
         },
     },
-    common::{console::Console, vfs::Vfs},
+    common::{
+        console::{Console, ConsoleInput, ConsoleOutput, CvarRegistry},
+        vfs::Vfs,
+    },
 };
 
 use bevy::{
-    ecs::{system::Resource, world::FromWorld},
-    render::renderer::{RenderDevice, RenderQueue},
+    ecs::{
+        component::Component,
+        system::Resource,
+        world::{FromWorld, World},
+    },
+    prelude::default,
+    render::{
+        render_graph::{RenderLabel, ViewNode},
+        renderer::{RenderDevice, RenderQueue},
+        view::ViewTarget,
+    },
 };
 use cgmath::{Matrix4, Vector2};
 use chrono::Duration;
+
+use super::{Fov, RenderResolution, RenderState, WorldRenderer};
 
 pub fn screen_space_vertex_translate(
     display_w: u32,
@@ -76,7 +91,7 @@ pub fn screen_space_vertex_transform(
 
 pub enum UiOverlay<'a> {
     Menu(&'a Menu),
-    Console(&'a Console),
+    Console(&'a ConsoleInput, &'a ConsoleOutput),
 }
 
 pub enum UiState<'a> {
@@ -96,18 +111,6 @@ pub struct UiRenderer {
     hud_renderer: HudRenderer,
     glyph_renderer: GlyphRenderer,
     quad_renderer: QuadRenderer,
-}
-
-impl FromWorld for UiRenderer {
-    fn from_world(world: &mut bevy::prelude::World) -> Self {
-        let state = world.resource::<GraphicsState>();
-        let vfs = world.resource::<Vfs>();
-        let device = world.resource::<RenderDevice>();
-        let queue = world.resource::<RenderQueue>();
-        let menu = world.resource::<Menu>();
-
-        UiRenderer::new(state, vfs, device, queue, menu)
-    }
 }
 
 impl UiRenderer {
@@ -132,6 +135,7 @@ impl UiRenderer {
         state: &'this GraphicsState,
         queue: &'a RenderQueue,
         pass: &'a mut wgpu::RenderPass<'this>,
+        cvars: &'a CvarRegistry,
         target_size: Extent2d,
         time: Duration,
         ui_state: &'a UiState<'this>,
@@ -145,7 +149,7 @@ impl UiRenderer {
 
         if let Some(hstate) = hud_state {
             self.hud_renderer
-                .generate_commands(hstate, time, quad_commands, glyph_commands);
+                .generate_commands(hstate, time, cvars, quad_commands, glyph_commands);
         }
 
         if let Some(o) = overlay {
@@ -154,7 +158,7 @@ impl UiRenderer {
                     self.menu_renderer
                         .generate_commands(menu, time, quad_commands, glyph_commands);
                 }
-                UiOverlay::Console(console) => {
+                UiOverlay::Console(input, output) => {
                     // TODO: take in-game console proportion as cvar
                     let proportion = match hud_state {
                         Some(_) => 0.33,
@@ -162,7 +166,8 @@ impl UiRenderer {
                     };
 
                     self.console_renderer.generate_commands(
-                        console,
+                        output,
+                        input,
                         time,
                         quad_commands,
                         glyph_commands,
@@ -181,24 +186,119 @@ impl UiRenderer {
     }
 }
 
-pub mod systems {
-    use bevy::ecs::{
-        change_detection::DetectChanges as _,
-        system::{Res, ResMut},
-    };
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+pub struct UiPassLabel;
 
-    use super::*;
+#[derive(Default)]
+pub struct UiPass;
 
-    pub fn update_ui(
-        gfx_state: Res<GraphicsState>,
-        vfs: Res<Vfs>,
-        menu: Res<Menu>,
-        device: Res<RenderDevice>,
-        queue: Res<RenderQueue>,
-        mut ui: ResMut<UiRenderer>,
-    ) {
-        if gfx_state.is_changed() || vfs.is_changed() || menu.is_changed() {
-            *ui = UiRenderer::new(&*gfx_state, &*vfs, &*device, &*queue, &*menu);
+impl ViewNode for UiPass {
+    type ViewQuery = &'static ViewTarget;
+
+    fn run<'w>(
+        &self,
+        graph: &mut bevy::render::render_graph::RenderGraphContext,
+        render_context: &mut bevy::render::renderer::RenderContext<'w>,
+        view_target: &ViewTarget,
+        world: &'w World,
+    ) -> Result<(), bevy::render::render_graph::NodeRunError> {
+        let gfx_state = world.resource::<GraphicsState>();
+        let ui_renderer = world.resource::<UiRenderer>();
+        let cvars = world.resource::<CvarRegistry>();
+        let renderer = world.get_resource::<WorldRenderer>();
+        let conn = world.get_resource::<RenderState>();
+        let queue = world.resource::<RenderQueue>();
+        let device = world.resource::<RenderDevice>();
+        let Some(&RenderResolution(width, height)) = world.get_resource::<RenderResolution>()
+        else {
+            return Ok(());
+        };
+        let console_out = world.get_resource::<ConsoleOutput>();
+        let console_in = world.get_resource::<ConsoleInput>();
+        let menu = world.get_resource::<Menu>();
+        let focus = world.resource::<InputFocus>();
+        let fov = world.resource::<Fov>();
+
+        // quad_commands must outlive final pass
+        let mut quad_commands = Vec::new();
+        let mut glyph_commands = Vec::new();
+
+        let encoder = render_context.command_encoder();
+        let diffuse_target = view_target.get_unsampled_color_attachment();
+
+        // final render pass: postprocess the world and draw the UI
+        {
+            let mut final_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Ui pass"),
+                color_attachments: &[Some(diffuse_target)],
+                depth_stencil_attachment: None,
+                ..default()
+            });
+
+            if let Some(RenderState {
+                state: cl_state, ..
+            }) = conn
+            {
+                let ui_state = match conn {
+                    Some(RenderState {
+                        state: cl_state, ..
+                    }) => UiState::InGame {
+                        hud: match cl_state.intermission() {
+                            Some(kind) => HudState::Intermission {
+                                kind,
+                                completion_duration: cl_state.completion_time().unwrap()
+                                    - cl_state.start_time(),
+                                stats: cl_state.stats(),
+                                console: console_out,
+                            },
+
+                            None => HudState::InGame {
+                                items: cl_state.items(),
+                                item_pickup_time: cl_state.item_pickup_times(),
+                                stats: cl_state.stats(),
+                                face_anim_time: cl_state.face_anim_time(),
+                                console: console_out,
+                            },
+                        },
+
+                        overlay: match (focus, console_in, console_out, menu) {
+                            (InputFocus::Game, _, _, _) => None,
+                            (InputFocus::Console, Some(input), Some(output), _) => {
+                                Some(UiOverlay::Console(input, output))
+                            }
+                            (InputFocus::Menu, _, _, Some(menu)) => Some(UiOverlay::Menu(menu)),
+                            _ => None,
+                        },
+                    },
+
+                    None => UiState::Title {
+                        overlay: match (focus, console_in, console_out, menu) {
+                            (InputFocus::Console, Some(input), Some(output), _) => {
+                                UiOverlay::Console(input, output)
+                            }
+                            (InputFocus::Menu, _, _, Some(menu)) => UiOverlay::Menu(menu),
+                            (InputFocus::Game, _, _, _) => unreachable!(),
+                            _ => return Ok(()),
+                        },
+                    },
+                };
+
+                let elapsed = conn.as_ref().map(|c| c.state.time).unwrap_or_default();
+                ui_renderer.render_pass(
+                    &*gfx_state,
+                    queue,
+                    &mut final_pass,
+                    cvars,
+                    Extent2d { width, height },
+                    // use client time when in game, renderer time otherwise
+                    elapsed,
+                    &ui_state,
+                    &mut quad_commands,
+                    &mut glyph_commands,
+                );
+            }
+
+            Ok(())
         }
     }
 }

@@ -209,6 +209,12 @@ pub struct Angles {
     pub yaw: Deg<f32>,
 }
 
+impl Default for Angles {
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
 impl Angles {
     pub fn zero() -> Angles {
         Angles {

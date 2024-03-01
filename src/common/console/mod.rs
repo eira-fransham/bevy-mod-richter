@@ -31,6 +31,7 @@ use bevy::{
     render::extract_resource::ExtractResource,
 };
 use chrono::{Duration, Utc};
+use fxhash::FxHashMap;
 use imstr::ImString;
 use thiserror::Error;
 
@@ -79,16 +80,26 @@ pub struct CmdRegistry {
     names: im::Vector<String>,
 }
 
+#[derive(Default)]
+pub enum OutputType {
+    #[default]
+    Normal,
+    Alert,
+}
+
+#[derive(Default)]
 pub struct ExecResult {
     pub extra_commands: String,
     pub output: String,
+    pub output_ty: OutputType,
+    pub aliases: Vec<(String, String)>,
 }
 
 impl From<String> for ExecResult {
     fn from(value: String) -> Self {
         Self {
-            extra_commands: String::new(),
             output: value,
+            ..default()
         }
     }
 }
@@ -387,10 +398,18 @@ impl CvarRegistry {
 }
 
 /// The line of text currently being edited in the console.
-#[derive(Clone)]
+#[derive(Default, Clone, Resource)]
 pub struct ConsoleInput {
     text: imstr::ImString,
     curs: usize,
+}
+
+impl ExtractResource for ConsoleInput {
+    type Source = Console;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        source.input.clone()
+    }
 }
 
 impl ConsoleInput {
@@ -478,11 +497,15 @@ impl ConsoleInput {
         self.text.clear();
         self.curs = 0;
     }
+
+    pub fn cursor(&self) -> usize {
+        self.curs
+    }
 }
 
-#[derive(Clone)]
+#[derive(Default)]
 pub struct History {
-    lines: im::Vector<String>,
+    lines: Vec<String>,
     curs: usize,
 }
 
@@ -495,7 +518,7 @@ impl History {
     }
 
     pub fn add_line(&mut self, line: String) {
-        self.lines.push_front(line);
+        self.lines.push(line);
         self.curs = 0;
     }
 
@@ -522,7 +545,7 @@ impl History {
     }
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone, Resource)]
 pub struct ConsoleOutput {
     // A ring buffer of lines of text. Each line has an optional timestamp used
     // to determine whether it should be displayed on screen. If the timestamp
@@ -530,23 +553,42 @@ pub struct ConsoleOutput {
     //
     // The timestamp is specified in seconds since the Unix epoch (so it is
     // decoupled from client/server time).
-    lines: im::Vector<(String, Option<i64>)>,
+    lines: im::Vector<(Cow<'static, str>, Option<i64>)>,
+    center_print: (imstr::ImString, i64),
+}
+
+impl ExtractResource for ConsoleOutput {
+    type Source = Console;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        source.output.clone()
+    }
 }
 
 impl ConsoleOutput {
     pub fn new() -> ConsoleOutput {
-        ConsoleOutput {
-            lines: Default::default(),
-        }
+        ConsoleOutput::default()
     }
 
-    fn push(&mut self, chars: String, timestamp: Option<i64>) {
-        self.lines.push_front((chars, timestamp))
+    fn push<S: Into<Cow<'static, str>>>(&mut self, chars: S, timestamp: Option<i64>) {
+        self.lines.push_front((chars.into(), timestamp))
         // TODO: set maximum capacity and pop_back when we reach it
     }
 
     pub fn lines(&self) -> impl Iterator<Item = &str> + '_ {
         self.lines.iter().map(|(v, _)| v.as_ref())
+    }
+
+    pub fn set_center_print<S: Into<imstr::ImString>>(&mut self, print: S) {
+        self.center_print = (print.into(), Utc::now().timestamp());
+    }
+
+    pub fn center_print(&self, max_time: Duration) -> Option<&str> {
+        if self.center_print.1 > (Utc::now() - max_time).timestamp() {
+            Some(&*self.center_print.0)
+        } else {
+            None
+        }
     }
 
     /// Return an iterator over lines that have been printed in the last
@@ -578,88 +620,16 @@ impl ConsoleOutput {
     }
 }
 
-#[derive(Resource, ExtractResource, Clone)]
+#[derive(Resource, Default)]
 pub struct Console {
-    aliases: im::HashMap<String, String>,
+    aliases: FxHashMap<String, String>,
 
     input: ConsoleInput,
     hist: History,
-    buffer: imstr::ImString,
+    buffer: String,
 
-    out_buffer: imstr::ImString,
+    out_buffer: String,
     output: ConsoleOutput,
-}
-
-impl FromWorld for Console {
-    fn from_world(world: &mut World) -> Console {
-        let output = ConsoleOutput::new();
-        let mut cmds = world.resource_mut::<CmdRegistry>();
-        cmds.insert("echo", |args, _| {
-            let msg = match args.len() {
-                0 => "".to_owned(),
-                _ => args.join(" "),
-            };
-
-            msg
-        })
-        .unwrap();
-
-        cmds.insert("alias", move |args, world| {
-            let mut console = world.resource_mut::<Console>();
-
-            match args.len() {
-                0 => {
-                    for (name, script) in console.aliases.iter() {
-                        return format!("    {}: {}", name, script);
-                    }
-                    return format!("{} alias command(s)", console.aliases.len());
-                }
-
-                2 => {
-                    let name = args[0].to_string();
-                    let script = args[1].to_string();
-                    console.alias(name, script);
-                }
-
-                _ => (),
-            }
-
-            String::new()
-        })
-        .unwrap();
-
-        cmds.insert("find", move |args, world| {
-            match args.len() {
-                1 => {
-                    let cmds = world.resource::<CmdRegistry>();
-                    // Take every item starting with the target.
-                    let it = cmds
-                        .names()
-                        .skip_while(move |item| !item.starts_with(&args[0]))
-                        .take_while(move |item| item.starts_with(&args[0]));
-
-                    let mut output = String::new();
-                    for name in it {
-                        write!(&mut output, "{}\n", name).unwrap();
-                    }
-
-                    output
-                }
-
-                _ => "usage: find <cvar or command>".into(),
-            }
-        })
-        .unwrap();
-
-        Console {
-            aliases: im::HashMap::new(),
-            input: ConsoleInput::new(),
-            hist: History::new(),
-            buffer: Default::default(),
-            out_buffer: Default::default(),
-            output,
-        }
-    }
 }
 
 impl Console {
@@ -667,22 +637,33 @@ impl Console {
         self.aliases.insert(name, script);
     }
 
+    pub fn aliases(&self) -> impl ExactSizeIterator<Item = (&str, &str)> + '_ {
+        self.aliases.iter().map(|(a, b)| (&**a, &**b))
+    }
+
     // The timestamp is applied to any line flushed during this call.
     fn print_impl<S>(&mut self, s: S, timestamp: Option<i64>)
     where
         S: AsRef<str>,
     {
-        let mut it = s.as_ref().lines();
+        self.out_buffer.push_str(s.as_ref());
 
-        if let Some(val) = it.next() {
-            self.out_buffer.push_str(val);
-        }
+        if self.out_buffer.contains('\n') {
+            let mut lines = self.out_buffer.lines();
+            let mut last = lines.next();
+            let mut cur = lines.next();
+            while let Some(line) = last {
+                self.output.push(line.to_owned(), timestamp);
+                last = cur;
+                cur = lines.next();
+            }
 
-        while let Some(c) = it.next() {
-            self.output
-                .push(mem::take(&mut self.out_buffer).into(), timestamp);
-            self.out_buffer.push_str(c);
+            self.out_buffer = cur.unwrap_or_default().to_owned();
         }
+    }
+
+    pub fn set_center_print<S: Into<imstr::ImString>>(&mut self, s: S) {
+        self.output.set_center_print(s);
     }
 
     pub fn print<S>(&mut self, s: S)
@@ -850,15 +831,25 @@ impl Console {
             let ExecResult {
                 extra_commands,
                 output,
+                aliases,
+                output_ty,
             } = func(world);
+
             if !extra_commands.is_empty() {
                 let (_, extra_commands) =
                     parse_commands(&*extra_commands, |s| Cow::from(s.to_string())).unwrap();
                 commands.extend(extra_commands.into_iter().rev());
             }
 
+            self.aliases.extend(aliases);
+
             if !output.is_empty() {
-                self.println(output)
+                for line in output.lines() {
+                    match output_ty {
+                        OutputType::Normal => self.println(line),
+                        OutputType::Alert => self.println_alert(line),
+                    }
+                }
             }
         }
     }

@@ -35,10 +35,17 @@ impl SpritePipeline {
         device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
         world_bind_group_layouts: &[BindGroupLayout],
+        diffuse_format: wgpu::TextureFormat,
+        normal_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> SpritePipeline {
-        let (pipeline, bind_group_layouts) =
-            SpritePipeline::create(device, compiler, world_bind_group_layouts, sample_count, ());
+        let (pipeline, bind_group_layouts) = SpritePipeline::create(
+            device,
+            compiler,
+            world_bind_group_layouts,
+            sample_count,
+            (diffuse_format, normal_format),
+        );
 
         let vertex_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
@@ -57,13 +64,21 @@ impl SpritePipeline {
         &mut self,
         device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
+        diffuse_format: wgpu::TextureFormat,
+        normal_format: wgpu::TextureFormat,
         world_bind_group_layouts: &[BindGroupLayout],
         sample_count: u32,
     ) {
         let layout_refs = world_bind_group_layouts
             .iter()
             .chain(self.bind_group_layouts.iter());
-        self.pipeline = Self::recreate(device, compiler, layout_refs, sample_count, ());
+        self.pipeline = Self::recreate(
+            device,
+            compiler,
+            layout_refs,
+            sample_count,
+            (diffuse_format, normal_format),
+        );
     }
 
     pub fn pipeline(&self) -> &RenderPipeline {
@@ -96,7 +111,7 @@ impl Pipeline for SpritePipeline {
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
 
-    type Args = ();
+    type Args = <WorldPipelineBase as Pipeline>::Args;
 
     fn name() -> &'static str {
         "sprite"
@@ -135,8 +150,8 @@ impl Pipeline for SpritePipeline {
         WorldPipelineBase::primitive_state()
     }
 
-    fn color_target_states_with_args(_: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
-        WorldPipelineBase::color_target_states()
+    fn color_target_states_with_args(args: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
+        WorldPipelineBase::color_target_states_with_args(args)
     }
 
     fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {

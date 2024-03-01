@@ -260,7 +260,7 @@ impl GlyphRenderer {
             &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
+                    resource: wgpu::BindingResource::Sampler(state.nearest_sampler()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -327,20 +327,15 @@ impl GlyphRenderer {
                 } => {
                     let (screen_x, screen_y) =
                         position.to_xy(display_width, display_height, *scale);
-                    let (glyph_x, glyph_y) = anchor.to_xy(
+                    let (text_x, text_y) = anchor.to_xy(
                         ((text.chars().count() * GLYPH_WIDTH) as f32 * scale) as u32,
                         (GLYPH_HEIGHT as f32 * scale) as u32,
                     );
-                    let x = screen_x - glyph_x;
-                    let y = screen_y - glyph_y;
+                    let x = screen_x - text_x;
+                    let y = screen_y - text_y;
 
-                    for (chr_id, chr) in text.as_str().chars().enumerate() {
+                    for (chr_id, chr) in text.chars().enumerate() {
                         let abs_x = x + ((GLYPH_WIDTH * chr_id) as f32 * scale) as i32;
-
-                        if abs_x >= display_width as i32 {
-                            // don't render past the edge of the screen
-                            break;
-                        }
 
                         instances.push(GlyphInstance {
                             position: screen_space_vertex_translate(
@@ -381,6 +376,6 @@ impl GlyphRenderer {
         pass.set_vertex_buffer(0, *state.quad_pipeline().vertex_buffer().slice(..));
         pass.set_vertex_buffer(1, *state.glyph_pipeline().instance_buffer().slice(..));
         pass.set_bind_group(0, &self.const_bind_group, &[]);
-        pass.draw(0..6, 0..commands.len() as u32);
+        pass.draw(0..6, 0..instances.len() as u32);
     }
 }

@@ -18,10 +18,9 @@ use crate::{
                 brush::{BrushPipeline, BrushRenderer, BrushRendererBuilder},
                 sprite::{SpritePipeline, SpriteRenderer},
             },
-            GraphicsState, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT,
-            LIGHT_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
+            GraphicsState,
         },
-        ClientEntity, Connection, ConnectionState,
+        ClientEntity, ConnectionState,
     },
     common::{
         console::CvarRegistry,
@@ -34,11 +33,11 @@ use crate::{
 };
 
 use bevy::{
+    core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT,
     prelude::*,
     render::{
         render_resource::BindGroupLayoutEntry,
         renderer::{RenderDevice, RenderQueue},
-        Extract,
     },
 };
 use bumpalo::Bump;
@@ -99,14 +98,14 @@ lazy_static! {
     ];
 }
 
-struct WorldPipelineBase;
+pub struct WorldPipelineBase;
 
 impl Pipeline for WorldPipelineBase {
     type VertexPushConstants = ();
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
 
-    type Args = ();
+    type Args = (wgpu::TextureFormat, wgpu::TextureFormat);
 
     fn name() -> &'static str {
         "world"
@@ -137,23 +136,19 @@ impl Pipeline for WorldPipelineBase {
         }
     }
 
-    fn color_target_states_with_args(_: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
+    fn color_target_states_with_args(
+        (diffuse_format, normal_format): Self::Args,
+    ) -> Vec<Option<wgpu::ColorTargetState>> {
         vec![
             // diffuse attachment
             Some(wgpu::ColorTargetState {
-                format: DIFFUSE_ATTACHMENT_FORMAT,
+                format: diffuse_format,
                 blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
             }),
             // normal attachment
             Some(wgpu::ColorTargetState {
-                format: NORMAL_ATTACHMENT_FORMAT,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
-            }),
-            // light attachment
-            Some(wgpu::ColorTargetState {
-                format: LIGHT_ATTACHMENT_FORMAT,
+                format: normal_format,
                 blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
             }),
@@ -162,7 +157,7 @@ impl Pipeline for WorldPipelineBase {
 
     fn depth_stencil_state() -> Option<wgpu::DepthStencilState> {
         Some(wgpu::DepthStencilState {
-            format: DEPTH_ATTACHMENT_FORMAT,
+            format: CORE_3D_DEPTH_FORMAT,
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::LessEqual,
             stencil: wgpu::StencilState {
@@ -307,6 +302,8 @@ enum EntityRenderer {
     None,
 }
 
+static NO_ENTITY_RENDERER: EntityRenderer = EntityRenderer::None;
+
 /// Top-level renderer.
 #[derive(Resource)]
 pub struct WorldRenderer {
@@ -325,6 +322,7 @@ pub fn extract_world_renderer(
     queue: Res<RenderQueue>,
     game_state: Res<ConnectionState>,
 ) {
+    info!("Updating world renderer");
     match &*game_state {
         ConnectionState::Connected(state) => {
             let new_renderer = WorldRenderer::new(
@@ -476,7 +474,7 @@ impl WorldRenderer {
         time: Duration,
         entities: E,
         particles: P,
-        viewmodel_id: usize,
+        viewmodel_id: Option<usize>,
     ) where
         E: Iterator<Item = &'a ClientEntity>,
         P: Iterator<Item = &'a Particle>,
@@ -513,46 +511,47 @@ impl WorldRenderer {
         // draw entities
         info!("Drawing entities");
         for (ent_pos, ent) in entities.enumerate() {
-            pass.set_bind_group(
-                BindGroupLayoutId::PerEntity as u32,
-                &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
-                &[self.entity_uniform_blocks.read()[ent_pos].offset()],
-            );
+            if let Some(uniforms) = self.entity_uniform_blocks.read().get(ent_pos) {
+                pass.set_bind_group(
+                    BindGroupLayoutId::PerEntity as u32,
+                    &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
+                    &[uniforms.offset()],
+                );
 
-            match self.renderer_for_entity(&ent) {
-                EntityRenderer::Brush(ref bmodel) => {
-                    pass.set_pipeline(state.brush_pipeline().pipeline());
-                    BrushPipeline::set_push_constants(
-                        pass,
-                        Update(bump.alloc(brush::VertexPushConstants {
-                            transform: self.calculate_mvp_transform(camera, ent),
-                            model_view: self.calculate_mv_transform(camera, ent),
-                        })),
-                        Clear,
-                        Clear,
-                    );
-                    bmodel.record_draw(state, pass, &bump, time, camera, ent.frame_id);
+                match self.renderer_for_entity(&ent) {
+                    EntityRenderer::Brush(ref bmodel) => {
+                        pass.set_pipeline(state.brush_pipeline().pipeline());
+                        BrushPipeline::set_push_constants(
+                            pass,
+                            Update(bump.alloc(brush::VertexPushConstants {
+                                transform: self.calculate_mvp_transform(camera, ent),
+                                model_view: self.calculate_mv_transform(camera, ent),
+                            })),
+                            Clear,
+                            Clear,
+                        );
+                        bmodel.record_draw(state, pass, &bump, time, camera, ent.frame_id);
+                    }
+                    EntityRenderer::Alias(ref alias) => {
+                        pass.set_pipeline(state.alias_pipeline().pipeline());
+                        AliasPipeline::set_push_constants(
+                            pass,
+                            Update(bump.alloc(alias::VertexPushConstants {
+                                transform: self.calculate_mvp_transform(camera, ent),
+                                model_view: self.calculate_mv_transform(camera, ent),
+                            })),
+                            Clear,
+                            Clear,
+                        );
+                        alias.record_draw(state, pass, time, ent.frame_id(), ent.skin_id());
+                    }
+                    EntityRenderer::Sprite(ref sprite) => {
+                        pass.set_pipeline(state.sprite_pipeline().pipeline());
+                        SpritePipeline::set_push_constants(pass, Clear, Clear, Clear);
+                        sprite.record_draw(state, pass, ent.frame_id(), time);
+                    }
+                    EntityRenderer::None => {}
                 }
-                EntityRenderer::Alias(ref alias) => {
-                    pass.set_pipeline(state.alias_pipeline().pipeline());
-                    AliasPipeline::set_push_constants(
-                        pass,
-                        Update(bump.alloc(alias::VertexPushConstants {
-                            transform: self.calculate_mvp_transform(camera, ent),
-                            model_view: self.calculate_mv_transform(camera, ent),
-                        })),
-                        Clear,
-                        Clear,
-                    );
-                    alias.record_draw(state, pass, time, ent.frame_id(), ent.skin_id());
-                }
-                EntityRenderer::Sprite(ref sprite) => {
-                    pass.set_pipeline(state.sprite_pipeline().pipeline());
-                    SpritePipeline::set_push_constants(pass, Clear, Clear, Clear);
-                    sprite.record_draw(state, pass, ent.frame_id(), time);
-                }
-                _ => warn!("non-brush renderers not implemented!"),
-                // _ => unimplemented!(),
             }
         }
 
@@ -565,8 +564,8 @@ impl WorldRenderer {
         )) * Matrix4::from_angle_y(cam_angles.yaw)
             * Matrix4::from_angle_x(-cam_angles.pitch)
             * Matrix4::from_angle_z(cam_angles.roll);
-        match self.entity_renderers[viewmodel_id] {
-            EntityRenderer::Alias(ref alias) => {
+        match viewmodel_id.and_then(|vid| self.entity_renderers.get(vid)) {
+            Some(EntityRenderer::Alias(ref alias)) => {
                 pass.set_pipeline(state.alias_pipeline().pipeline());
                 AliasPipeline::set_push_constants(
                     pass,
@@ -579,14 +578,13 @@ impl WorldRenderer {
                 );
                 alias.record_draw(state, pass, time, 0, 0);
             }
-            EntityRenderer::None => {}
-
-            EntityRenderer::Brush(..) => {
+            Some(EntityRenderer::Brush(..)) => {
                 unreachable!("Viewmodel is brush - this should never happen")
             }
-            EntityRenderer::Sprite(..) => {
-                unreachable!("Viewmodel is sprite - this should never happen")
+            Some(EntityRenderer::Sprite(..)) => {
+                // TODO: This is actually ok, how should we handle it?
             }
+            None | Some(EntityRenderer::None) => {}
         }
 
         debug!("Drawing particles");
@@ -597,7 +595,10 @@ impl WorldRenderer {
 
     fn renderer_for_entity(&self, ent: &ClientEntity) -> &EntityRenderer {
         // subtract 1 from index because world entity isn't counted
-        &self.entity_renderers[ent.model_id().saturating_sub(1)]
+        match &self.entity_renderers.get(ent.model_id().saturating_sub(1)) {
+            Some(r) => r,
+            None => &NO_ENTITY_RENDERER,
+        }
     }
 
     fn calculate_mvp_transform(&self, camera: &Camera, entity: &ClientEntity) -> Matrix4<f32> {

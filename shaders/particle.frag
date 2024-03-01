@@ -11,7 +11,6 @@ layout(set = 0, binding = 1) uniform texture2D u_texture[128];
 
 layout(location = 0) out vec4 diffuse_attachment;
 // layout(location = 1) out vec4 normal_attachment;
-layout(location = 2) out vec4 light_attachment;
 
 void main() {
   vec4 tex_color = texture(
@@ -23,6 +22,5 @@ void main() {
     discard;
   }
 
-  diffuse_attachment = tex_color;
-  light_attachment = vec4(0.25);
+  diffuse_attachment = vec4(tex_color.rgb, 0.25);
 }

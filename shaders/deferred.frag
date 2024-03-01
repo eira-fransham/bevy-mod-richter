@@ -9,9 +9,8 @@ layout(set = 0, binding = 0) uniform sampler u_sampler;
 layout(set = 0, binding = 1) uniform sampler u_nearestsampler;
 layout(set = 0, binding = 2) uniform texture2D u_diffuse;
 layout(set = 0, binding = 3) uniform texture2D u_normal;
-layout(set = 0, binding = 4) uniform texture2D u_light;
-layout(set = 0, binding = 5) uniform texture2D u_depth;
-layout(set = 0, binding = 6) uniform DeferredUniforms {
+layout(set = 0, binding = 4) uniform texture2D u_depth;
+layout(set = 0, binding = 5) uniform DeferredUniforms {
   mat4 inv_projection;
   uint light_count;
   uint _pad1;
@@ -40,22 +39,20 @@ vec3 reconstruct_position(float depth) {
 }
 
 void main() {
-  vec4 in_color = texture(sampler2D(u_diffuse, u_sampler), a_texcoord);
+  vec4 in_diffuse = texture(sampler2D(u_diffuse, u_sampler), a_texcoord);
+  vec4 in_color = vec4(in_diffuse.rgb, 1.);
 
   // scale from [0, 1] to [-1, 1]
   vec3 in_normal = 2.0
     * texture(sampler2D(u_normal, u_sampler), a_texcoord).xyz
     - 1.0;
 
-  // Double to restore overbright values.
-  vec4 in_light = texture(sampler2D(u_light, u_sampler), a_texcoord);
-
   float in_depth = texture(sampler2D(u_depth, u_nearestsampler), a_texcoord).x;
   vec3 position = reconstruct_position(in_depth);
 
   vec4 out_color = in_color;
 
-  float light = in_light.x + in_light.y + in_light.z + in_light.w;
+  float light = in_diffuse.a;
   for (uint i = 0; i < u_deferred.light_count && i < MAX_LIGHTS; i++) {
     vec4 dlight = u_deferred.lights[i];
     vec3 dir = normalize(position - dlight_origin(dlight));

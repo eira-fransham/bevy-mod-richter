@@ -7,7 +7,12 @@ use crate::{
         },
         GraphicsState,
     },
-    common::{console::Console, engine, vfs::Vfs, wad::QPic},
+    common::{
+        console::{ConsoleInput, ConsoleOutput},
+        engine,
+        vfs::Vfs,
+        wad::QPic,
+    },
 };
 
 use bevy::{
@@ -41,7 +46,8 @@ impl ConsoleRenderer {
 
     pub fn generate_commands<'a>(
         &'a self,
-        console: &Console,
+        output: &ConsoleOutput,
+        input: &ConsoleInput,
         time: Duration,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
@@ -84,7 +90,7 @@ impl ConsoleRenderer {
             anchor: Anchor::BOTTOM_LEFT,
             scale,
         });
-        let input_text = console.get_string();
+        let input_text = input.get_text();
         glyph_cmds.push(GlyphRendererCommand::Text {
             text: input_text.to_owned(),
             position: ScreenPosition::Relative {
@@ -101,7 +107,7 @@ impl ConsoleRenderer {
                 glyph_id: 11,
                 position: ScreenPosition::Relative {
                     anchor: console_anchor,
-                    x_ofs: PAD_LEFT + (GLYPH_WIDTH * (console.cursor() + 1)) as i32,
+                    x_ofs: PAD_LEFT + (GLYPH_WIDTH * (input.cursor() + 1)) as i32,
                     y_ofs: 0,
                 },
                 anchor: Anchor::BOTTOM_LEFT,
@@ -110,7 +116,7 @@ impl ConsoleRenderer {
         }
 
         // draw previous output
-        for (line_id, line) in console.output().lines().enumerate() {
+        for (line_id, line) in output.lines().enumerate() {
             // TODO: implement scrolling
             if line_id > 100 {
                 break;

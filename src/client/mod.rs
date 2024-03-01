@@ -49,7 +49,9 @@ use crate::{
     },
     common::{
         self,
-        console::{cvar_error_handler, CmdRegistry, Console, ConsoleError, CvarRegistry},
+        console::{
+            cvar_error_handler, CmdRegistry, Console, ConsoleError, ConsoleOutput, CvarRegistry,
+        },
         engine,
         model::{Model, ModelError},
         net::{
@@ -134,7 +136,7 @@ impl Plugin for RichterPlugin {
         // TODO: Use bevy's state system
         .insert_resource(ConnectionState::SignOn(SignOnStage::Not))
         .add_systems(
-            Startup,
+            PreStartup,
             (
                 register_cvars.pipe(cvar_error_handler),
                 systems::init_client,
@@ -153,6 +155,7 @@ impl Plugin for RichterPlugin {
                     // TODO: Error handling
                     let _ = res;
                 }),
+                systems::clear_output,
             ),
         )
         .add_plugins(RichterRenderPlugin)
@@ -356,12 +359,12 @@ impl Connection {
 
     fn handle_signon(
         &mut self,
-        old_conn_state: &ConnectionState,
+        mut state: Mut<ConnectionState>,
         new_stage: SignOnStage,
-    ) -> Result<Option<ConnectionState>, ClientError> {
+    ) -> Result<(), ClientError> {
         use SignOnStage::*;
 
-        let new_conn_state = match old_conn_state {
+        let new_conn_state = match &*state {
             // TODO: validate stage transition
             ConnectionState::SignOn(_) => {
                 if let ConnectionKind::Server {
@@ -405,7 +408,6 @@ impl Connection {
                         }
                     }
                 }
-
                 match new_stage {
                     // TODO proper error
                     Not => panic!("SignOnStage::Not in handle_signon"),
@@ -420,22 +422,24 @@ impl Connection {
             }
 
             // ignore spurious sign-on messages
-            ConnectionState::Connected { .. } => return Ok(None),
+            ConnectionState::Connected { .. } => return Ok(()),
         };
 
-        Ok(Some(new_conn_state))
+        *state = new_conn_state;
+
+        Ok(())
     }
 
     fn parse_server_msg(
         &mut self,
-        old_conn_state: &ConnectionState,
+        mut state: Mut<ConnectionState>,
         vfs: &Vfs,
         asset_server: &AssetServer,
         cmds: &mut CmdRegistry,
         console: &mut Console,
         mixer_events: &mut EventWriter<MixerEvent>,
         kick_vars: KickVars,
-    ) -> Result<(ConnectionStatus, Option<ConnectionState>), ClientError> {
+    ) -> Result<ConnectionStatus, ClientError> {
         use ConnectionStatus::*;
 
         let (msg, demo_view_angles, track_override) = match self.kind {
@@ -462,7 +466,7 @@ impl Connection {
                         None => {
                             // if there are no commands left in the demo, play
                             // the next demo if there is one
-                            return Ok((NextDemo, None));
+                            return Ok(NextDemo);
                         }
                     };
 
@@ -485,19 +489,17 @@ impl Connection {
 
         // no data available at this time
         if msg.is_empty() {
-            return Ok((Maintain, None));
+            return Ok(Maintain);
         }
 
         let mut reader = BufReader::new(msg.as_slice());
-
-        let mut out = None;
 
         while let Some(cmd) = ServerCmd::deserialize(&mut reader)? {
             match cmd {
                 // TODO: have an error for this instead of panicking
                 // once all other commands have placeholder handlers, just error
                 // in the wildcard branch
-                ServerCmd::Bad => panic!("Invalid command from server"),
+                ServerCmd::Bad => {} // panic!("Invalid command from server"),
 
                 ServerCmd::NoOp => (),
 
@@ -511,9 +513,7 @@ impl Connection {
                 }
 
                 ServerCmd::CenterPrint { text } => {
-                    // TODO: print to center of screen
-                    warn!("Center print not yet implemented!");
-                    println!("{}", text);
+                    console.set_center_print(text);
                 }
 
                 ServerCmd::PlayerData(player_data) => self.state.update_player(player_data),
@@ -530,18 +530,15 @@ impl Connection {
                 } => self.state.handle_damage(armor, blood, source, kick_vars),
 
                 ServerCmd::Disconnect => {
-                    return Ok((
-                        match self.kind {
-                            ConnectionKind::Demo(_) => NextDemo,
-                            ConnectionKind::Server { .. } => Disconnect,
-                        },
-                        out,
-                    ))
+                    return Ok(match self.kind {
+                        ConnectionKind::Demo(_) => NextDemo,
+                        ConnectionKind::Server { .. } => Disconnect,
+                    });
                 }
 
                 ServerCmd::FastUpdate(ent_update) => {
                     // first update signals the last sign-on stage
-                    out = self.handle_signon(old_conn_state, SignOnStage::Done)?;
+                    self.handle_signon(state.reborrow(), SignOnStage::Done)?;
 
                     let ent_id = ent_update.ent_id as usize;
                     self.state.update_entity(ent_id, ent_update)?;
@@ -654,7 +651,7 @@ impl Connection {
                 }
 
                 ServerCmd::SignOnStage { stage } => {
-                    out = self.handle_signon(old_conn_state, stage)?
+                    self.handle_signon(state.reborrow(), stage)?;
                 }
 
                 ServerCmd::Sound {
@@ -746,12 +743,14 @@ impl Connection {
                     volume,
                     attenuation,
                 } => {
-                    mixer_events.send(MixerEvent::StartStaticSound(StartStaticSound {
-                        src: self.state.sounds[sound_id as usize].clone(),
-                        origin,
-                        volume: volume as f32 / 255.0,
-                        attenuation: attenuation as f32 / 64.0,
-                    }));
+                    if let Some(sound) = self.state.sounds.get(sound_id as usize) {
+                        mixer_events.send(MixerEvent::StartStaticSound(StartStaticSound {
+                            src: sound.clone(),
+                            origin,
+                            volume: volume as f32 / 255.0,
+                            attenuation: attenuation as f32 / 64.0,
+                        }));
+                    }
                 }
 
                 ServerCmd::TempEntity { temp_entity } => {
@@ -874,12 +873,12 @@ impl Connection {
             }
         }
 
-        Ok((Maintain, out))
+        Ok(Maintain)
     }
 
     fn frame(
         &mut self,
-        old_conn_state: &ConnectionState,
+        mut state: Mut<ConnectionState>,
         frame_time: Duration,
         vfs: &Vfs,
         asset_server: &AssetServer,
@@ -892,14 +891,14 @@ impl Connection {
         bob_vars: BobVars,
         cl_nolerp: f32,
         sv_gravity: f32,
-    ) -> Result<(ConnectionStatus, Option<ConnectionState>), ClientError> {
+    ) -> Result<ConnectionStatus, ClientError> {
         debug!("frame time: {}ms", frame_time.num_milliseconds());
 
         // do this _before_ parsing server messages so that we know when to
         // request the next message from the demo server.
         self.state.advance_time(frame_time);
-        let new_state = match self.parse_server_msg(
-            old_conn_state,
+        match self.parse_server_msg(
+            state.reborrow(),
             vfs,
             asset_server,
             cmds,
@@ -907,9 +906,9 @@ impl Connection {
             mixer_events,
             kick_vars,
         )? {
-            (ConnectionStatus::Maintain, new_state) => new_state,
+            ConnectionStatus::Maintain => {}
             // if Disconnect or NextDemo, delegate up the chain
-            (s, new_state) => return Ok((s, new_state)),
+            s => return Ok(s),
         };
 
         self.state.update_interp_ratio(cl_nolerp);
@@ -941,16 +940,24 @@ impl Connection {
 
         // these all require the player entity to have spawned
         // TODO: Need to improve this code - maybe split it out into surrounding function?
-        if let ConnectionState::Connected(_) = new_state.as_ref().unwrap_or(old_conn_state) {
+        if let ConnectionState::Connected(_) = &*state {
             // update view
-            self.state
-                .calc_final_view(idle_vars, kick_vars, roll_vars, bob_vars);
+            self.state.calc_final_view(
+                idle_vars,
+                kick_vars,
+                roll_vars,
+                if self.state.intermission().is_none() {
+                    bob_vars
+                } else {
+                    default()
+                },
+            );
 
             // update camera color shifts for new position/effects
             self.state.update_color_shifts(frame_time)?;
         }
 
-        Ok((ConnectionStatus::Maintain, new_state))
+        Ok(ConnectionStatus::Maintain)
     }
 }
 
@@ -1038,48 +1045,6 @@ impl CvarsExt for CvarRegistry {
             cl_bobup: self.get_value("cl_bobup")?,
         })
     }
-}
-
-// implements the "toggleconsole" command
-fn cmd_toggleconsole(_: &[&str], world: &mut World) -> String {
-    let has_conn = world.contains_resource::<Connection>();
-    let mut input = world.resource_mut::<Input>();
-    let focus = input.focus();
-    if has_conn {
-        match focus {
-            InputFocus::Game => input.set_focus(InputFocus::Console),
-            InputFocus::Console => input.set_focus(InputFocus::Game),
-            InputFocus::Menu => input.set_focus(InputFocus::Console),
-        }
-    } else {
-        match focus {
-            InputFocus::Console => input.set_focus(InputFocus::Menu),
-            InputFocus::Game => unreachable!(),
-            InputFocus::Menu => input.set_focus(InputFocus::Console),
-        }
-    }
-    String::new()
-}
-
-// implements the "togglemenu" command
-fn cmd_togglemenu(_: &[&str], world: &mut World) -> String {
-    let has_conn = world.contains_resource::<Connection>();
-    let mut input = world.resource_mut::<Input>();
-    let focus = input.focus();
-    if has_conn {
-        match focus {
-            InputFocus::Game => input.set_focus(InputFocus::Menu),
-            InputFocus::Console => input.set_focus(InputFocus::Menu),
-            InputFocus::Menu => input.set_focus(InputFocus::Game),
-        }
-    } else {
-        match focus {
-            InputFocus::Console => input.set_focus(InputFocus::Menu),
-            InputFocus::Game => unreachable!(),
-            InputFocus::Menu => input.set_focus(InputFocus::Console),
-        }
-    }
-    String::new()
 }
 
 fn connect<A>(server_addrs: A) -> Result<(Connection, ConnectionState), ClientError>
@@ -1173,6 +1138,48 @@ where
 
 mod commands {
     use super::*;
+
+    // implements the "toggleconsole" command
+    pub fn cmd_toggleconsole(_: &[&str], world: &mut World) -> String {
+        let has_conn = world.contains_resource::<Connection>();
+        let mut input = world.resource_mut::<Input>();
+        let focus = input.focus();
+        if has_conn {
+            match focus {
+                InputFocus::Game => input.set_focus(InputFocus::Console),
+                InputFocus::Console => input.set_focus(InputFocus::Game),
+                InputFocus::Menu => input.set_focus(InputFocus::Console),
+            }
+        } else {
+            match focus {
+                InputFocus::Console => input.set_focus(InputFocus::Menu),
+                InputFocus::Game => unreachable!(),
+                InputFocus::Menu => input.set_focus(InputFocus::Console),
+            }
+        }
+        String::new()
+    }
+
+    // implements the "togglemenu" command
+    pub fn cmd_togglemenu(_: &[&str], world: &mut World) -> String {
+        let has_conn = world.contains_resource::<Connection>();
+        let mut input = world.resource_mut::<Input>();
+        let focus = input.focus();
+        if has_conn {
+            match focus {
+                InputFocus::Game => input.set_focus(InputFocus::Menu),
+                InputFocus::Console => input.set_focus(InputFocus::Menu),
+                InputFocus::Menu => input.set_focus(InputFocus::Game),
+            }
+        } else {
+            match focus {
+                InputFocus::Console => input.set_focus(InputFocus::Menu),
+                InputFocus::Game => unreachable!(),
+                InputFocus::Menu => input.set_focus(InputFocus::Console),
+            }
+        }
+        String::new()
+    }
 
     // TODO: this will hang while connecting. ideally, input should be handled in a
     // separate thread so the OS doesn't think the client has gone unresponsive.
@@ -1338,7 +1345,9 @@ mod commands {
 }
 
 mod systems {
-    use self::{render::RenderResolution, sound::Listener};
+    use std::iter;
+
+    use self::{common::console::ExecResult, render::RenderResolution, sound::Listener};
 
     use super::*;
 
@@ -1400,9 +1409,9 @@ mod systems {
         let roll_vars = cvars.roll_vars()?;
         let bob_vars = cvars.bob_vars()?;
 
-        let (status, new_state) = match conn.as_deref_mut() {
+        let status = match conn.as_deref_mut() {
             Some(ref mut conn) => conn.frame(
-                &*conn_state,
+                conn_state.reborrow(),
                 Duration::from_std(frame_time.delta()).unwrap(),
                 &*vfs,
                 &*asset_server,
@@ -1416,7 +1425,7 @@ mod systems {
                 cl_nolerp,
                 sv_gravity,
             )?,
-            None => (ConnectionStatus::Disconnect, None),
+            None => ConnectionStatus::Disconnect,
         };
 
         use ConnectionStatus::*;
@@ -1483,29 +1492,36 @@ mod systems {
                 match (conn, new_conn) {
                     (Some(mut conn), Some(new_conn)) => {
                         *conn = new_conn;
+                        *conn_state = ConnectionState::SignOn(SignOnStage::Prespawn);
                     }
                     (None, Some(new_conn)) => {
                         commands.insert_resource(new_conn);
+                        *conn_state = ConnectionState::SignOn(SignOnStage::Prespawn);
                     }
                     (Some(_), None) => {
                         commands.remove_resource::<Connection>();
+                        *conn_state = ConnectionState::SignOn(SignOnStage::Not);
                     }
                     (None, None) => {}
                 }
             }
         }
 
-        if let Some(new_state) = new_state {
-            *conn_state = new_state;
-        }
-
         Ok(())
     }
 
+    pub fn clear_output(mut console: ResMut<Console>, conn_state: Res<ConnectionState>) {
+        if conn_state.is_changed() {
+            console.set_center_print("");
+        }
+    }
+
     pub fn run_console(world: &mut World) {
-        let mut console = world.resource::<Console>().clone();
-        console.execute(world);
-        *world.resource_mut::<Console>() = console;
+        let console = world.remove_resource::<Console>();
+        if let Some(mut console) = console {
+            console.execute(world);
+            world.insert_resource(console);
+        }
     }
 
     pub fn set_resolution(
@@ -1524,9 +1540,9 @@ mod systems {
         // commands.init_resource();
 
         // set up overlay/ui toggles
-        cmds.insert_or_replace("toggleconsole", cmd_toggleconsole)
+        cmds.insert_or_replace("toggleconsole", commands::cmd_toggleconsole)
             .unwrap();
-        cmds.insert_or_replace("togglemenu", cmd_togglemenu)
+        cmds.insert_or_replace("togglemenu", commands::cmd_togglemenu)
             .unwrap();
 
         // set up connection console commands
@@ -1552,5 +1568,67 @@ mod systems {
             .unwrap();
         cmds.insert_or_replace("music_resume", commands::cmd_music_resume)
             .unwrap();
+
+        cmds.insert("echo", |args, _| {
+            let msg = match args.len() {
+                0 => "".to_owned(),
+                _ => args.join(" "),
+            };
+
+            msg
+        })
+        .unwrap();
+
+        cmds.insert("alias", move |args, world| -> ExecResult {
+            match args.len() {
+                0 => {
+                    let console = world.resource::<Console>();
+
+                    // TODO: We remove the console from the world, we should probably pass it to the
+                    //       commands instead
+                    let aliases = console.aliases();
+                    let num_aliases = aliases.len();
+
+                    aliases
+                        .map(|(name, script)| format!("    {}: {}\n", name, script))
+                        .chain(iter::once(format!("{} alias command(s)", num_aliases)))
+                        .collect::<String>()
+                        .into()
+                }
+
+                2 => {
+                    let name = args[0].to_string();
+                    let script = args[1].to_string();
+
+                    ExecResult {
+                        aliases: vec![(name, script)],
+                        ..Default::default()
+                    }
+                }
+
+                _ => String::new().into(),
+            }
+        })
+        .unwrap();
+
+        cmds.insert("find", move |args, world| {
+            match args.len() {
+                1 => {
+                    let cmds = world.resource::<CmdRegistry>();
+                    // Take every item starting with the target.
+                    let it = cmds
+                        .names()
+                        .skip_while(move |item| !item.starts_with(&args[0]))
+                        .take_while(move |item| item.starts_with(&args[0]))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    it
+                }
+
+                _ => "usage: find <cvar or command>".into(),
+            }
+        })
+        .unwrap();
     }
 }

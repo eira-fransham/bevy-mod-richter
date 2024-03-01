@@ -353,7 +353,7 @@ impl QuadRenderer {
             &state.quad_pipeline().bind_group_layouts()[0],
             &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
+                resource: wgpu::BindingResource::Sampler(state.nearest_sampler()),
             }],
         );
         let transform_bind_group = device.create_bind_group(

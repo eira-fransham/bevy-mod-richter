@@ -124,7 +124,7 @@ pub fn setup(mut cmds: ResMut<CmdRegistry>, input: Res<Input>) {
 //     }
 
 // advance the simulation
-pub fn frame(gfx_state: Res<GraphicsState>, input: ResMut<Input>, frame_duration: Duration) {
+pub fn frame(input: ResMut<Input>, frame_duration: Duration) {
     // let trace_frames: &mut Option<Vec<TraceFrame>> = todo!();
 
     // match client.frame(frame_duration, gfx_state) {

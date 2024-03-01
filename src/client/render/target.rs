@@ -20,111 +20,25 @@
 
 use std::cell::RefCell;
 
-use bevy::render::{
-    extract_resource::ExtractResource as _,
-    render_graph::{Node, RenderLabel, SlotInfo, SlotLabel, SlotType},
-    render_resource::{Texture, TextureView},
-    renderer::{RenderDevice, RenderQueue},
+use bevy::{
+    core_pipeline::prepass::ViewPrepassTextures,
+    render::{
+        extract_resource::ExtractResource as _,
+        render_graph::{RenderLabel, ViewNode},
+        render_resource::{RenderPassColorAttachment, Texture, TextureView},
+        renderer::{RenderDevice, RenderQueue},
+        view::ViewTarget,
+    },
 };
 use bumpalo::Bump;
 
 use crate::{
     client::render::{
         Extent2d, Fov, GraphicsState, RenderConnectionKind, RenderResolution, RenderState,
-        WorldRenderer, DEPTH_ATTACHMENT_FORMAT, DIFFUSE_ATTACHMENT_FORMAT, FINAL_ATTACHMENT_FORMAT,
-        LIGHT_ATTACHMENT_FORMAT, NORMAL_ATTACHMENT_FORMAT,
+        WorldRenderer,
     },
     common::console::CvarRegistry,
 };
-
-// TODO: collapse these into a single definition
-/// Create a texture suitable for use as a color attachment.
-///
-/// The resulting texture will have the RENDER_ATTACHMENT flag as well as
-/// any flags specified by `usage`.
-pub fn create_color_attachment(
-    device: &RenderDevice,
-    size: Extent2d,
-    sample_count: u32,
-    usage: wgpu::TextureUsages,
-) -> Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("color attachment"),
-        size: size.into(),
-        mip_level_count: 1,
-        sample_count,
-        dimension: wgpu::TextureDimension::D2,
-        format: DIFFUSE_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | usage,
-        view_formats: Default::default(),
-    })
-}
-
-/// Create a texture suitable for use as a normal attachment.
-///
-/// The resulting texture will have the RENDER_ATTACHMENT flag as well as
-/// any flags specified by `usage`.
-pub fn create_normal_attachment(
-    device: &RenderDevice,
-    size: Extent2d,
-    sample_count: u32,
-    usage: wgpu::TextureUsages,
-) -> Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("normal attachment"),
-        size: size.into(),
-        mip_level_count: 1,
-        sample_count,
-        dimension: wgpu::TextureDimension::D2,
-        format: NORMAL_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | usage,
-        view_formats: Default::default(),
-    })
-}
-
-/// Create a texture suitable for use as a light attachment.
-///
-/// The resulting texture will have the RENDER_ATTACHMENT flag as well as
-/// any flags specified by `usage`.
-pub fn create_light_attachment(
-    device: &RenderDevice,
-    size: Extent2d,
-    sample_count: u32,
-    usage: wgpu::TextureUsages,
-) -> Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("light attachment"),
-        size: size.into(),
-        mip_level_count: 1,
-        sample_count,
-        dimension: wgpu::TextureDimension::D2,
-        format: LIGHT_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | usage,
-        view_formats: Default::default(),
-    })
-}
-
-/// Create a texture suitable for use as a depth attachment.
-///
-/// The underlying texture will have the RENDER_ATTACHMENT flag as well as
-/// any flags specified by `usage`.
-pub fn create_depth_attachment(
-    device: &RenderDevice,
-    size: Extent2d,
-    sample_count: u32,
-    usage: wgpu::TextureUsages,
-) -> Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("depth attachment"),
-        size: size.into(),
-        mip_level_count: 1,
-        sample_count,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH_ATTACHMENT_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | usage,
-        view_formats: Default::default(),
-    })
-}
 
 /// Intermediate object that can generate `RenderPassDescriptor`s.
 pub struct RenderPassBuilder<'a> {
@@ -174,191 +88,44 @@ pub trait RenderTargetResolve: RenderTarget {
 // TODO: use ArrayVec<TextureView> in concrete types so it can be passed
 // as Cow::Borrowed in RenderPassDescriptor
 
-/// Render target for the initial world pass.
-pub struct InitialPassTarget {
-    size: Extent2d,
-    sample_count: u32,
-    diffuse_attachment: Texture,
-    diffuse_view: TextureView,
-    normal_attachment: Texture,
-    normal_view: TextureView,
-    light_attachment: Texture,
-    light_view: TextureView,
-    depth_attachment: Texture,
-    depth_view: TextureView,
-}
-
-impl InitialPassTarget {
-    pub fn new(device: &RenderDevice, size: Extent2d, sample_count: u32) -> InitialPassTarget {
-        let diffuse_attachment = create_color_attachment(
-            device,
-            size,
-            sample_count,
-            wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        let normal_attachment = create_normal_attachment(
-            device,
-            size,
-            sample_count,
-            wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        let light_attachment = create_light_attachment(
-            device,
-            size,
-            sample_count,
-            wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        let depth_attachment = create_depth_attachment(
-            device,
-            size,
-            sample_count,
-            wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-
-        let diffuse_view = diffuse_attachment.create_view(&Default::default());
-        let normal_view = normal_attachment.create_view(&Default::default());
-        let light_view = light_attachment.create_view(&Default::default());
-        let depth_view = depth_attachment.create_view(&Default::default());
-
-        InitialPassTarget {
-            size,
-            sample_count,
-            diffuse_attachment,
-            diffuse_view,
-            normal_attachment,
-            normal_view,
-            light_attachment,
-            light_view,
-            depth_attachment,
-            depth_view,
-        }
-    }
-
-    pub fn size(&self) -> Extent2d {
-        self.size
-    }
-
-    pub fn sample_count(&self) -> u32 {
-        self.sample_count
-    }
-
-    pub fn diffuse_attachment(&self) -> &Texture {
-        &self.diffuse_attachment
-    }
-
-    pub fn diffuse_view(&self) -> &TextureView {
-        &self.diffuse_view
-    }
-
-    pub fn normal_attachment(&self) -> &Texture {
-        &self.normal_attachment
-    }
-
-    pub fn normal_view(&self) -> &TextureView {
-        &self.normal_view
-    }
-
-    pub fn light_attachment(&self) -> &Texture {
-        &self.light_attachment
-    }
-
-    pub fn light_view(&self) -> &TextureView {
-        &self.light_view
-    }
-
-    pub fn depth_attachment(&self) -> &Texture {
-        &self.depth_attachment
-    }
-
-    pub fn depth_view(&self) -> &TextureView {
-        &self.depth_view
-    }
-}
-
-impl RenderTarget for InitialPassTarget {
-    fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
-        RenderPassBuilder {
-            color_attachments: vec![
-                Some(wgpu::RenderPassColorAttachment {
-                    view: self.diffuse_view(),
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                }),
-                Some(wgpu::RenderPassColorAttachment {
-                    view: self.normal_view(),
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                }),
-                Some(wgpu::RenderPassColorAttachment {
-                    view: self.light_view(),
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                }),
-            ],
-            depth_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: self.depth_view(),
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-        }
-    }
-}
-
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 pub struct InitPassLabel;
 
 #[derive(Default)]
 pub struct InitPass;
 
-const INIT_DIFFUSE: &str = "init_diffuse";
-const INIT_NORMAL: &str = "init_normal";
-const INIT_LIGHT: &str = "init_light";
-const INIT_DEPTH: &str = "init_depth";
+impl ViewNode for InitPass {
+    type ViewQuery = (&'static ViewTarget, &'static ViewPrepassTextures);
 
-pub enum InitPassOutput {
-    Diffuse,
-    Normal,
-    Light,
-    Depth,
-}
-
-impl From<InitPassOutput> for SlotLabel {
-    fn from(value: InitPassOutput) -> Self {
-        match value {
-            InitPassOutput::Diffuse => INIT_DIFFUSE.into(),
-            InitPassOutput::Normal => INIT_NORMAL.into(),
-            InitPassOutput::Light => INIT_LIGHT.into(),
-            InitPassOutput::Depth => INIT_DEPTH.into(),
-        }
-    }
-}
-
-impl Node for InitPass {
     fn run<'w>(
         &self,
         graph: &mut bevy::render::render_graph::RenderGraphContext,
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
+        (target, prepass): (&ViewTarget, &ViewPrepassTextures),
         world: &'w bevy::prelude::World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
-        let queue = world.resource::<RenderQueue>();
         let gfx_state = world.resource::<GraphicsState>();
+        let queue = world.resource::<RenderQueue>();
         let render_state = world.get_resource::<RenderState>();
         let world_renderer = world.get_resource::<WorldRenderer>();
         let cvars = world.resource::<CvarRegistry>();
         let &RenderResolution(width, height) = world.resource::<RenderResolution>();
         let fov = Fov::extract_resource(cvars).0;
+
+        let diffuse_target = target.get_unsampled_color_attachment().view;
+        let ViewPrepassTextures {
+            normal: Some(normal_target),
+            depth: Some(depth_target),
+            ..
+        } = prepass
+        else {
+            return Ok(());
+        };
+
+        let normal_target = normal_target.get_unsampled_attachment();
+        let RenderPassColorAttachment {
+            view: depth_target, ..
+        } = depth_target.get_unsampled_attachment();
 
         // TODO: Remove this
         thread_local! {
@@ -389,19 +156,42 @@ impl Node for InitPass {
 
                 // initial render pass
                 {
-                    let init_pass_builder = gfx_state.initial_pass_target().render_pass_builder();
+                    if let Ok(lightstyle) = cl_state.lightstyle_values() {
+                        world.update_uniform_buffers(
+                            gfx_state,
+                            queue,
+                            &camera,
+                            cl_state.time(),
+                            cl_state.iter_visible_entities(),
+                            lightstyle.as_slice(),
+                            cvars,
+                        );
+                    }
 
-                    world.update_uniform_buffers(
-                        gfx_state,
-                        queue,
-                        &camera,
-                        cl_state.time(),
-                        cl_state.iter_visible_entities(),
-                        cl_state.lightstyle_values().unwrap().as_slice(),
-                        cvars,
-                    );
-
-                    let mut init_pass = encoder.begin_render_pass(&init_pass_builder.descriptor());
+                    let mut init_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Initial pass"),
+                        color_attachments: &[
+                            Some(wgpu::RenderPassColorAttachment {
+                                view: diffuse_target,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            }),
+                            Some(normal_target),
+                        ],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &depth_target,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: Default::default(),
+                        occlusion_query_set: Default::default(),
+                    });
 
                     world.render_pass(
                         gfx_state,
@@ -411,206 +201,16 @@ impl Node for InitPass {
                         cl_state.time(),
                         cl_state.iter_visible_entities(),
                         cl_state.iter_particles(),
-                        cl_state.viewmodel_id(),
+                        if cl_state.intermission().is_none() {
+                            Some(cl_state.viewmodel_id())
+                        } else {
+                            None
+                        },
                     );
                 }
             }
         });
 
-        let target = gfx_state.initial_pass_target();
-
-        graph.set_output(InitPassOutput::Diffuse, target.diffuse_view().clone())?;
-        graph.set_output(InitPassOutput::Normal, target.normal_view().clone())?;
-        graph.set_output(InitPassOutput::Light, target.light_view().clone())?;
-        graph.set_output(InitPassOutput::Depth, target.depth_view().clone())?;
-
         Ok(())
-    }
-
-    fn output(&self) -> Vec<SlotInfo> {
-        vec![
-            SlotInfo {
-                name: INIT_DIFFUSE.into(),
-                slot_type: SlotType::TextureView,
-            },
-            SlotInfo {
-                name: INIT_NORMAL.into(),
-                slot_type: SlotType::TextureView,
-            },
-            SlotInfo {
-                name: INIT_LIGHT.into(),
-                slot_type: SlotType::TextureView,
-            },
-            SlotInfo {
-                name: INIT_DEPTH.into(),
-                slot_type: SlotType::TextureView,
-            },
-        ]
-    }
-}
-
-pub struct DeferredPassTarget {
-    size: Extent2d,
-    sample_count: u32,
-    color_attachment: Texture,
-    color_view: TextureView,
-}
-
-impl DeferredPassTarget {
-    pub const FORMAT: wgpu::TextureFormat = DIFFUSE_ATTACHMENT_FORMAT;
-
-    pub fn format(&self) -> wgpu::TextureFormat {
-        Self::FORMAT
-    }
-
-    pub fn new(device: &RenderDevice, size: Extent2d, sample_count: u32) -> DeferredPassTarget {
-        let color_attachment = create_color_attachment(
-            device,
-            size,
-            sample_count,
-            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
-        );
-        let color_view = color_attachment.create_view(&Default::default());
-
-        DeferredPassTarget {
-            size,
-            sample_count,
-            color_attachment,
-            color_view,
-        }
-    }
-
-    pub fn size(&self) -> Extent2d {
-        self.size
-    }
-
-    pub fn sample_count(&self) -> u32 {
-        self.sample_count
-    }
-
-    pub fn color_attachment(&self) -> &Texture {
-        &self.color_attachment
-    }
-
-    pub fn color_view(&self) -> &TextureView {
-        &self.color_view
-    }
-}
-
-impl RenderTarget for DeferredPassTarget {
-    fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
-        RenderPassBuilder {
-            color_attachments: vec![Some(wgpu::RenderPassColorAttachment {
-                view: self.color_view(),
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_attachment: None,
-        }
-    }
-}
-
-pub struct FinalPassTarget {
-    size: Extent2d,
-    sample_count: u32,
-    resolve_attachment: Texture,
-    resolve_view: TextureView,
-}
-
-impl FinalPassTarget {
-    pub const FORMAT: wgpu::TextureFormat = FINAL_ATTACHMENT_FORMAT;
-
-    pub fn format(&self) -> wgpu::TextureFormat {
-        Self::FORMAT
-    }
-
-    pub fn new(device: &RenderDevice, size: Extent2d) -> FinalPassTarget {
-        let sample_count = 1;
-
-        // add COPY_SRC so we can copy to a buffer for capture and SAMPLED so we
-        // can blit to the swap chain
-        let resolve_attachment = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("resolve attachment"),
-            size: size.into(),
-            mip_level_count: 1,
-            sample_count,
-            dimension: wgpu::TextureDimension::D2,
-            format: Self::FORMAT,
-            usage: wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: Default::default(),
-        });
-        let resolve_view = resolve_attachment.create_view(&Default::default());
-
-        FinalPassTarget {
-            size,
-            sample_count,
-            resolve_attachment,
-            resolve_view,
-        }
-    }
-
-    pub fn size(&self) -> Extent2d {
-        self.size
-    }
-
-    pub fn sample_count(&self) -> u32 {
-        self.sample_count
-    }
-}
-
-impl RenderTarget for FinalPassTarget {
-    fn render_pass_builder<'a>(&'a self) -> RenderPassBuilder {
-        RenderPassBuilder {
-            color_attachments: vec![Some(wgpu::RenderPassColorAttachment {
-                view: self.resolve_view(),
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_attachment: None,
-        }
-    }
-}
-
-impl RenderTargetResolve for FinalPassTarget {
-    fn resolve_attachment(&self) -> &Texture {
-        &self.resolve_attachment
-    }
-
-    fn resolve_view(&self) -> &TextureView {
-        &self.resolve_view
-    }
-}
-
-pub struct SwapChainTarget<'a> {
-    swap_chain_view: &'a TextureView,
-}
-
-impl<'a> SwapChainTarget<'a> {
-    pub fn with_swap_chain_view(swap_chain_view: &'a TextureView) -> SwapChainTarget<'a> {
-        SwapChainTarget { swap_chain_view }
-    }
-}
-
-impl<'a> RenderTarget for SwapChainTarget<'a> {
-    fn render_pass_builder(&self) -> RenderPassBuilder {
-        RenderPassBuilder {
-            color_attachments: vec![Some(wgpu::RenderPassColorAttachment {
-                view: self.swap_chain_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_attachment: None,
-        }
     }
 }

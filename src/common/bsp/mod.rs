@@ -314,7 +314,7 @@ pub enum BspLeafContents {
     Lava = 5,
 
     // This doesn't appear to ever be used
-    // Sky = 6,
+    Sky = 6,
 
     // This is removed during map compilation
     // Origin = 7,

@@ -1,3 +1,5 @@
+use std::convert::TryFrom;
+
 use crate::{
     client::{
         render::{
@@ -11,7 +13,7 @@ use crate::{
         IntermissionKind,
     },
     common::{
-        console::Console,
+        console::{Console, ConsoleOutput, CvarRegistry},
         net::{ClientStat, ItemFlags},
         vfs::Vfs,
         wad::QPic,
@@ -44,13 +46,13 @@ pub enum HudState<'a> {
         item_pickup_time: &'a [Duration],
         stats: &'a [i32],
         face_anim_time: Duration,
-        console: Option<&'a Console>,
+        console: Option<&'a ConsoleOutput>,
     },
     Intermission {
         kind: &'a IntermissionKind,
         completion_duration: Duration,
         stats: &'a [i32],
-        console: Option<&'a Console>,
+        console: Option<&'a ConsoleOutput>,
     },
 }
 
@@ -647,10 +649,12 @@ impl HudRenderer {
     }
 
     /// Generate render commands to draw the HUD in the specified state.
+    // TODO: Should we keep the cvar registry solely on the main thread?
     pub fn generate_commands<'state, 'a>(
         &'a self,
         hud_state: &HudState<'a>,
         time: Duration,
+        cvars: &CvarRegistry,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
     ) {
@@ -658,7 +662,7 @@ impl HudRenderer {
         let scale = 2.0;
         let console_timeout = Duration::seconds(3);
 
-        match hud_state {
+        let console = match hud_state {
             HudState::InGame {
                 items,
                 item_pickup_time,
@@ -677,23 +681,7 @@ impl HudRenderer {
                     glyph_cmds,
                 );
 
-                if let Some(console) = console {
-                    let output = console.output();
-                    for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
-                        for (chr_id, chr) in line.chars().enumerate() {
-                            glyph_cmds.push(GlyphRendererCommand::Glyph {
-                                glyph_id: chr as u8,
-                                position: ScreenPosition::Relative {
-                                    anchor: Anchor::TOP_LEFT,
-                                    x_ofs: 8 * chr_id as i32,
-                                    y_ofs: -8 * id as i32,
-                                },
-                                anchor: Anchor::TOP_LEFT,
-                                scale,
-                            });
-                        }
-                    }
-                }
+                console
             }
             HudState::Intermission {
                 kind,
@@ -702,24 +690,45 @@ impl HudRenderer {
                 console,
             } => {
                 self.cmd_intermission_overlay(kind, *completion_duration, stats, scale, quad_cmds);
+                console
+            }
+        };
 
-                if let Some(console) = console {
-                    // TODO: dedup this code
-                    let output = console.output();
-                    for (id, line) in output.recent_lines(console_timeout, 100, 10).enumerate() {
-                        for (chr_id, chr) in line.chars().enumerate() {
-                            glyph_cmds.push(GlyphRendererCommand::Glyph {
-                                glyph_id: chr as u8,
-                                position: ScreenPosition::Relative {
-                                    anchor: Anchor::TOP_LEFT,
-                                    x_ofs: 8 * chr_id as i32,
-                                    y_ofs: -8 * id as i32,
-                                },
-                                anchor: Anchor::TOP_LEFT,
-                                scale,
-                            });
-                        }
-                    }
+        if let Some(console) = console {
+            for (id, line) in console.recent_lines(console_timeout, 100, 10).enumerate() {
+                glyph_cmds.push(GlyphRendererCommand::Text {
+                    text: line.to_owned(),
+                    position: ScreenPosition::Relative {
+                        anchor: Anchor::TOP_LEFT,
+                        x_ofs: 0,
+                        y_ofs: -8 * id as i32,
+                    },
+                    anchor: Anchor::TOP_LEFT,
+                    scale,
+                });
+            }
+
+            if let HudState::InGame { .. } = hud_state {
+                let Ok(scr_centertime) = Duration::from_std(std::time::Duration::from_secs_f32(
+                    cvars.get_value("scr_centertime").unwrap() as _,
+                )) else {
+                    return;
+                };
+                let Some(center_text) = console.center_print(scr_centertime) else {
+                    return;
+                };
+                for (id, line) in center_text.lines().enumerate() {
+                    glyph_cmds.push(GlyphRendererCommand::Text {
+                        text: line.to_owned(),
+                        position: ScreenPosition::Relative {
+                            anchor: Anchor::CENTER,
+                            x_ofs: 0,
+                            // TODO: Magic number
+                            y_ofs: 64 - 8 * id as i32,
+                        },
+                        anchor: Anchor::CENTER,
+                        scale,
+                    });
                 }
             }
         }

@@ -182,15 +182,6 @@ pub struct PostProcessRenderer {
     bind_group: BindGroup,
 }
 
-impl FromWorld for PostProcessRenderer {
-    fn from_world(world: &mut bevy::prelude::World) -> Self {
-        let state = world.resource::<GraphicsState>();
-        let device = world.resource::<RenderDevice>();
-
-        PostProcessRenderer::new(state, device, state.deferred_pass_target().color_view())
-    }
-}
-
 impl PostProcessRenderer {
     pub fn create_bind_group(
         state: &GraphicsState,

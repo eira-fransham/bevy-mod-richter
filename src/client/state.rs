@@ -14,7 +14,8 @@ use crate::{
         ClientError, ColorShiftCode, IntermissionKind, MoveVars, MAX_STATS,
     },
     common::{
-        bsp, engine,
+        bsp::{self, BspLeafContents},
+        engine,
         math::{self, Angles},
         model::{Model, ModelFlags, ModelKind, SyncType},
         net::{
@@ -738,12 +739,10 @@ impl ClientState {
             kick_vars,
             roll_vars,
         );
-        self.view.calc_final_origin(
-            self.time,
-            self.entities[self.view.entity_id()].origin,
-            self.velocity,
-            bob_vars,
-        );
+        if let Some(e) = self.entities.get(self.view.entity_id()) {
+            self.view
+                .calc_final_origin(self.time, e.origin, self.velocity, bob_vars);
+        }
     }
 
     /// Spawn an entity with the given ID, also spawning any uninitialized
@@ -1064,13 +1063,21 @@ impl ClientState {
     }
 
     fn view_leaf_contents(&self) -> Result<bsp::BspLeafContents, ClientError> {
-        match self.models[1].kind() {
-            ModelKind::Brush(ref bmodel) => {
+        match self.models.get(1).map(|m| m.kind()) {
+            Some(ModelKind::Brush(ref bmodel)) => {
                 let bsp_data = bmodel.bsp_data();
-                let leaf_id = bsp_data.find_leaf(self.entities[self.view.entity_id()].origin);
-                let leaf = &bsp_data.leaves()[leaf_id];
-                Ok(leaf.contents)
+                if let Some(leaf_id) = self
+                    .entities
+                    .get(self.view.entity_id())
+                    .map(|e| bsp_data.find_leaf(e.origin))
+                {
+                    let leaf = &bsp_data.leaves()[leaf_id];
+                    Ok(leaf.contents)
+                } else {
+                    Ok(bsp::BspLeafContents::Empty)
+                }
             }
+            None => Ok(bsp::BspLeafContents::Empty),
             _ => panic!("non-brush worldmodel"),
         }
     }
@@ -1149,11 +1156,13 @@ impl ClientState {
             yaw: angles.y,
         });
         let final_angles = self.view.final_angles();
-        self.entities[self.view.entity_id()].set_angles(Vector3::new(
-            final_angles.pitch,
-            final_angles.yaw,
-            final_angles.roll,
-        ));
+        if let Some(e) = self.entities.get_mut(self.view.entity_id()) {
+            e.set_angles(Vector3::new(
+                final_angles.pitch,
+                final_angles.yaw,
+                final_angles.roll,
+            ));
+        }
     }
 
     /// Update the view angles to the specified value, enabling interpolation.
@@ -1228,14 +1237,18 @@ impl ClientState {
 
     pub fn demo_camera(&self, aspect: f32, fov: Deg<f32>) -> Camera {
         let fov_y = math::fov_x_to_fov_y(fov, aspect).unwrap();
-        let angles = self.entities[self.view.entity_id()].angles;
+        let angles = self
+            .entities
+            .get(self.view.entity_id())
+            .map(|e| Angles {
+                pitch: e.angles.x,
+                roll: e.angles.z,
+                yaw: e.angles.y,
+            })
+            .unwrap_or_default();
         Camera::new(
             self.view.final_origin(),
-            Angles {
-                pitch: angles.x,
-                roll: angles.z,
-                yaw: angles.y,
-            },
+            angles,
             cgmath::perspective(fov_y, aspect, 4.0, 4096.0),
         )
     }

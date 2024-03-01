@@ -1,24 +1,36 @@
-use std::{mem::size_of, num::NonZeroU64};
+use std::{cell::RefCell, mem::size_of, num::NonZeroU64};
 
 use bevy::{
-    ecs::{system::Resource, world::FromWorld},
+    core_pipeline::prepass::ViewPrepassTextures,
+    ecs::system::Resource,
+    prelude::default,
     render::{
+        render_graph::{RenderLabel, ViewNode},
         render_resource::{
             BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, TextureView,
         },
         renderer::{RenderDevice, RenderQueue},
+        texture::{CachedTexture, ColorAttachment},
+        view::{PostProcessWrite, ViewTarget},
     },
 };
+use bumpalo::Bump;
 use cgmath::{Matrix4, SquareMatrix as _, Vector3, Zero as _};
 
 use crate::{
     client::{
         entity::MAX_LIGHTS,
+        input::InputFocus,
+        menu::Menu,
         render::{
-            pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, DIFFUSE_ATTACHMENT_FORMAT,
+            pipeline::Pipeline, ui::quad::QuadPipeline, Fov, GraphicsState, RenderConnectionKind,
+            RenderResolution, RenderState, WorldRenderer,
         },
     },
-    common::util::any_as_bytes,
+    common::{
+        console::{ConsoleInput, ConsoleOutput},
+        util::any_as_bytes,
+    },
 };
 
 #[repr(C)]
@@ -47,10 +59,11 @@ impl DeferredPipeline {
     pub fn new(
         device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
+        format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> DeferredPipeline {
         let (pipeline, bind_group_layouts) =
-            DeferredPipeline::create(device, compiler, &[], sample_count, ());
+            DeferredPipeline::create(device, compiler, &[], sample_count, format);
 
         let uniform_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
@@ -79,10 +92,11 @@ impl DeferredPipeline {
         &mut self,
         device: &RenderDevice,
         compiler: &mut shaderc::Compiler,
+        format: wgpu::TextureFormat,
         sample_count: u32,
     ) {
         let layout_refs = self.bind_group_layouts.iter();
-        let pipeline = Self::recreate(device, compiler, layout_refs, sample_count, ());
+        let pipeline = Self::recreate(device, compiler, layout_refs, sample_count, format);
         self.pipeline = pipeline;
     }
 
@@ -135,20 +149,9 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
         },
         count: None,
     },
-    // light buffer
-    wgpu::BindGroupLayoutEntry {
-        binding: 4,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
-            view_dimension: wgpu::TextureViewDimension::D2,
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            multisampled: false,
-        },
-        count: None,
-    },
     // depth buffer
     wgpu::BindGroupLayoutEntry {
-        binding: 5,
+        binding: 4,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             view_dimension: wgpu::TextureViewDimension::D2,
@@ -159,7 +162,7 @@ const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     },
     // uniform buffer
     wgpu::BindGroupLayoutEntry {
-        binding: 6,
+        binding: 5,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
@@ -175,7 +178,7 @@ impl Pipeline for DeferredPipeline {
     type SharedPushConstants = ();
     type FragmentPushConstants = ();
 
-    type Args = ();
+    type Args = wgpu::TextureFormat;
 
     fn name() -> &'static str {
         "deferred"
@@ -203,9 +206,9 @@ impl Pipeline for DeferredPipeline {
         QuadPipeline::primitive_state()
     }
 
-    fn color_target_states_with_args(_: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
+    fn color_target_states_with_args(format: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
         vec![Some(wgpu::ColorTargetState {
-            format: DIFFUSE_ATTACHMENT_FORMAT,
+            format: format,
             blend: Some(wgpu::BlendState::REPLACE),
             write_mask: wgpu::ColorWrites::ALL,
         })]
@@ -225,29 +228,12 @@ pub struct DeferredRenderer {
     bind_group: BindGroup,
 }
 
-impl FromWorld for DeferredRenderer {
-    fn from_world(world: &mut bevy::prelude::World) -> Self {
-        let state = world.resource::<GraphicsState>();
-        let device = world.resource::<RenderDevice>();
-
-        DeferredRenderer::new(
-            state,
-            device,
-            state.initial_pass_target.diffuse_view(),
-            state.initial_pass_target.normal_view(),
-            state.initial_pass_target.light_view(),
-            state.initial_pass_target.depth_view(),
-        )
-    }
-}
-
 impl DeferredRenderer {
     fn create_bind_group(
         state: &GraphicsState,
         device: &RenderDevice,
         diffuse_buffer: &TextureView,
         normal_buffer: &TextureView,
-        light_buffer: &TextureView,
         depth_buffer: &TextureView,
     ) -> BindGroup {
         device.create_bind_group(
@@ -274,19 +260,14 @@ impl DeferredRenderer {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(normal_buffer),
                 },
-                // light buffer
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(light_buffer),
-                },
                 // depth buffer
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 4,
                     resource: wgpu::BindingResource::TextureView(depth_buffer),
                 },
                 // uniform buffer
                 wgpu::BindGroupEntry {
-                    binding: 6,
+                    binding: 5,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: state.deferred_pipeline().uniform_buffer(),
                         offset: 0,
@@ -302,17 +283,10 @@ impl DeferredRenderer {
         device: &RenderDevice,
         diffuse_buffer: &TextureView,
         normal_buffer: &TextureView,
-        light_buffer: &TextureView,
         depth_buffer: &TextureView,
     ) -> DeferredRenderer {
-        let bind_group = Self::create_bind_group(
-            state,
-            device,
-            diffuse_buffer,
-            normal_buffer,
-            light_buffer,
-            depth_buffer,
-        );
+        let bind_group =
+            Self::create_bind_group(state, device, diffuse_buffer, normal_buffer, depth_buffer);
 
         DeferredRenderer { bind_group }
     }
@@ -323,17 +297,10 @@ impl DeferredRenderer {
         device: &RenderDevice,
         diffuse_buffer: &TextureView,
         normal_buffer: &TextureView,
-        light_buffer: &TextureView,
         depth_buffer: &TextureView,
     ) {
-        self.bind_group = Self::create_bind_group(
-            state,
-            device,
-            diffuse_buffer,
-            normal_buffer,
-            light_buffer,
-            depth_buffer,
-        );
+        self.bind_group =
+            Self::create_bind_group(state, device, diffuse_buffer, normal_buffer, depth_buffer);
     }
 
     pub fn update_uniform_buffers(
@@ -360,5 +327,140 @@ impl DeferredRenderer {
         pass.set_vertex_buffer(0, *state.quad_pipeline().vertex_buffer().slice(..));
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..6, 0..1);
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+pub struct DeferredPassLabel;
+
+#[derive(Default)]
+pub struct DeferredPass;
+
+impl ViewNode for DeferredPass {
+    type ViewQuery = (&'static ViewTarget, &'static ViewPrepassTextures);
+
+    fn run<'w>(
+        &self,
+        graph: &mut bevy::render::render_graph::RenderGraphContext,
+        render_context: &mut bevy::render::renderer::RenderContext<'w>,
+        (target, prepass): (&ViewTarget, &ViewPrepassTextures),
+        world: &'w bevy::prelude::World,
+    ) -> Result<(), bevy::render::render_graph::NodeRunError> {
+        thread_local! {
+            static BUMP: RefCell<Bump> =Bump::new().into();
+        }
+
+        let gfx_state = world.resource::<GraphicsState>();
+        let renderer = world.get_resource::<WorldRenderer>();
+        let conn = world.get_resource::<RenderState>();
+        let queue = world.resource::<RenderQueue>();
+        let device = world.resource::<RenderDevice>();
+        let console_out = world.get_resource::<ConsoleOutput>();
+        let console_in = world.get_resource::<ConsoleInput>();
+        let Some(&RenderResolution(width, height)) = world.get_resource::<RenderResolution>()
+        else {
+            return Ok(());
+        };
+        let menu = world.get_resource::<Menu>();
+        let focus = world.resource::<InputFocus>();
+        let fov = world.resource::<Fov>();
+
+        let PostProcessWrite {
+            source: diffuse_input,
+            destination: diffuse_target,
+        } = target.post_process_write();
+        let ViewPrepassTextures {
+            normal:
+                Some(ColorAttachment {
+                    texture:
+                        CachedTexture {
+                            default_view: normal_input,
+                            ..
+                        },
+                    ..
+                }),
+            depth:
+                Some(ColorAttachment {
+                    texture:
+                        CachedTexture {
+                            default_view: depth_input,
+                            ..
+                        },
+                    ..
+                }),
+            ..
+        } = prepass
+        else {
+            return Ok(());
+        };
+
+        // TODO: Cache
+        let deferred_renderer =
+            DeferredRenderer::new(gfx_state, device, diffuse_input, normal_input, depth_input);
+
+        let encoder = render_context.command_encoder();
+
+        BUMP.with_borrow_mut(|bump| bump.reset());
+        BUMP.with_borrow(|bump| {
+            if let (
+                Some(RenderState {
+                    state: cl_state,
+                    kind,
+                }),
+                Some(world),
+            ) = (conn, renderer)
+            {
+                // if client is fully connected, draw world
+                let camera = match kind {
+                    RenderConnectionKind::Demo => {
+                        cl_state.demo_camera(width as f32 / height as f32, fov.0)
+                    }
+                    RenderConnectionKind::Server => {
+                        cl_state.camera(width as f32 / height as f32, fov.0)
+                    }
+                };
+
+                let mut deferred_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Deferred pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: diffuse_target,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    ..default()
+                });
+
+                let mut lights = [PointLight {
+                    origin: Vector3::zero(),
+                    radius: 0.0,
+                }; MAX_LIGHTS];
+
+                let mut light_count = 0;
+                for (light_id, light) in cl_state.iter_lights().enumerate() {
+                    light_count += 1;
+                    let light_origin = light.origin();
+                    let converted_origin =
+                        Vector3::new(-light_origin.y, light_origin.z, -light_origin.x);
+                    lights[light_id].origin =
+                        (camera.view() * converted_origin.extend(1.0)).truncate();
+                    lights[light_id].radius = light.radius(cl_state.time());
+                }
+
+                let uniforms = DeferredUniforms {
+                    inv_projection: camera.inverse_projection().into(),
+                    light_count,
+                    _pad: [0; 3],
+                    lights,
+                };
+
+                deferred_renderer.record_draw(gfx_state, queue, &mut deferred_pass, uniforms);
+            }
+        });
+
+        Ok(())
     }
 }

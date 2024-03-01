@@ -41,7 +41,6 @@ layout(set = 3, binding = 0) uniform texture2D u_lightmap_texture[4];
 
 layout(location = 0) out vec4 diffuse_attachment;
 layout(location = 1) out vec4 normal_attachment;
-layout(location = 2) out vec4 light_attachment;
 
 vec4 calc_light() {
     vec4 light = vec4(0.0, 0.0, 0.0, 0.0);
@@ -65,21 +64,24 @@ vec4 calc_light() {
 void main() {
     switch (push_constants.texture_kind) {
         case TEXTURE_KIND_REGULAR:
-            diffuse_attachment = texture(
-                sampler2D(u_diffuse_texture, u_diffuse_sampler),
-                f_diffuse
-            );
-
             float fullbright = texture(
                 sampler2D(u_fullbright_texture, u_diffuse_sampler),
                 f_diffuse
             ).r;
 
+
+            float light;
             if (fullbright != 0.0) {
-                light_attachment = vec4(0.25);
+                light = 0.25;
             } else {
-                light_attachment = calc_light();
+                light = dot(calc_light(), vec4(1.));
             }
+
+            diffuse_attachment = vec4(texture(
+                sampler2D(u_diffuse_texture, u_diffuse_sampler),
+                f_diffuse
+            ).rgb, light);
+
             break;
 
         case TEXTURE_KIND_WARP:
@@ -91,11 +93,10 @@ void main() {
             vec2 warp_texcoord = f_diffuse.st + WARP_AMPLITUDE
                 * vec2(sin(wave1.s), sin(wave1.t));
 
-            diffuse_attachment = texture(
+            diffuse_attachment = vec4(texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
                 warp_texcoord
-            );
-            light_attachment = vec4(0.25);
+            ).rgb, 0.25);
             break;
 
         case TEXTURE_KIND_SKY:
@@ -119,8 +120,7 @@ void main() {
             } else {
                 cloud_factor = 1.0;
             }
-            diffuse_attachment = mix(sky_color, cloud_color, cloud_factor);
-            light_attachment = vec4(0.25);
+            diffuse_attachment = vec4(mix(sky_color, cloud_color, cloud_factor).rgb, 0.25);
             break;
 
         // not possible

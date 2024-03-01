@@ -19,7 +19,7 @@ use failure::{bail, Error};
 // https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#limits-maxUniformBufferRange
 // but https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxUniformBufferRange&platform=windows
 // indicates that a limit of 65536 or higher is more common
-const DYNAMIC_UNIFORM_BUFFER_SIZE: wgpu::BufferAddress = 65536;
+const DYNAMIC_UNIFORM_BUFFER_SIZE: wgpu::BufferAddress = 1 << 19;
 
 // https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#limits-minUniformBufferOffsetAlignment
 pub const DYNAMIC_UNIFORM_BUFFER_ALIGNMENT: usize = 256;
