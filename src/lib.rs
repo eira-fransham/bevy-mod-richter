@@ -25,6 +25,8 @@
 #![cfg_attr(debug_assertions, allow(dead_code))]
 #![cfg_attr(debug_assertions, allow(unused_variables))]
 #![cfg_attr(debug_assertions, allow(unused_assignments))]
+// TODO: `#[derive(Fail)]` triggers this, we might need to wait for them to update
+#![allow(non_local_definitions)]
 
 pub mod client;
 pub mod common;

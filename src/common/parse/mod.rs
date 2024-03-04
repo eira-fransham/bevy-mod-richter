@@ -26,9 +26,13 @@ use nom::{
     combinator::map,
     sequence::{delimited, tuple},
 };
-use winit::event::ElementState;
 
-pub use self::{console::commands, map::entities};
+use crate::client::input::game::Trigger;
+
+pub use self::{
+    console::{command, command_name, commands},
+    map::entities,
+};
 
 pub fn non_newline_spaces(input: &str) -> nom::IResult<&str, &str> {
     space1(input)
@@ -42,11 +46,11 @@ pub fn quoted(input: &str) -> nom::IResult<&str, &str> {
     delimited(tag("\""), string_contents, tag("\""))(input)
 }
 
-pub fn action(input: &str) -> nom::IResult<&str, (ElementState, &str)> {
+pub fn action(input: &str) -> nom::IResult<&str, (Trigger, &str)> {
     tuple((
         map(one_of("+-"), |c| match c {
-            '+' => ElementState::Pressed,
-            '-' => ElementState::Released,
+            '+' => Trigger::Positive,
+            '-' => Trigger::Negative,
             _ => unreachable!(),
         }),
         alphanumeric1,
@@ -133,6 +137,6 @@ mod tests {
     #[test]
     fn test_action() {
         let s = "+up";
-        assert_eq!(action(s), Ok(("", (ElementState::Pressed, "up"))))
+        assert_eq!(action(s), Ok(("", (Trigger::Positive, "up"))))
     }
 }

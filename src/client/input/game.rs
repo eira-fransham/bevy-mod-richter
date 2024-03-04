@@ -15,27 +15,117 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{str::FromStr, string::ToString};
+use std::{fmt::Display, hash::Hash, ops::Not, str::FromStr};
 
-use crate::common::{console::ConsoleInput, parse};
-
-use bevy::prelude::*;
-use failure::{bail, Error};
-use fxhash::FxHashMap;
-use smol_str::SmolStr;
-use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
-use winit::{
-    dpi::PhysicalPosition,
-    event::{
-        DeviceEvent, ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
-    },
-    keyboard::{Key, NamedKey},
+use crate::common::{
+    console::{ConsoleInput, RunCmd},
+    parse,
 };
+
+use bevy::{
+    input::{keyboard::Key, prelude::*},
+    prelude::*,
+};
+use failure::{bail, format_err, Error};
+use fxhash::FxHashMap;
+use lazy_static::lazy_static;
+use smol_str::SmolStr;
+use strum_macros::EnumIter;
+use winit::event::MouseButton;
 
 const ACTION_COUNT: usize = 19;
 
-static INPUT_NAMES: [&'static str; 79] = [
+#[derive(Debug, Copy, Clone, Eq)]
+#[repr(transparent)]
+struct UppercaseStr<'a>(&'a str);
+
+impl Display for UppercaseStr<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const BLOCKS: usize = 128;
+
+        let mut buf = arrayvec::ArrayVec::<u8, BLOCKS>::new();
+
+        let chars = self.0.as_bytes();
+
+        for block in chars.chunks(BLOCKS) {
+            buf.clear();
+            buf.extend(block.iter().copied());
+            (&mut *buf).make_ascii_uppercase();
+            write!(f, "{}", std::str::from_utf8(&*buf).unwrap())?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Hash for UppercaseStr<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        const BLOCKS: usize = 128;
+
+        let mut buf = arrayvec::ArrayVec::<u8, BLOCKS>::new();
+
+        let chars = self.0.as_bytes();
+
+        for block in chars.chunks(BLOCKS) {
+            buf.clear();
+            buf.extend(block.iter().copied());
+            (&mut *buf).make_ascii_uppercase();
+            std::str::from_utf8(&*buf).unwrap().hash(state);
+        }
+    }
+}
+
+impl PartialEq for UppercaseStr<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq_ignore_ascii_case(&other.0)
+    }
+}
+
+lazy_static! {
+    static ref KEYMAP: FxHashMap<UppercaseStr<'static>, AnyInput> = KEYBOARD_NAMES
+        .into_iter()
+        .chain(MOUSE_NAMES)
+        .map(|(n, i)| (UppercaseStr(n), i.clone()))
+        .collect();
+    static ref INVERSE_KEYMAP: FxHashMap<AnyInput, UppercaseStr<'static>> = KEYBOARD_NAMES
+        .into_iter()
+        .chain(MOUSE_NAMES)
+        .map(|(n, i)| (i.clone(), UppercaseStr(n)))
+        .collect();
+}
+
+macro_rules! buttons {
+    (@inner ($name:literal, $val:literal) ($any:path, $tname:ident, $sname:path)) => {
+        ($name, $any($sname(SmolStr::new_inline($val))))
+    };
+    (@inner ($name:literal, $val:ident) ($any:path, $tname:ident $(, $sname:path)?)) => {
+        ($name, $any($tname::$val))
+    };
+    (@inner $name:literal ($any:path, $tname:ident, $sname:path)) => {
+        buttons!(@inner ($name, $name) ($any, $tname, $sname))
+    };
+    () => {};
+    (($any:path, $tname:ident) $($e:tt,)*) => {
+        [$(buttons!(@inner $e ($any, $tname))),*]
+    };
+    (($any:path, $tname:ident, $sname:path) $($e:tt,)*) => {
+        [$(buttons!(@inner $e ($any, $tname, $sname))),*]
+    };
+}
+
+macro_rules! keys {
+    ($($inner:tt)*) => {
+        buttons!((AnyInput::Keyboard, Key, Key::Character) $($inner)*)
+    }
+}
+
+macro_rules! mouse {
+    ($($inner:tt)*) => {
+        buttons!((AnyInput::Mouse, MouseButton) $($inner)*)
+    }
+}
+
+const KEYBOARD_NAMES: &[(&str, AnyInput)] = &keys![
     ",",
     ".",
     "/",
@@ -50,62 +140,58 @@ static INPUT_NAMES: [&'static str; 79] = [
     "8",
     "9",
     "A",
-    "ALT",
+    ("ALT", Alt),
     "B",
-    "BACKSPACE",
+    ("BACKSPACE", Backspace),
     "C",
-    "CTRL",
+    ("CTRL", Control),
     "D",
-    "DEL",
-    "DOWNARROW",
+    ("DEL", Delete),
+    ("DOWNARROW", ArrowDown),
     "E",
-    "END",
-    "ENTER",
-    "ESCAPE",
+    ("END", End),
+    ("ENTER", Enter),
+    ("ESCAPE", Escape),
+    ("PAUSE", Pause),
     "F",
-    "F1",
-    "F10",
-    "F11",
-    "F12",
-    "F2",
-    "F3",
-    "F4",
-    "F5",
-    "F6",
-    "F7",
-    "F8",
-    "F9",
+    ("F1", F1),
+    ("F10", F10),
+    ("F11", F11),
+    ("F12", F12),
+    ("F2", F2),
+    ("F3", F3),
+    ("F4", F4),
+    ("F5", F5),
+    ("F6", F6),
+    ("F7", F7),
+    ("F8", F8),
+    ("F9", F9),
     "G",
     "H",
-    "HOME",
+    ("HOME", Home),
     "I",
-    "INS",
+    ("INS", Insert),
     "J",
     "K",
     "L",
-    "LEFTARROW",
+    ("LEFTARROW", ArrowLeft),
     "M",
-    "MOUSE1",
-    "MOUSE2",
-    "MOUSE3",
-    "MWHEELDOWN",
-    "MWHEELUP",
     "N",
     "O",
     "P",
-    "PGDN",
-    "PGUP",
+    ("PGDN", PageDown),
+    ("PGUP", PageUp),
     "Q",
     "R",
-    "RIGHTARROW",
+    ("RIGHTARROW", ArrowRight),
     "S",
-    "SEMICOLON",
-    "SHIFT",
-    "SPACE",
+    ("SEMICOLON", ";"),
+    ("SHIFT", Shift),
+    ("SPACE", " "),
     "T",
-    "TAB",
+    ("TAB", Tab),
     "U",
-    "UPARROW",
+    ("UPARROW", ArrowUp),
     "V",
     "W",
     "X",
@@ -115,88 +201,18 @@ static INPUT_NAMES: [&'static str; 79] = [
     "\\",
     "]",
     "`",
+    "~",
+    "+",
+    "-",
+    "=",
 ];
 
-static INPUT_VALUES: [BindInput<&'static str>; 79] = [
-    BindInput::Key(Key::Character(",")),
-    BindInput::Key(Key::Character(".")),
-    BindInput::Key(Key::Character("/")),
-    BindInput::Key(Key::Character("0")),
-    BindInput::Key(Key::Character("1")),
-    BindInput::Key(Key::Character("2")),
-    BindInput::Key(Key::Character("3")),
-    BindInput::Key(Key::Character("4")),
-    BindInput::Key(Key::Character("5")),
-    BindInput::Key(Key::Character("6")),
-    BindInput::Key(Key::Character("7")),
-    BindInput::Key(Key::Character("8")),
-    BindInput::Key(Key::Character("9")),
-    BindInput::Key(Key::Character("a")),
-    BindInput::Key(Key::Named(NamedKey::Alt)),
-    BindInput::Key(Key::Character("b")),
-    BindInput::Key(Key::Named(NamedKey::Backspace)),
-    BindInput::Key(Key::Character("c")),
-    BindInput::Key(Key::Named(NamedKey::Control)),
-    BindInput::Key(Key::Character("d")),
-    BindInput::Key(Key::Named(NamedKey::Delete)),
-    BindInput::Key(Key::Named(NamedKey::ArrowDown)),
-    BindInput::Key(Key::Character("e")),
-    BindInput::Key(Key::Named(NamedKey::End)),
-    BindInput::Key(Key::Named(NamedKey::Enter)),
-    BindInput::Key(Key::Named(NamedKey::Escape)),
-    BindInput::Key(Key::Character("f")),
-    BindInput::Key(Key::Named(NamedKey::F1)),
-    BindInput::Key(Key::Named(NamedKey::F10)),
-    BindInput::Key(Key::Named(NamedKey::F11)),
-    BindInput::Key(Key::Named(NamedKey::F12)),
-    BindInput::Key(Key::Named(NamedKey::F2)),
-    BindInput::Key(Key::Named(NamedKey::F3)),
-    BindInput::Key(Key::Named(NamedKey::F4)),
-    BindInput::Key(Key::Named(NamedKey::F5)),
-    BindInput::Key(Key::Named(NamedKey::F6)),
-    BindInput::Key(Key::Named(NamedKey::F7)),
-    BindInput::Key(Key::Named(NamedKey::F8)),
-    BindInput::Key(Key::Named(NamedKey::F9)),
-    BindInput::Key(Key::Character("g")),
-    BindInput::Key(Key::Character("h")),
-    BindInput::Key(Key::Named(NamedKey::Home)),
-    BindInput::Key(Key::Character("i")),
-    BindInput::Key(Key::Named(NamedKey::Insert)),
-    BindInput::Key(Key::Character("j")),
-    BindInput::Key(Key::Character("k")),
-    BindInput::Key(Key::Character("l")),
-    BindInput::Key(Key::Named(NamedKey::ArrowLeft)),
-    BindInput::Key(Key::Character("m")),
-    BindInput::MouseButton(MouseButton::Left),
-    BindInput::MouseButton(MouseButton::Right),
-    BindInput::MouseButton(MouseButton::Middle),
-    BindInput::MouseWheel(MouseWheel::Down),
-    BindInput::MouseWheel(MouseWheel::Up),
-    BindInput::Key(Key::Character("n")),
-    BindInput::Key(Key::Character("o")),
-    BindInput::Key(Key::Character("p")),
-    BindInput::Key(Key::Named(NamedKey::PageDown)),
-    BindInput::Key(Key::Named(NamedKey::PageUp)),
-    BindInput::Key(Key::Character("q")),
-    BindInput::Key(Key::Character("r")),
-    BindInput::Key(Key::Named(NamedKey::ArrowRight)),
-    BindInput::Key(Key::Character("s")),
-    BindInput::Key(Key::Character(";")),
-    BindInput::Key(Key::Named(NamedKey::Shift)),
-    BindInput::Key(Key::Named(NamedKey::Space)),
-    BindInput::Key(Key::Character("t")),
-    BindInput::Key(Key::Named(NamedKey::Tab)),
-    BindInput::Key(Key::Character("u")),
-    BindInput::Key(Key::Named(NamedKey::ArrowUp)),
-    BindInput::Key(Key::Character("v")),
-    BindInput::Key(Key::Character("w")),
-    BindInput::Key(Key::Character("x")),
-    BindInput::Key(Key::Character("y")),
-    BindInput::Key(Key::Character("z")),
-    BindInput::Key(Key::Character("[")),
-    BindInput::Key(Key::Character("\\")),
-    BindInput::Key(Key::Character("]")),
-    BindInput::Key(Key::Character("`")),
+const MOUSE_NAMES: &[(&str, AnyInput)] = &mouse![
+    ("MOUSE1", Left),
+    ("MOUSE2", Right),
+    ("MOUSE3", Middle),
+    // TODO: "MWHEELDOWN"
+    // TODO: "MWHEELUP"
 ];
 
 /// A unique identifier for an in-game action.
@@ -204,58 +220,40 @@ static INPUT_VALUES: [BindInput<&'static str>; 79] = [
 pub enum Action {
     /// Move forward.
     Forward = 0,
-
     /// Move backward.
     Back = 1,
-
     /// Strafe left.
     MoveLeft = 2,
-
     /// Strafe right.
     MoveRight = 3,
-
     /// Move up (when swimming).
     MoveUp = 4,
-
     /// Move down (when swimming).
     MoveDown = 5,
-
     /// Look up.
     LookUp = 6,
-
     /// Look down.
     LookDown = 7,
-
     /// Look left.
     Left = 8,
-
     /// Look right.
     Right = 9,
-
     /// Change move speed (walk/run).
     Speed = 10,
-
     /// Jump.
     Jump = 11,
-
     /// Interpret `Left`/`Right` like `MoveLeft`/`MoveRight`.
     Strafe = 12,
-
     /// Attack with the current weapon.
     Attack = 13,
-
     /// Interact with an object (not used).
     Use = 14,
-
     /// Interpret `Forward`/`Back` like `LookUp`/`LookDown`.
     KLook = 15,
-
     /// Interpret upward/downward vertical mouse movements like `LookUp`/`LookDown`.
     MLook = 16,
-
     /// If in single-player, show the current level stats. If in multiplayer, show the scoreboard.
     ShowScores = 17,
-
     /// Show the team scoreboard.
     ShowTeamScores = 18,
 }
@@ -291,9 +289,9 @@ impl FromStr for Action {
     }
 }
 
-impl ToString for Action {
-    fn to_string(&self) -> String {
-        String::from(match *self {
+impl AsRef<str> for Action {
+    fn as_ref(&self) -> &str {
+        match *self {
             Action::Forward => "forward",
             Action::Back => "back",
             Action::MoveLeft => "moveleft",
@@ -313,375 +311,276 @@ impl ToString for Action {
             Action::MLook => "mlook",
             Action::ShowScores => "showscores",
             Action::ShowTeamScores => "showteamscores",
-        })
-    }
-}
-
-// for game input, we only care about the direction the mouse wheel moved, not how far it went in
-// one event
-/// A movement of the mouse wheel up or down.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum MouseWheel {
-    Up,
-    Down,
-}
-
-// TODO: this currently doesn't handle NaN and treats 0.0 as negative which is probably not optimal
-impl ::std::convert::From<MouseScrollDelta> for MouseWheel {
-    fn from(src: MouseScrollDelta) -> MouseWheel {
-        match src {
-            MouseScrollDelta::LineDelta(_, y) => {
-                if y > 0.0 {
-                    MouseWheel::Up
-                } else {
-                    MouseWheel::Down
-                }
-            }
-
-            MouseScrollDelta::PixelDelta(PhysicalPosition { y, .. }) => {
-                if y > 0.0 {
-                    MouseWheel::Up
-                } else {
-                    MouseWheel::Down
-                }
-            }
         }
     }
 }
 
-/// A physical input that can be bound to a command.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum BindInput<S = SmolStr> {
-    /// A key pressed on the keyboard.
-    Key(Key<S>),
-
-    /// A button pressed on the mouse.
-    MouseButton(MouseButton),
-
-    /// A direction scrolled on the mouse wheel.
-    MouseWheel(MouseWheel),
-}
-
-impl BindInput {
-    fn as_ref(&self) -> BindInput<&str> {
-        match self {
-            BindInput::Key(k) => BindInput::Key(k.as_ref()),
-            BindInput::MouseButton(b) => BindInput::MouseButton(*b),
-            BindInput::MouseWheel(w) => BindInput::MouseWheel(*w),
-        }
-    }
-}
-
-impl ::std::convert::From<Key> for BindInput {
-    fn from(src: Key) -> BindInput {
-        BindInput::Key(src)
-    }
-}
-
-impl ::std::convert::From<MouseButton> for BindInput {
-    fn from(src: MouseButton) -> BindInput {
-        BindInput::MouseButton(src)
-    }
-}
-
-impl ::std::convert::From<MouseWheel> for BindInput {
-    fn from(src: MouseWheel) -> BindInput {
-        BindInput::MouseWheel(src)
-    }
-}
-
-impl ::std::convert::From<MouseScrollDelta> for BindInput {
-    fn from(src: MouseScrollDelta) -> BindInput {
-        BindInput::MouseWheel(MouseWheel::from(src))
-    }
-}
-
-impl From<BindInput<&'static str>> for BindInput {
-    fn from(value: BindInput<&'static str>) -> Self {
-        match value {
-            BindInput::Key(Key::Character(s)) => Self::Key(Key::Character(s.into())),
-            BindInput::Key(Key::Named(n)) => Self::Key(Key::Named(n)),
-            BindInput::Key(Key::Unidentified(k)) => Self::Key(Key::Unidentified(k)),
-            BindInput::Key(Key::Dead(k)) => Self::Key(Key::Dead(k)),
-            BindInput::MouseButton(b) => Self::MouseButton(b),
-            BindInput::MouseWheel(w) => Self::MouseWheel(w),
-        }
-    }
-}
-
-impl FromStr for BindInput {
-    type Err = Error;
-
-    fn from_str(src: &str) -> Result<BindInput, Error> {
-        let upper = src.to_uppercase();
-
-        for (i, name) in INPUT_NAMES.iter().enumerate() {
-            if upper == *name {
-                return Ok(INPUT_VALUES[i].clone().into());
-            }
-        }
-
-        bail!("\"{}\" isn't a valid key", src);
-    }
-}
-
-impl ToString for BindInput {
+impl ToString for Action {
     fn to_string(&self) -> String {
-        // this could be a binary search but it's unlikely to affect performance much
-        for (i, input) in INPUT_VALUES.iter().enumerate() {
-            if self.as_ref() == *input {
-                return INPUT_NAMES[i].to_owned();
-            }
-        }
-
-        String::new()
+        self.as_ref().to_owned()
     }
 }
 
-/// An operation to perform when a `BindInput` is received.
-#[derive(Clone, Debug)]
-pub enum BindTarget {
-    /// An action to set/unset.
-    Action {
-        // + is true, - is false
-        // so "+forward" maps to trigger: true, action: Action::Forward
-        trigger: ElementState,
-        action: Action,
-    },
-
-    /// Text to push to the console execution buffer.
-    ConsoleInput { text: String },
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AnyInput {
+    Mouse(MouseButton),
+    Keyboard(Key),
+    Gamepad(GamepadButton),
 }
 
-impl FromStr for BindTarget {
+impl AnyInput {
+    pub const ALT: Self = AnyInput::Keyboard(Key::Alt);
+    pub const BACKSPACE: Self = AnyInput::Keyboard(Key::Backspace);
+    pub const CTRL: Self = AnyInput::Keyboard(Key::Control);
+    pub const DEL: Self = AnyInput::Keyboard(Key::Delete);
+    pub const DOWNARROW: Self = AnyInput::Keyboard(Key::ArrowDown);
+    pub const END: Self = AnyInput::Keyboard(Key::End);
+    pub const ENTER: Self = AnyInput::Keyboard(Key::Enter);
+    pub const PAUSE: Self = AnyInput::Keyboard(Key::Pause);
+    pub const ESCAPE: Self = AnyInput::Keyboard(Key::Escape);
+    pub const F1: Self = AnyInput::Keyboard(Key::F1);
+    pub const F10: Self = AnyInput::Keyboard(Key::F10);
+    pub const F11: Self = AnyInput::Keyboard(Key::F11);
+    pub const F12: Self = AnyInput::Keyboard(Key::F12);
+    pub const F2: Self = AnyInput::Keyboard(Key::F2);
+    pub const F3: Self = AnyInput::Keyboard(Key::F3);
+    pub const F4: Self = AnyInput::Keyboard(Key::F4);
+    pub const F5: Self = AnyInput::Keyboard(Key::F5);
+    pub const F6: Self = AnyInput::Keyboard(Key::F6);
+    pub const F7: Self = AnyInput::Keyboard(Key::F7);
+    pub const F8: Self = AnyInput::Keyboard(Key::F8);
+    pub const F9: Self = AnyInput::Keyboard(Key::F9);
+    pub const HOME: Self = AnyInput::Keyboard(Key::Home);
+    pub const INS: Self = AnyInput::Keyboard(Key::Insert);
+    pub const LEFTARROW: Self = AnyInput::Keyboard(Key::ArrowLeft);
+    pub const PGDN: Self = AnyInput::Keyboard(Key::PageDown);
+    pub const PGUP: Self = AnyInput::Keyboard(Key::PageUp);
+    pub const RIGHTARROW: Self = AnyInput::Keyboard(Key::ArrowRight);
+    pub const SHIFT: Self = AnyInput::Keyboard(Key::Shift);
+    pub const TAB: Self = AnyInput::Keyboard(Key::Tab);
+    pub const UPARROW: Self = AnyInput::Keyboard(Key::ArrowUp);
+}
+
+impl From<Key> for AnyInput {
+    fn from(value: Key) -> Self {
+        Self::Keyboard(value)
+    }
+}
+
+impl From<MouseButton> for AnyInput {
+    fn from(value: MouseButton) -> Self {
+        Self::Mouse(value)
+    }
+}
+
+impl FromStr for AnyInput {
     type Err = Error;
+
+    fn from_str(src: &str) -> Result<Self, Error> {
+        let Some(out) = KEYMAP.get(&UppercaseStr(src)) else {
+            bail!("\"{}\" isn't a valid key", src);
+        };
+
+        Ok(out.clone())
+    }
+}
+
+impl TryInto<AnyInput> for &'_ str {
+    type Error = <AnyInput as FromStr>::Err;
+
+    fn try_into(self) -> Result<AnyInput, Self::Error> {
+        self.parse()
+    }
+}
+
+impl Display for AnyInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            INVERSE_KEYMAP.get(self).unwrap_or(&UppercaseStr("UNKNOWN"))
+        )
+    }
+}
+
+/// Whether to trigger an action on pressing or releasing a key
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Trigger {
+    /// "Positive edge" - trigger on press
+    #[default]
+    Positive,
+    /// "Negative edge" - trigger on release
+    Negative,
+}
+
+impl Not for Trigger {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Self::Positive => Self::Negative,
+            Self::Negative => Self::Positive,
+        }
+    }
+}
+
+#[derive(Default, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BindingValidState {
+    #[default]
+    Game,
+    Any,
+}
+
+impl Display for BindingValidState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if *self == BindingValidState::Any {
+            write!(f, "*")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Display for Trigger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Trigger::Positive => write!(f, "+"),
+            Trigger::Negative => write!(f, "-"),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Binding<'a> {
+    pub commands: Vec<RunCmd<'a>>,
+    pub valid: BindingValidState,
+}
+
+impl Binding<'_> {
+    pub fn into_owned(self) -> Binding<'static> {
+        Binding {
+            commands: self.commands.into_iter().map(RunCmd::into_owned).collect(),
+            valid: self.valid,
+        }
+    }
+}
+
+impl FromStr for Binding<'static> {
+    type Err = nom::Err<nom::error::Error<String>>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match parse::action(s) {
-            // first, check if this is an action
-            Ok((_, (trigger, action_str))) => {
-                let action = match Action::from_str(&action_str) {
-                    Ok(a) => a,
-                    _ => return Ok(BindTarget::ConsoleInput { text: s.to_owned() }),
-                };
-
-                Ok(BindTarget::Action { trigger, action })
-            }
-
-            // if the parse fails, assume it's a cvar/cmd and return the text
-            _ => Ok(BindTarget::ConsoleInput { text: s.to_owned() }),
+        match parse::console::binding(s) {
+            Ok(("", val)) => Ok(val.into_owned().into()),
+            Ok((rest, _)) => Err(nom::Err::Failure(nom::error::Error::new(
+                rest.to_owned(),
+                nom::error::ErrorKind::Verify,
+            ))),
+            Err(e) => Err(e.to_owned()),
         }
     }
 }
 
-impl ToString for BindTarget {
-    fn to_string(&self) -> String {
-        match *self {
-            BindTarget::Action { trigger, action } => {
-                String::new()
-                    + match trigger {
-                        ElementState::Pressed => "+",
-                        ElementState::Released => "-",
-                    }
-                    + &action.to_string()
-            }
+impl Display for Binding<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.valid)?;
 
-            BindTarget::ConsoleInput { ref text } => format!("\"{}\"", text.to_owned()),
+        let mut cmds = self.commands.iter();
+        if let Some(first_cmd) = cmds.next() {
+            write!(f, "{}", first_cmd)?;
+
+            for cmd in cmds {
+                write!(f, "; {}", cmd)?;
+            }
         }
+
+        Ok(())
     }
 }
 
-#[derive(Clone, Resource, Default)]
+#[derive(Clone, Resource)]
 pub struct GameInput {
-    pub bindings: FxHashMap<BindInput, BindTarget>,
-    pub action_states: [bool; ACTION_COUNT],
+    pub bindings: FxHashMap<AnyInput, Binding<'static>>,
     pub mouse_delta: (f64, f64),
-    pub impulse: u8,
+}
+
+impl Default for GameInput {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GameInput {
     pub fn new() -> GameInput {
-        Self::default()
+        let mut out = Self {
+            bindings: default(),
+            mouse_delta: default(),
+        };
+
+        out.bind_defaults();
+
+        out
     }
 
     pub fn mouse_delta(&self) -> (f64, f64) {
         self.mouse_delta
     }
 
-    pub fn impulse(&self) -> u8 {
-        self.impulse
-    }
-
     /// Bind the default controls.
     pub fn bind_defaults(&mut self) {
-        self.bind(
-            Key::Character("w".into()),
-            BindTarget::from_str("+forward").unwrap(),
-        );
-        self.bind(
-            Key::Character("a".into()),
-            BindTarget::from_str("+moveleft").unwrap(),
-        );
-        self.bind(
-            Key::Character("s".into()),
-            BindTarget::from_str("+back").unwrap(),
-        );
-        self.bind(
-            Key::Character("d".into()),
-            BindTarget::from_str("+moveright").unwrap(),
-        );
-        self.bind(
-            Key::Named(NamedKey::Space),
-            BindTarget::from_str("+jump").unwrap(),
-        );
-        self.bind(
-            Key::Named(NamedKey::ArrowUp),
-            BindTarget::from_str("+lookup").unwrap(),
-        );
-        self.bind(
-            Key::Named(NamedKey::ArrowLeft),
-            BindTarget::from_str("+left").unwrap(),
-        );
-        self.bind(
-            Key::Named(NamedKey::ArrowDown),
-            BindTarget::from_str("+lookdown").unwrap(),
-        );
-        self.bind(
-            Key::Named(NamedKey::ArrowRight),
-            BindTarget::from_str("+right").unwrap(),
-        );
-        self.bind(
-            Key::Named(NamedKey::Control),
-            BindTarget::from_str("+attack").unwrap(),
-        );
-        self.bind(
-            Key::Character("e".into()),
-            BindTarget::from_str("+use").unwrap(),
-        );
-        self.bind(
-            Key::Character("`".into()),
-            BindTarget::from_str("toggleconsole").unwrap(),
-        );
-        self.bind(
-            Key::Character("1".into()),
-            BindTarget::from_str("impulse 1").unwrap(),
-        );
-        self.bind(
-            Key::Character("2".into()),
-            BindTarget::from_str("impulse 2").unwrap(),
-        );
-        self.bind(
-            Key::Character("3".into()),
-            BindTarget::from_str("impulse 3").unwrap(),
-        );
-        self.bind(
-            Key::Character("4".into()),
-            BindTarget::from_str("impulse 4").unwrap(),
-        );
-        self.bind(
-            Key::Character("5".into()),
-            BindTarget::from_str("impulse 5").unwrap(),
-        );
-        self.bind(
-            Key::Character("6".into()),
-            BindTarget::from_str("impulse 6").unwrap(),
-        );
-        self.bind(
-            Key::Character("7".into()),
-            BindTarget::from_str("impulse 7").unwrap(),
-        );
-        self.bind(
-            Key::Character("8".into()),
-            BindTarget::from_str("impulse 8").unwrap(),
-        );
-        self.bind(
-            Key::Character("9".into()),
-            BindTarget::from_str("impulse 9").unwrap(),
-        );
+        self.bind("W", "+forward").unwrap();
+        self.bind("A", "+moveleft").unwrap();
+        self.bind("S", "+back").unwrap();
+        self.bind("D", "+moveright").unwrap();
+        self.bind("SPACE", "+jump").unwrap();
+        self.bind("UPARROW", "+lookup").unwrap();
+        self.bind("LEFTARROW", "+left").unwrap();
+        self.bind("DOWNARROW", "+lookdown").unwrap();
+        self.bind("RIGHTARROW", "+right").unwrap();
+        self.bind("CTRL", "+attack").unwrap();
+        self.bind("E", "+use").unwrap();
+        self.bind("`", "*toggleconsole").unwrap();
+        self.bind("ESCAPE", "*togglemenu").unwrap();
+        self.bind("1", "impulse 1").unwrap();
+        self.bind("2", "impulse 2").unwrap();
+        self.bind("3", "impulse 3").unwrap();
+        self.bind("4", "impulse 4").unwrap();
+        self.bind("5", "impulse 5").unwrap();
+        self.bind("6", "impulse 6").unwrap();
+        self.bind("7", "impulse 7").unwrap();
+        self.bind("8", "impulse 8").unwrap();
+        self.bind("9", "impulse 9").unwrap();
     }
 
     /// Bind a `BindInput` to a `BindTarget`.
-    pub fn bind<I, T>(&mut self, input: I, target: T) -> Option<BindTarget>
+    pub fn bind<I, T>(&mut self, input: I, target: T) -> Result<Option<Binding<'static>>, Error>
     where
-        I: Into<BindInput>,
-        T: Into<BindTarget>,
+        I: TryInto<AnyInput>,
+        T: AsRef<str>,
+        I::Error: Display,
     {
-        self.bindings.insert(input.into(), target.into())
+        let target: Binding = target
+            .as_ref()
+            .parse()
+            .map_err(|e| format_err!("Failed to parse target: {}", e))?;
+        let input = input
+            .try_into()
+            .map_err(|e| format_err!("Failed to parse input: {}", e))?;
+
+
+        Ok(self.bindings.insert(input, target))
     }
 
     /// Return the `BindTarget` that `input` is bound to, or `None` if `input` is not present.
-    pub fn binding<I>(&self, input: I) -> Option<BindTarget>
+    pub fn binding<I>(&self, input: I) -> Result<Option<&Binding<'static>>, Error>
     where
-        I: Into<BindInput>,
+        I: TryInto<AnyInput>,
+        I::Error: Display,
     {
-        self.bindings.get(&input.into()).map(|t| t.clone())
-    }
-
-    pub fn handle_event<T>(&mut self, console: &mut ConsoleInput, outer_event: Event<T>) {
-        // TODO: Re-implement input handling
-        // let (input, state): (BindInput, _) = match outer_event {
-        //     Event::WindowEvent { event, .. } => match event {
-        //         WindowEvent::KeyboardInput {
-        //             event:
-        //                 KeyEvent {
-        //                     state,
-        //                     logical_key: key,
-        //                     ..
-        //                 },
-        //             ..
-        //         } => (key.into(), state),
-
-        //         WindowEvent::MouseInput { state, button, .. } => (button.into(), state),
-        //         WindowEvent::MouseWheel { delta, .. } => (delta.into(), ElementState::Pressed),
-        //         _ => return,
-        //     },
-
-        //     Event::DeviceEvent { event, .. } => match event {
-        //         DeviceEvent::MouseMotion { delta } => {
-        //             self.mouse_delta.0 += delta.0;
-        //             self.mouse_delta.1 += delta.1;
-        //             return;
-        //         }
-
-        //         _ => return,
-        //     },
-
-        //     _ => return,
-        // };
-
-        // self.handle_input(console, input, state);
-    }
-
-    pub fn handle_input<I>(&mut self, console: &mut ConsoleInput, input: I, state: ElementState)
-    where
-        I: Into<BindInput>,
-    {
-        // TODO: Re-implement input handling
-        // let bind_input = input.into();
-
-        // // debug!("handle input {:?}: {:?}", &bind_input, state);
-        // if let Some(target) = self.bindings.get(&bind_input) {
-        //     match *target {
-        //         BindTarget::Action { trigger, action } => {
-        //             self.action_states[action as usize] = state == trigger;
-        //             debug!(
-        //                 "{}{}",
-        //                 if state == trigger { '+' } else { '-' },
-        //                 action.to_string()
-        //             );
-        //         }
-
-        //         BindTarget::ConsoleInput { ref text } => {
-        //             if state == ElementState::Pressed {
-        //                 console.append_text(text);
-        //             }
-        //         }
-        //     }
-        // }
-    }
-
-    pub fn action_state(&self, action: Action) -> bool {
-        self.action_states[action as usize]
+        Ok(self.bindings.get(
+            &input
+                .try_into()
+                .map_err(|e| format_err!("Failed to parse input: {}", e))?,
+        ))
     }
 
     // must be called every frame!
@@ -696,14 +595,12 @@ impl GameInput {
         // self.handle_input(console, MouseWheel::Down, ElementState::Released);
         // self.mouse_delta = (0.0, 0.0);
     }
-
-    fn clear_impulse(&mut self) {
-        self.impulse = 0;
-    }
 }
 
 #[cfg(test)]
 mod test {
+    use crate::common::console::CmdName;
+
     use super::*;
 
     #[test]
@@ -714,9 +611,9 @@ mod test {
 
     #[test]
     fn test_bind_target_action_to_string() {
-        let target = BindTarget::Action {
-            trigger: ElementState::Pressed,
-            action: Action::Forward,
+        let target = CmdName {
+            trigger: Some(Trigger::Positive),
+            name: "forward".into(),
         };
 
         assert_eq!(target.to_string(), "+forward");

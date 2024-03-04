@@ -18,20 +18,26 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use richter::{
-    client::menu::{Menu, MenuBodyView, MenuBuilder, MenuView},
-    common::host::Control,
+use bevy::{
+    app::AppExit,
+    ecs::{
+        event::Events,
+        system::{In, ResMut},
+    },
 };
+use richter::client::menu::{Menu, MenuBodyView, MenuBuilder, MenuView};
 
 use failure::Error;
 
-pub fn build_main_menu() -> Result<Menu, Error> {
-    Ok(MenuBuilder::new()
-        .add_submenu("Single Player", build_menu_sp()?)
-        .add_submenu("Multiplayer", build_menu_mp()?)
-        .add_submenu("Options", build_menu_options()?)
-        .add_action("Help/Ordering", Box::new(|| ()))
-        .add_action::<_, Box<dyn Fn() -> Control + Send + Sync>>("Quit", Box::new(|| Control::Exit))
+pub fn build_main_menu(builder: MenuBuilder) -> Result<Menu, Error> {
+    Ok(builder
+        .add_submenu("Single Player", build_menu_sp)?
+        .add_submenu("Multiplayer", build_menu_mp)?
+        .add_submenu("Options", build_menu_options)?
+        .add_action("Help/Ordering", || ())
+        .add_action("Quit", |mut quit: ResMut<Events<AppExit>>| {
+            quit.send(AppExit);
+        })
         .build(MenuView {
             draw_plaque: true,
             title_path: "gfx/ttl_main.lmp".into(),
@@ -41,11 +47,11 @@ pub fn build_main_menu() -> Result<Menu, Error> {
         }))
 }
 
-fn build_menu_sp() -> Result<Menu, Error> {
-    Ok(MenuBuilder::new()
-        .add_action("New Game", Box::new(|| ()))
-        // .add_submenu("Load", unimplemented!())
-        // .add_submenu("Save", unimplemented!())
+fn build_menu_sp(builder: MenuBuilder) -> Result<Menu, Error> {
+    Ok(builder
+        .add_action("New Game", || ())
+        .add_action("Load", || unimplemented!())
+        .add_action("Save", || unimplemented!())
         .build(MenuView {
             draw_plaque: true,
             title_path: "gfx/ttl_sgl.lmp".into(),
@@ -55,11 +61,11 @@ fn build_menu_sp() -> Result<Menu, Error> {
         }))
 }
 
-fn build_menu_mp() -> Result<Menu, Error> {
-    Ok(MenuBuilder::new()
-        .add_submenu("Join a Game", build_menu_mp_join()?)
-        // .add_submenu("New Game", unimplemented!())
-        // .add_submenu("Setup", unimplemented!())
+fn build_menu_mp(builder: MenuBuilder) -> Result<Menu, Error> {
+    Ok(builder
+        .add_submenu("Join a Game", build_menu_mp_join)?
+        .add_action("New Game", || unimplemented!())
+        .add_action("Setup", || unimplemented!())
         .build(MenuView {
             draw_plaque: true,
             title_path: "gfx/p_multi.lmp".into(),
@@ -69,9 +75,9 @@ fn build_menu_mp() -> Result<Menu, Error> {
         }))
 }
 
-fn build_menu_mp_join() -> Result<Menu, Error> {
-    Ok(MenuBuilder::new()
-        .add_submenu("TCP", build_menu_mp_join_tcp()?)
+fn build_menu_mp_join(builder: MenuBuilder) -> Result<Menu, Error> {
+    Ok(builder
+        .add_submenu("TCP", build_menu_mp_join_tcp)?
         // .add_textbox // description
         .build(MenuView {
             draw_plaque: true,
@@ -82,7 +88,7 @@ fn build_menu_mp_join() -> Result<Menu, Error> {
         }))
 }
 
-fn build_menu_mp_join_tcp() -> Result<Menu, Error> {
+fn build_menu_mp_join_tcp(builder: MenuBuilder) -> Result<Menu, Error> {
     // Join Game - TCP/IP          // title
     //
     //  Address: 127.0.0.1         // label
@@ -93,9 +99,9 @@ fn build_menu_mp_join_tcp() -> Result<Menu, Error> {
     //
     //  Join game at:              // label
     //  [                        ] // text field
-    Ok(MenuBuilder::new()
+    Ok(builder
         // .add
-        .add_toggle("placeholder", false, Box::new(|_| ()))
+        .add_toggle("placeholder", false, |In(_): In<bool>| ())
         .build(MenuView {
             draw_plaque: true,
             title_path: "gfx/p_multi.lmp".into(),
@@ -103,21 +109,21 @@ fn build_menu_mp_join_tcp() -> Result<Menu, Error> {
         }))
 }
 
-fn build_menu_options() -> Result<Menu, Error> {
-    Ok(MenuBuilder::new()
+fn build_menu_options(builder: MenuBuilder) -> Result<Menu, Error> {
+    Ok(builder
         // .add_submenu("Customize controls", unimplemented!())
-        .add_action("Go to console", Box::new(|| ()))
-        .add_action("Reset to defaults", Box::new(|| ()))
-        .add_slider("Render scale", 0.25, 1.0, 2, 0, Box::new(|_| ()))?
-        .add_slider("Screen Size", 0.0, 1.0, 10, 9, Box::new(|_| ()))?
-        .add_slider("Brightness", 0.0, 1.0, 10, 9, Box::new(|_| ()))?
-        .add_slider("Mouse Speed", 0.0, 1.0, 10, 9, Box::new(|_| ()))?
-        .add_slider("CD music volume", 0.0, 1.0, 10, 9, Box::new(|_| ()))?
-        .add_slider("Sound volume", 0.0, 1.0, 10, 9, Box::new(|_| ()))?
-        .add_toggle("Always run", true, Box::new(|_| ()))
-        .add_toggle("Invert mouse", false, Box::new(|_| ()))
-        .add_toggle("Lookspring", false, Box::new(|_| ()))
-        .add_toggle("Lookstrafe", false, Box::new(|_| ()))
+        .add_action("Go to console", || ())
+        .add_action("Reset to defaults", || ())
+        .add_slider("Render scale", 0.25, 1.0, 2, 0, |In(_): In<f32>| ())?
+        .add_slider("Screen Size", 0.0, 1.0, 10, 9, |In(_): In<f32>| ())?
+        .add_slider("Brightness", 0.0, 1.0, 10, 9, |In(_): In<f32>| ())?
+        .add_slider("Mouse Speed", 0.0, 1.0, 10, 9, |In(_): In<f32>| ())?
+        .add_slider("CD music volume", 0.0, 1.0, 10, 9, |In(_): In<f32>| ())?
+        .add_slider("Sound volume", 0.0, 1.0, 10, 9, |In(_): In<f32>| ())?
+        .add_toggle("Always run", true, |In(_): In<bool>| ())
+        .add_toggle("Invert mouse", false, |In(_): In<bool>| ())
+        .add_toggle("Lookspring", false, |In(_): In<bool>| ())
+        .add_toggle("Lookstrafe", false, |In(_): In<bool>| ())
         // .add_submenu("Video options", unimplemented!())
         .build(MenuView {
             draw_plaque: true,

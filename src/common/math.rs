@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::{cmp::Ordering, convert::Into, ops::Neg};
+use std::{cmp::Ordering, ops::Neg};
 
 use bevy::prelude::*;
 use cgmath::{Angle, Deg, InnerSpace, Matrix3, Matrix4, Vector2, Vector3, Zero};

@@ -9,7 +9,6 @@ use crate::{
     },
     common::{
         console::{ConsoleInput, ConsoleOutput},
-        engine,
         vfs::Vfs,
         wad::QPic,
     },
@@ -90,39 +89,50 @@ impl ConsoleRenderer {
             anchor: Anchor::BOTTOM_LEFT,
             scale,
         });
-        let input_text = input.get_text();
-        glyph_cmds.push(GlyphRendererCommand::Text {
-            text: input_text.to_owned(),
-            position: ScreenPosition::Relative {
-                anchor: console_anchor,
-                x_ofs: PAD_LEFT + GLYPH_WIDTH as i32,
-                y_ofs: 0,
-            },
-            anchor: Anchor::BOTTOM_LEFT,
-            scale,
-        });
-        // blink cursor in half-second intervals
-        if engine::duration_to_f32(time).fract() > 0.5 {
+        // TODO: Implement colours
+        for (i, chr) in input.get_text().enumerate() {
             glyph_cmds.push(GlyphRendererCommand::Glyph {
-                glyph_id: 11,
+                glyph_id: chr as _,
                 position: ScreenPosition::Relative {
                     anchor: console_anchor,
-                    x_ofs: PAD_LEFT + (GLYPH_WIDTH * (input.cursor() + 1)) as i32,
+                    x_ofs: PAD_LEFT + GLYPH_WIDTH as i32 * i as i32,
                     y_ofs: 0,
                 },
                 anchor: Anchor::BOTTOM_LEFT,
                 scale,
             });
         }
+        // blink cursor in half-second intervals
+        // TODO: Reimplement cursor
+        // if engine::duration_to_f32(time).fract() > 0.5 {
+        //     glyph_cmds.push(GlyphRendererCommand::Glyph {
+        //         glyph_id: 11,
+        //         position: ScreenPosition::Relative {
+        //             anchor: console_anchor,
+        //             x_ofs: PAD_LEFT + (GLYPH_WIDTH * (input.cursor() + 1)) as i32,
+        //             y_ofs: 0,
+        //         },
+        //         anchor: Anchor::BOTTOM_LEFT,
+        //         scale,
+        //     });
+        // }
+
+        let mut line_id = 0;
 
         // draw previous output
-        for (line_id, line) in output.lines().enumerate() {
+        for (_, line) in output.text() {
+            let line = &line.text;
             // TODO: implement scrolling
             if line_id > 100 {
                 break;
             }
 
             for (chr_id, chr) in line.chars().enumerate() {
+                if chr == '\n' {
+                    line_id += 1;
+                    continue;
+                }
+
                 let position = ScreenPosition::Relative {
                     anchor: console_anchor,
                     x_ofs: PAD_LEFT + (1 + chr_id * GLYPH_WIDTH) as i32,

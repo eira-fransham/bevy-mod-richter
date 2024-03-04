@@ -20,96 +20,78 @@
 
 use std::fmt::Debug;
 
-use crate::{client::menu::Menu, common::host::Control};
+use crate::client::menu::Menu;
 
+use bevy::ecs::{
+    system::{Commands, IntoSystem, SystemId},
+    world::World,
+};
 use failure::{ensure, Error};
 
-pub struct Action(pub Box<dyn Fn() -> Control + Send + Sync>);
-
-impl From<Box<dyn Fn() -> Control + Send + Sync>> for Action {
-    fn from(value: Box<dyn Fn() -> Control + Send + Sync>) -> Self {
-        Self(value)
-    }
-}
-
-impl<F> From<F> for Action
-where
-    F: Fn() + Send + Sync + 'static,
-{
-    fn from(value: F) -> Self {
-        Self(Box::new(move || {
-            value();
-            Control::Continue
-        }))
-    }
-}
-
+#[derive(Debug, Clone)]
 pub enum Item {
     Submenu(Menu),
-    Action(Action),
+    Action(SystemId),
     Toggle(Toggle),
     Enum(Enum),
     Slider(Slider),
     TextField(TextField),
 }
 
-impl Clone for Item {
-    fn clone(&self) -> Self {
-        // TODO: We need to give items access to the world so that we don't need to make the actions `FnMut`
-        todo!();
-    }
-}
-
-impl Debug for Item {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        enum Item<'a> {
-            Submenu(&'a Menu),
-            Action,
-            Toggle {
-                state: bool,
-            },
-            Enum {
-                selected: usize,
-                items: Vec<&'a str>,
-            },
-            // TODO
-        }
-
-        todo!()
-    }
-}
-
+#[derive(Debug, Clone)]
 pub struct Toggle {
     state: bool,
-    on_toggle: Box<dyn Fn(bool) + Send + Sync>,
+    on_toggle: SystemId<bool>,
 }
 
 impl Toggle {
-    pub fn new(init: bool, on_toggle: Box<dyn Fn(bool) + Send + Sync>) -> Toggle {
+    pub fn new<M, S>(world: &mut World, init: bool, on_toggle: S) -> Toggle
+    where
+        S: IntoSystem<bool, (), M> + 'static,
+    {
+        let on_toggle = world.register_system(on_toggle);
         let t = Toggle {
             state: init,
             on_toggle,
         };
 
-        // initialize with default
-        (t.on_toggle)(init);
+        // TODO: Initialize with default
+        // (t.on_toggle)(init);
 
         t
     }
 
-    pub fn set_false(&mut self) {
+    pub fn set_false(&mut self) -> Option<impl FnOnce(&mut Commands)> {
+        if !self.state {
+            return None;
+        }
         self.state = false;
-        (self.on_toggle)(self.state);
+
+        let on_toggle = self.on_toggle;
+        let value = self.get();
+
+        Some(move |c: &mut Commands| c.run_system_with_input(on_toggle, value))
     }
 
-    pub fn set_true(&mut self) {
+    pub fn set_true(&mut self) -> Option<impl FnOnce(&mut Commands)> {
+        if self.state {
+            return None;
+        }
         self.state = true;
-        (self.on_toggle)(self.state);
+
+        let on_toggle = self.on_toggle;
+        let value = self.get();
+
+        Some(move |c: &mut Commands| c.run_system_with_input(on_toggle, value))
     }
 
-    pub fn toggle(&mut self) {
+    pub fn toggle(&mut self) -> impl FnOnce(&mut Commands) {
         self.state = !self.state;
-        (self.on_toggle)(self.state);
+
+        let on_toggle = self.on_toggle;
+        let value = self.get();
+
+        move |c: &mut Commands| c.run_system_with_input(on_toggle, value)
     }
 
     pub fn get(&self) -> bool {
@@ -119,6 +101,7 @@ impl Toggle {
 
 // TODO: add wrapping configuration to enums
 // e.g. resolution enum wraps, texture filtering does not
+#[derive(Debug, Clone)]
 pub struct Enum {
     selected: usize,
     items: Vec<EnumItem>,
@@ -134,8 +117,8 @@ impl Enum {
             items,
         };
 
-        // initialize with the default choice
-        (e.items[e.selected].on_select)();
+        // TODO: initialize with the default choice
+        // (e.items[e.selected].on_select)();
 
         Ok(e)
     }
@@ -144,37 +127,46 @@ impl Enum {
         self.items[self.selected].name.as_str()
     }
 
-    pub fn select_next(&mut self) {
+    pub fn select_next(&mut self) -> Option<impl FnOnce(&mut Commands)> {
         let selected = match self.selected + 1 {
             s if s >= self.items.len() => 0,
             s => s,
         };
 
         self.selected = selected;
-        (self.items[selected].on_select)();
+
+        let on_select = self.items[selected].on_select;
+
+        Some(move |c: &mut Commands| c.run_system(on_select))
     }
 
-    pub fn select_prev(&mut self) {
+    pub fn select_prev(&mut self) -> Option<impl FnOnce(&mut Commands)> {
         let selected = match self.selected {
             0 => self.items.len() - 1,
             s => s - 1,
         };
 
         self.selected = selected;
-        (self.items[selected].on_select)();
+
+        let on_select = self.items[selected].on_select;
+
+        Some(move |c: &mut Commands| c.run_system(on_select))
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct EnumItem {
     name: String,
-    on_select: Box<dyn Fn() + Send + Sync>,
+    on_select: SystemId,
 }
 
 impl EnumItem {
-    pub fn new<S>(name: S, on_select: Box<dyn Fn() + Send + Sync>) -> Result<EnumItem, Error>
+    pub fn new<N, M, S>(world: &mut World, name: N, on_select: S) -> Result<EnumItem, Error>
     where
-        S: AsRef<str>,
+        N: AsRef<str>,
+        S: IntoSystem<(), (), M> + 'static,
     {
+        let on_select = world.register_system(on_select);
         Ok(EnumItem {
             name: name.as_ref().to_string(),
             on_select,
@@ -182,6 +174,7 @@ impl EnumItem {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Slider {
     min: f32,
     _max: f32,
@@ -189,23 +182,29 @@ pub struct Slider {
     steps: usize,
 
     selected: usize,
-    on_select: Box<dyn Fn(f32) + Send + Sync>,
+    on_select: SystemId<f32>,
 }
 
 impl Slider {
-    pub fn new(
+    pub fn new<M, S>(
+        world: &mut World,
         min: f32,
         max: f32,
         steps: usize,
         init: usize,
-        on_select: Box<dyn Fn(f32) + Send + Sync>,
-    ) -> Result<Slider, Error> {
+        on_select: S,
+    ) -> Result<Slider, Error>
+    where
+        S: IntoSystem<f32, (), M> + 'static,
+    {
         ensure!(steps > 1, "Slider must have at least 2 steps");
         ensure!(init < steps, "Invalid initial setting");
         ensure!(
             min < max,
             "Minimum setting must be less than maximum setting"
         );
+
+        let on_select = world.register_system(on_select);
 
         Ok(Slider {
             min,
@@ -217,24 +216,36 @@ impl Slider {
         })
     }
 
-    pub fn increase(&mut self) {
+    pub fn increase(&mut self) -> Option<impl FnOnce(&mut Commands)> {
         let old = self.selected;
 
-        if old != self.steps - 1 {
+        if old == self.steps - 1 {
+            None
+        } else {
             self.selected = old + 1;
-        }
 
-        (self.on_select)(self.min + self.selected as f32 * self.increment);
+            let value = self.value();
+            let on_select = self.on_select;
+            Some(move |c: &mut Commands| c.run_system_with_input(on_select, value))
+        }
     }
 
-    pub fn decrease(&mut self) {
+    pub fn decrease(&mut self) -> Option<impl FnOnce(&mut Commands)> {
         let old = self.selected;
 
-        if old != 0 {
+        if old == 0 {
+            None
+        } else {
             self.selected = old - 1;
-        }
 
-        (self.on_select)(self.min + self.selected as f32 * self.increment);
+            let value = self.value();
+            let on_select = self.on_select;
+            Some(move |c: &mut Commands| c.run_system_with_input(on_select, value))
+        }
+    }
+
+    pub fn value(&self) -> f32 {
+        self.min + self.selected as f32 * self.increment
     }
 
     pub fn position(&self) -> f32 {
@@ -242,22 +253,27 @@ impl Slider {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct TextField {
     chars: String,
     max_len: Option<usize>,
-    on_update: Box<dyn Fn(&str) + Send + Sync>,
+    on_update: SystemId<String>,
     cursor: usize,
 }
 
 impl TextField {
-    pub fn new<S>(
-        default: Option<S>,
+    pub fn new<D, M, S>(
+        world: &mut World,
+        default: Option<D>,
         max_len: Option<usize>,
-        on_update: Box<dyn Fn(&str) + Send + Sync>,
+        on_update: S,
     ) -> Result<TextField, Error>
     where
-        S: AsRef<str>,
+        D: AsRef<str>,
+        S: IntoSystem<String, (), M> + 'static,
     {
+        let on_update = world.register_system(on_update);
+
         let chars = default.map(|s| s.as_ref().to_string()).unwrap_or_default();
         let cursor = chars.len();
 
@@ -311,28 +327,44 @@ impl TextField {
         }
     }
 
-    pub fn insert(&mut self, c: char) {
+    pub fn insert(&mut self, c: char) -> Option<impl FnOnce(&mut Commands)> {
         if let Some(l) = self.max_len {
             if self.len() == l {
-                return;
+                return None;
             }
         }
 
         self.chars.insert(self.cursor, c);
-        (self.on_update)(&self.text());
+
+        let value = self.chars.clone();
+        let on_update = self.on_update;
+
+        Some(move |c: &mut Commands| c.run_system_with_input(on_update, value))
     }
 
-    pub fn backspace(&mut self) {
+    pub fn backspace(&mut self) -> Option<impl FnOnce(&mut Commands)> {
         if self.cursor > 1 {
             self.chars.remove(self.cursor - 1);
-            (self.on_update)(&self.text());
+
+            let value = self.chars.clone();
+            let on_update = self.on_update;
+
+            Some(move |c: &mut Commands| c.run_system_with_input(on_update, value))
+        } else {
+            None
         }
     }
 
-    pub fn delete(&mut self) {
+    pub fn delete(&mut self) -> Option<impl FnOnce(&mut Commands)> {
         if self.cursor < self.len() {
             self.chars.remove(self.cursor);
-            (self.on_update)(&self.text());
+
+            let value = self.chars.clone();
+            let on_update = self.on_update;
+
+            Some(move |c: &mut Commands| c.run_system_with_input(on_update, value))
+        } else {
+            None
         }
     }
 }

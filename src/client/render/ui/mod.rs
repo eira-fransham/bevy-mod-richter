@@ -37,7 +37,7 @@ use bevy::{
 use cgmath::{Matrix4, Vector2};
 use chrono::Duration;
 
-use super::{RenderResolution, RenderState, RenderVars, WorldRenderer};
+use super::{world::WorldRenderer, RenderResolution, RenderState};
 
 pub fn screen_space_vertex_translate(
     display_w: u32,

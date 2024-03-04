@@ -99,7 +99,6 @@ mod ops;
 mod string_table;
 
 use std::{
-    convert::TryInto,
     error::Error,
     fmt,
     io::{Read, Seek, SeekFrom},

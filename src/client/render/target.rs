@@ -33,7 +33,8 @@ use bumpalo::Bump;
 use cgmath::Deg;
 
 use crate::client::render::{
-    GraphicsState, RenderConnectionKind, RenderResolution, RenderState, RenderVars, WorldRenderer,
+    world::WorldRenderer, GraphicsState, RenderConnectionKind, RenderResolution, RenderState,
+    RenderVars,
 };
 
 /// Intermediate object that can generate `RenderPassDescriptor`s.
@@ -91,7 +92,11 @@ pub struct InitPassLabel;
 pub struct InitPass;
 
 impl ViewNode for InitPass {
-    type ViewQuery = (&'static ViewTarget, &'static ViewPrepassTextures, &'static Camera3d);
+    type ViewQuery = (
+        &'static ViewTarget,
+        &'static ViewPrepassTextures,
+        &'static Camera3d,
+    );
 
     fn run<'w>(
         &self,

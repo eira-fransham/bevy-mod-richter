@@ -30,8 +30,9 @@ pub mod state;
 pub mod trace;
 pub mod view;
 
-pub use self::cvars::register_cvars;
 use self::{
+    input::RichterInputPlugin,
+    menu::{MenuBodyView, MenuBuilder, MenuView},
     render::{RenderResolution, RichterRenderPlugin},
     sound::{MixerEvent, RichterSoundPlugin},
 };
@@ -42,7 +43,6 @@ use crate::{
     client::{
         demo::{DemoServer, DemoServerError},
         entity::{ClientEntity, MAX_STATIC_ENTITIES},
-        input::Input,
         sound::{MusicPlayer, StartSound, StartStaticSound, StopSound},
         state::{ClientState, PlayerInfo},
         trace::{TraceEntity, TraceFrame},
@@ -50,7 +50,7 @@ use crate::{
     },
     common::{
         self,
-        console::{ConsoleError, RichterConsolePlugin},
+        console::{ConsoleError, ConsoleOutput, RichterConsolePlugin},
         engine,
         model::{Model, ModelError},
         net::{
@@ -65,11 +65,10 @@ use crate::{
 use fxhash::FxHashMap;
 
 use bevy::{
-    app::Plugin,
     asset::AssetServer,
     ecs::{
         event::EventWriter,
-        system::{In, Res, ResMut, Resource},
+        system::{Res, ResMut, Resource},
     },
     prelude::*,
     render::extract_resource::ExtractResource,
@@ -102,10 +101,32 @@ const CONSOLE_DIVIDER: &'static str = "\
 \n\n";
 
 #[derive(Default)]
-pub struct RichterPlugin {
+pub struct RichterPlugin<
+    F = Box<dyn Fn(MenuBuilder) -> Result<Menu, failure::Error> + Send + Sync + 'static>,
+> {
     pub base_dir: Option<PathBuf>,
     pub game: Option<String>,
-    pub main_menu: Menu,
+    pub main_menu: F,
+}
+
+fn build_default(builder: MenuBuilder) -> Result<Menu, failure::Error> {
+    Ok(builder.build(MenuView {
+        draw_plaque: true,
+        title_path: "gfx/ttl_main.lmp".into(),
+        body: MenuBodyView::Predefined {
+            path: "gfx/mainmenu.lmp".into(),
+        },
+    }))
+}
+
+impl RichterPlugin {
+    pub fn new() -> Self {
+        Self {
+            base_dir: None,
+            game: None,
+            main_menu: Box::new(build_default),
+        }
+    }
 }
 
 #[derive(Clone, Resource, ExtractResource)]
@@ -114,8 +135,15 @@ pub struct RichterGameSettings {
     pub game: Option<String>,
 }
 
-impl Plugin for RichterPlugin {
+impl<F> Plugin for RichterPlugin<F>
+where
+    F: Fn(MenuBuilder) -> Result<Menu, failure::Error> + Clone + Send + Sync + 'static,
+{
     fn build(&self, app: &mut bevy::prelude::App) {
+        if let Ok(menu) = (self.main_menu)(MenuBuilder::new(&mut app.world)) {
+            app.insert_resource(menu);
+        }
+
         let app = app
             .insert_resource(RichterGameSettings {
                 base_dir: self
@@ -124,9 +152,7 @@ impl Plugin for RichterPlugin {
                     .unwrap_or_else(|| common::default_base_dir()),
                 game: self.game.clone(),
             })
-            .insert_resource(self.main_menu.clone())
             .init_resource::<Vfs>()
-            .init_resource::<Input>()
             .init_resource::<MusicPlayer>()
             .init_resource::<DemoQueue>()
             // TODO: Use bevy's state system
@@ -137,21 +163,28 @@ impl Plugin for RichterPlugin {
                     systems::set_resolution.run_if(any_with_component::<PrimaryWindow>),
                     systems::handle_input.pipe(|In(res)| {
                         // TODO: Error handling
-                        let _ = res;
+                        if let Err(e) = res {
+                            error!("Error handling input: {}", e);
+                        }
                     }),
                     systems::frame.pipe(|In(res)| {
                         // TODO: Error handling
-                        let _ = res;
+                        if let Err(e) = res {
+                            error!("Error handling frame: {}", e);
+                        }
                     }),
                 ),
             )
             .add_plugins(RichterConsolePlugin)
             .add_plugins(RichterRenderPlugin)
-            .add_plugins(RichterSoundPlugin);
+            .add_plugins(RichterSoundPlugin)
+            .add_plugins(RichterInputPlugin);
+
+        cvars::register_cvars(app);
+        commands::register_commands(app);
     }
 
     fn finish(&self, app: &mut bevy::prelude::App) {
-        register_cvars(app);
         app.init_resource::<RenderResolution>();
     }
 }
@@ -273,7 +306,7 @@ pub struct ConnectedState {
 
 /// Indicates the state of an active connection.
 #[derive(Resource, Debug, ExtractResource, Clone)]
-enum ConnectionState {
+pub enum ConnectionState {
     /// The client is in the sign-on process.
     SignOn(SignOnStage),
 
@@ -430,12 +463,16 @@ impl Connection {
     fn parse_server_msg(
         &mut self,
         mut state: Mut<ConnectionState>,
+        time: Time,
         vfs: &Vfs,
         asset_server: &AssetServer,
         mixer_events: &mut EventWriter<MixerEvent>,
+        mut console_output: Mut<ConsoleOutput>,
         kick_vars: KickVars,
     ) -> Result<ConnectionStatus, ClientError> {
         use ConnectionStatus::*;
+
+        let time = Duration::from_std(time.elapsed()).unwrap();
 
         let (msg, demo_view_angles, track_override) = match self.kind {
             ConnectionKind::Server { ref mut qsock, .. } => {
@@ -507,8 +544,7 @@ impl Connection {
                 }
 
                 ServerCmd::CenterPrint { text } => {
-                    todo!("Reimplement console");
-                    // console.set_center_print(text);
+                    console_output.set_center_print(text);
                 }
 
                 ServerCmd::PlayerData(player_data) => self.state.update_player(player_data),
@@ -587,7 +623,7 @@ impl Connection {
                     }
                 }
 
-                ServerCmd::Print { text } => todo!("Reimplement console"), //console.print_alert(&text),
+                ServerCmd::Print { text } => console_output.print_alert(text, time),
 
                 ServerCmd::ServerInfo {
                     protocol_version,
@@ -602,10 +638,9 @@ impl Connection {
                         Err(ClientError::UnrecognizedProtocol(protocol_version))?;
                     }
 
-                    todo!("Reimplement console");
-                    // console.println(CONSOLE_DIVIDER);
-                    // console.println(message);
-                    // console.println(CONSOLE_DIVIDER);
+                    console_output.println_alert(CONSOLE_DIVIDER, time);
+                    console_output.println_alert(message, time);
+                    console_output.println_alert(CONSOLE_DIVIDER, time);
 
                     let _server_info = ServerInfo {
                         _max_clients: max_clients,
@@ -754,7 +789,7 @@ impl Connection {
                     self.state.spawn_temp_entity(mixer_events, &temp_entity)
                 }
 
-                ServerCmd::StuffText { text } => todo!("Reimplement console"), // console.append_text(text),
+                ServerCmd::StuffText { text } => {} // todo!("Reimplement console"), // console.append_text(text),
 
                 ServerCmd::Time { time } => {
                     self.state.msg_times[1] = self.state.msg_times[0];
@@ -876,10 +911,11 @@ impl Connection {
     fn frame(
         &mut self,
         mut state: Mut<ConnectionState>,
-        frame_time: Duration,
+        time: Time,
         vfs: &Vfs,
         asset_server: &AssetServer,
         mixer_events: &mut EventWriter<MixerEvent>,
+        mut console: Mut<ConsoleOutput>,
         idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
@@ -887,12 +923,21 @@ impl Connection {
         cl_nolerp: bool,
         sv_gravity: f32,
     ) -> Result<ConnectionStatus, ClientError> {
+        let frame_time = Duration::from_std(time.delta()).unwrap();
         debug!("frame time: {}ms", frame_time.num_milliseconds());
 
         // do this _before_ parsing server messages so that we know when to
         // request the next message from the demo server.
         self.state.advance_time(frame_time);
-        match self.parse_server_msg(state.reborrow(), vfs, asset_server, mixer_events, kick_vars)? {
+        match self.parse_server_msg(
+            state.reborrow(),
+            time,
+            vfs,
+            asset_server,
+            mixer_events,
+            console.reborrow(),
+            kick_vars,
+        )? {
             ConnectionStatus::Maintain => {}
             // if Disconnect or NextDemo, delegate up the chain
             s => return Ok(s),
@@ -949,14 +994,6 @@ impl Connection {
 
 #[derive(Resource, ExtractResource, Clone, Default)]
 pub struct DemoQueue(pub VecDeque<String>);
-
-impl ExtractResource for InputFocus {
-    type Source = Input;
-
-    fn extract_resource(source: &Self::Source) -> Self {
-        source.focus()
-    }
-}
 
 fn connect<A>(server_addrs: A) -> Result<(Connection, ConnectionState), ClientError>
 where
@@ -1050,7 +1087,7 @@ where
 mod systems {
     use serde::Deserialize;
 
-    use self::{common::console::Registry, render::RenderResolution};
+    use self::{common::console::Registry, input::game::GameInput};
 
     use super::*;
 
@@ -1058,7 +1095,7 @@ mod systems {
         // mut console: ResMut<Console>,
         registry: ResMut<Registry>,
         mut conn: Option<ResMut<Connection>>,
-        mut input: ResMut<Input>,
+        mut input: ResMut<GameInput>,
         frame_time: Res<Time<Virtual>>,
     ) -> Result<(), ClientError> {
         // TODO: Error handling
@@ -1072,7 +1109,7 @@ mod systems {
                 ..
             }) => {
                 let move_cmd = state.handle_input(
-                    input.game_input_mut().unwrap(),
+                    &*registry,
                     Duration::from_std(frame_time.delta()).unwrap(),
                     move_vars,
                     mouse_vars,
@@ -1083,7 +1120,7 @@ mod systems {
                 // qsock.send_msg_unreliable(&msg)?;
 
                 // clear mouse and impulse
-                input.game_input_mut().unwrap().refresh(todo!());
+                input.refresh(todo!());
             }
 
             _ => (),
@@ -1095,7 +1132,7 @@ mod systems {
     #[derive(Deserialize)]
     struct NetworkVars {
         #[serde(rename(deserialize = "cl_nolerp"))]
-        disable_lerp: bool,
+        disable_lerp: f32,
         #[serde(rename(deserialize = "sv_gravity"))]
         gravity: f32,
     }
@@ -1105,14 +1142,15 @@ mod systems {
         frame_time: Res<Time<Virtual>>,
         cvars: Res<Registry>,
         vfs: Res<Vfs>,
+        time: Res<Time<Virtual>>,
         asset_server: Res<AssetServer>,
         mut mixer_events: EventWriter<MixerEvent>,
+        mut console: ResMut<ConsoleOutput>,
         mut demo_queue: ResMut<DemoQueue>,
-        mut input: ResMut<Input>,
+        mut focus: ResMut<InputFocus>,
         mut conn: Option<ResMut<Connection>>,
         mut conn_state: ResMut<ConnectionState>,
     ) -> Result<(), ClientError> {
-        dbg!();
         let NetworkVars {
             disable_lerp,
             gravity,
@@ -1135,15 +1173,16 @@ mod systems {
         let status = match conn.as_deref_mut() {
             Some(ref mut conn) => conn.frame(
                 conn_state.reborrow(),
-                Duration::from_std(frame_time.delta()).unwrap(),
+                time.as_generic(),
                 &*vfs,
                 &*asset_server,
                 &mut mixer_events,
+                console.reborrow(),
                 idle_vars,
                 kick_vars,
                 roll_vars,
                 bob_vars,
-                disable_lerp,
+                disable_lerp != 0.,
                 gravity,
             )?,
             None => ConnectionStatus::Disconnect,
@@ -1153,6 +1192,7 @@ mod systems {
         match status {
             Maintain => (),
             _ => {
+                let time = Duration::from_std(time.elapsed()).unwrap();
                 let new_conn = match status {
                     // if client is already disconnected, this is a no-op
                     Disconnect => None,
@@ -1175,8 +1215,7 @@ mod systems {
                                     Ok(f) => Some(f),
                                     Err(e) => {
                                         // log the error, dump the demo queue and disconnect
-                                        todo!("Reimplement console");
-                                        // console.println(format!("{}", e));
+                                        console.println(format!("{}", e), time);
                                         demo_queue.0.clear();
                                         None
                                     }
@@ -1188,8 +1227,7 @@ mod systems {
                                         state: ClientState::new(),
                                     }),
                                     Err(e) => {
-                                        todo!("Reimplement console");
-                                        // console.println(format!("{}", e));
+                                        console.println(format!("{}", e), time);
                                         demo_queue.0.clear();
                                         None
                                     }
@@ -1206,10 +1244,10 @@ mod systems {
                 };
 
                 match new_conn {
-                    Some(_) => input.set_focus(InputFocus::Game),
+                    Some(_) => *focus = InputFocus::Game,
 
                     // don't allow game focus when disconnected
-                    None => input.set_focus(InputFocus::Console),
+                    None => *focus = InputFocus::Console,
                 }
 
                 match (conn, new_conn) {

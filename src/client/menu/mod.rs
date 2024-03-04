@@ -20,12 +20,15 @@
 
 mod item;
 
-use bevy::{ecs::system::Resource, render::extract_resource::ExtractResource};
+use bevy::{
+    ecs::{
+        system::{Commands, IntoSystem, Resource},
+        world::World,
+    },
+    render::extract_resource::ExtractResource,
+};
 use failure::{bail, Error};
 
-use crate::common::host::Control;
-
-use self::item::Action;
 pub use self::item::{Enum, EnumItem, Item, Slider, TextField, Toggle};
 
 #[derive(Default, Clone, Copy, Debug)]
@@ -104,34 +107,9 @@ impl Menu {
         Ok((m, m_parent))
     }
 
-    /// Returns a mutable reference to the active submenu of this menu and its parent.
-    fn active_submenu_and_parent_mut(&mut self) -> Result<(&mut Menu, Option<&mut Menu>), Error> {
-        // let mut m = self;
-        // let mut m_parent = None;
-
-        // while let MenuState::InSubMenu { index } = &mut m.state {
-        //     match &mut m.items[*index].item {
-        //         Item::Submenu(s) => {
-        //             m = s;
-        //             m_parent = Some(&mut *m);
-        //         }
-        //         _ => bail!("Menu state points to invalid submenu"),
-        //     }
-        // }
-
-        // Ok((m, m_parent))
-        todo!()
-    }
-
     /// Return a reference to the active submenu of this menu
     pub fn active_submenu(&self) -> Result<&Menu, Error> {
         let (m, _) = self.active_submenu_and_parent()?;
-        Ok(m)
-    }
-
-    /// Return a reference to the active submenu of this menu
-    pub fn active_submenu_mut(&mut self) -> Result<&mut Menu, Error> {
-        let (m, _) = self.active_submenu_and_parent_mut()?;
         Ok(m)
     }
 
@@ -143,12 +121,52 @@ impl Menu {
         Ok(m_parent)
     }
 
+    /// Return a reference to the active submenu of this menu
+    pub fn active_submenu_mut(&mut self) -> Result<&mut Menu, Error> {
+        let mut m = self;
+
+        while let MenuState::InSubMenu { index } = &mut m.state {
+            match &mut m.items[*index].item {
+                Item::Submenu(s) => {
+                    m = s;
+                }
+                _ => bail!("Menu state points to invalid submenu"),
+            }
+        }
+
+        Ok(m)
+    }
+
+    /// Returns a reference to the active submenu of this menu and its parent.
+    fn active_submenu_parent_mut(&mut self) -> Result<Option<&mut Menu>, Error> {
+        let MenuState::InSubMenu { mut index } = self.active_submenu()?.state else {
+            return Ok(Some(self));
+        };
+        let Item::Submenu(m) = &mut self.items[index].item else {
+            bail!("Menu state points to invalid submenu");
+        };
+        let mut m = m;
+
+        loop {
+            match &mut m.items[index].item {
+                Item::Submenu(s) => {
+                    m = s;
+                    if let MenuState::InSubMenu { index: new_index } = m.state {
+                        index = new_index;
+                    } else {
+                        return Ok(Some(m));
+                    }
+                }
+                _ => bail!("Menu state points to invalid submenu"),
+            }
+        }
+    }
+
     /// Select the next element of this Menu.
     pub fn next(&mut self) -> Result<(), Error> {
         let m = self.active_submenu_mut()?;
 
-        let s = m.state.clone();
-        if let MenuState::Active { index } = s {
+        if let MenuState::Active { index } = m.state {
             m.state = MenuState::Active {
                 index: (index + 1) % m.items.len(),
             };
@@ -163,8 +181,7 @@ impl Menu {
     pub fn prev(&mut self) -> Result<(), Error> {
         let m = self.active_submenu_mut()?;
 
-        let s = m.state.clone();
-        if let MenuState::Active { index } = s {
+        if let MenuState::Active { index } = m.state {
             m.state = MenuState::Active {
                 index: index
                     .checked_sub(1)
@@ -183,9 +200,9 @@ impl Menu {
         let m = self.active_submenu()?;
 
         if let MenuState::Active { index } = m.state {
-            return Ok(&m.items[index].item);
+            Ok(&m.items[index].item)
         } else {
-            bail!("Active menu in invalid state (invariant violation)")
+            bail!("Active menu in invalid state (invariant violation)");
         }
     }
 
@@ -199,59 +216,73 @@ impl Menu {
     /// `Action`.
     ///
     /// Otherwise, this has no effect.
-    pub fn activate(&mut self) -> Result<Control, Error> {
+    #[must_use]
+    pub fn activate(&mut self) -> Result<Option<impl FnOnce(&mut Commands)>, Error> {
         let m = self.active_submenu_mut()?;
 
-        let control = if let MenuState::Active { index } = m.state {
+        if let MenuState::Active { index } = m.state {
             match &mut m.items[index].item {
                 Item::Submenu(submenu) => {
                     m.state = MenuState::InSubMenu { index };
                     submenu.state = MenuState::Active { index: 0 };
 
-                    Control::Continue
+                    Ok(None)
                 }
 
-                Item::Action(action) => (action.0)(),
+                Item::Action(action) => {
+                    let action = *action;
+                    Ok(Some(move |c: &mut Commands| c.run_system(action)))
+                }
 
-                _ => Control::Continue,
+                _ => Ok(None),
             }
         } else {
-            Control::Continue
-        };
-
-        Ok(control)
+            Ok(None)
+        }
     }
 
-    pub fn left(&mut self) -> Result<(), Error> {
+    #[must_use]
+    pub fn left(&mut self) -> Result<Option<impl FnOnce(&mut Commands)>, Error> {
         let m = self.active_submenu_mut()?;
 
-        if let MenuState::Active { index } = m.state {
+        Ok(if let MenuState::Active { index } = m.state {
             match &mut m.items[index].item {
-                Item::Enum(e) => e.select_prev(),
-                Item::Slider(slider) => slider.decrease(),
-                Item::TextField(text) => text.cursor_left(),
-                Item::Toggle(toggle) => toggle.set_false(),
-                _ => (),
+                Item::Enum(e) => e
+                    .select_prev()
+                    .map(|f| Box::new(f) as Box<dyn FnOnce(&mut Commands)>),
+                Item::Slider(slider) => slider.decrease().map(|f| Box::new(f) as _),
+                Item::TextField(text) => {
+                    text.cursor_left();
+                    None
+                }
+                Item::Toggle(toggle) => toggle.set_false().map(|f| Box::new(f) as _),
+                _ => None,
             }
-        }
-
-        Ok(())
+        } else {
+            None
+        })
     }
 
-    pub fn right(&mut self) -> Result<(), Error> {
+    #[must_use]
+    pub fn right(&mut self) -> Result<Option<impl FnOnce(&mut Commands)>, Error> {
         let m = self.active_submenu_mut()?;
 
-        if let MenuState::Active { index } = m.state {
+        Ok(if let MenuState::Active { index } = m.state {
             match &mut m.items[index].item {
-                Item::Enum(e) => e.select_next(),
-                Item::Slider(slider) => slider.increase(),
-                Item::TextField(text) => text.cursor_right(),
-                Item::Toggle(toggle) => toggle.set_true(),
-                _ => (),
+                Item::Enum(e) => e
+                    .select_next()
+                    .map(|f| Box::new(f) as Box<dyn FnOnce(&mut Commands)>),
+                Item::Slider(slider) => slider.increase().map(|f| Box::new(f) as _),
+                Item::TextField(text) => {
+                    text.cursor_right();
+                    None
+                }
+                Item::Toggle(toggle) => toggle.set_true().map(|f| Box::new(f) as _),
+                _ => None,
             }
-        }
-
-        Ok(())
+        } else {
+            None
+        })
     }
 
     /// Return `true` if the root menu is active, `false` otherwise.
@@ -268,10 +299,10 @@ impl Menu {
             bail!("Cannot back out of root menu!");
         }
 
-        let (m, m_parent) = self.active_submenu_and_parent_mut()?;
+        let m = self.active_submenu_mut()?;
         m.state = MenuState::Inactive;
 
-        match m_parent {
+        match self.active_submenu_parent_mut()? {
             Some(mp) => {
                 let s = mp.state.clone();
                 match s {
@@ -299,17 +330,23 @@ impl Menu {
     }
 }
 
-pub struct MenuBuilder {
+pub struct MenuBuilder<'a> {
+    world: &'a mut World,
     gfx_name: Option<String>,
     items: im::Vector<NamedMenuItem>,
 }
 
-impl MenuBuilder {
-    pub fn new() -> MenuBuilder {
+impl<'a> MenuBuilder<'a> {
+    pub fn new(world: &'a mut World) -> Self {
         MenuBuilder {
+            world,
             gfx_name: None,
             items: Default::default(),
         }
+    }
+
+    pub fn world(&mut self) -> &mut World {
+        self.world
     }
 
     pub fn build(mut self, view: MenuView) -> Menu {
@@ -327,87 +364,132 @@ impl MenuBuilder {
         }
     }
 
-    pub fn add_submenu<S>(mut self, name: S, submenu: Menu) -> MenuBuilder
-    where
-        S: AsRef<str>,
-    {
-        self.items
-            .push_back(NamedMenuItem::new(name, Item::Submenu(submenu)));
-        self
-    }
-
-    pub fn add_action<S, F>(mut self, name: S, action: F) -> MenuBuilder
-    where
-        S: AsRef<str>,
-        F: Into<Action>,
-    {
-        self.items
-            .push_back(NamedMenuItem::new(name, Item::Action(action.into())));
-        self
-    }
-
-    pub fn add_toggle<S>(
+    pub fn add_submenu<S>(
         mut self,
         name: S,
-        init: bool,
-        on_toggle: Box<dyn Fn(bool) + Send + Sync>,
-    ) -> MenuBuilder
+        submenu: impl FnOnce(MenuBuilder<'_>) -> Result<Menu, Error>,
+    ) -> Result<Self, Error>
     where
         S: AsRef<str>,
+    {
+        let submenu = submenu(MenuBuilder::new(&mut *self.world))?;
+        self.items
+            .push_back(NamedMenuItem::new(name, Item::Submenu(submenu)));
+        Ok(self)
+    }
+
+    pub fn add_action<N, S, M>(mut self, name: N, action: S) -> Self
+    where
+        N: AsRef<str>,
+        S: IntoSystem<(), (), M> + 'static,
+    {
+        let action_id = self.world.register_system(action);
+        self.items
+            .push_back(NamedMenuItem::new(name, Item::Action(action_id)));
+        self
+    }
+
+    pub fn add_toggle<N, M, S>(mut self, name: N, init: bool, on_toggle: S) -> Self
+    where
+        N: AsRef<str>,
+        S: IntoSystem<bool, (), M> + 'static,
     {
         self.items.push_back(NamedMenuItem::new(
             name,
-            Item::Toggle(Toggle::new(init, on_toggle)),
+            Item::Toggle(Toggle::new(&mut self.world, init, on_toggle)),
         ));
         self
     }
 
-    pub fn add_enum<S, E>(mut self, name: S, items: E, init: usize) -> Result<MenuBuilder, Error>
+    pub fn add_enum<S, E>(mut self, name: S, items: E, init: usize) -> Result<Self, Error>
     where
         S: AsRef<str>,
-        E: Into<Vec<EnumItem>>,
+        E: FnOnce(EnumBuilder) -> Result<Vec<EnumItem>, Error>,
     {
         self.items.push_back(NamedMenuItem::new(
             name,
-            Item::Enum(Enum::new(init, items.into())?),
+            Item::Enum(Enum::new(init, items(EnumBuilder::new(&mut *self.world))?)?),
         ));
         Ok(self)
     }
 
-    pub fn add_slider<S>(
+    pub fn add_slider<N, M, S>(
         mut self,
-        name: S,
+        name: N,
         min: f32,
         max: f32,
         steps: usize,
         init: usize,
-        on_select: Box<dyn Fn(f32) + Send + Sync>,
-    ) -> Result<MenuBuilder, Error>
+        on_select: S,
+    ) -> Result<Self, Error>
     where
-        S: AsRef<str>,
+        N: AsRef<str>,
+        S: IntoSystem<f32, (), M> + 'static,
     {
         self.items.push_back(NamedMenuItem::new(
             name,
-            Item::Slider(Slider::new(min, max, steps, init, on_select)?),
+            Item::Slider(Slider::new(
+                &mut *self.world,
+                min,
+                max,
+                steps,
+                init,
+                on_select,
+            )?),
         ));
         Ok(self)
     }
 
-    pub fn add_text_field<S>(
+    pub fn add_text_field<N, M, S>(
         mut self,
-        name: S,
-        default: Option<S>,
+        name: N,
+        default: Option<N>,
         max_len: Option<usize>,
-        on_update: Box<dyn Fn(&str) + Send + Sync>,
-    ) -> Result<MenuBuilder, Error>
+        on_update: S,
+    ) -> Result<Self, Error>
     where
-        S: AsRef<str>,
+        N: AsRef<str>,
+        S: IntoSystem<String, (), M> + 'static,
     {
         self.items.push_back(NamedMenuItem::new(
             name,
-            Item::TextField(TextField::new(default, max_len, on_update)?),
+            Item::TextField(TextField::new(
+                &mut *self.world,
+                default,
+                max_len,
+                on_update,
+            )?),
         ));
         Ok(self)
+    }
+}
+
+pub struct EnumBuilder<'a> {
+    world: &'a mut World,
+    items: Vec<EnumItem>,
+}
+
+impl<'a> EnumBuilder<'a> {
+    pub fn new(world: &'a mut World) -> Self {
+        Self {
+            world,
+            items: Vec::new(),
+        }
+    }
+
+    pub fn add_item<N, M, S>(mut self, name: N, on_select: S) -> Result<Self, Error>
+    where
+        N: AsRef<str>,
+        S: IntoSystem<(), (), M> + 'static,
+    {
+        self.items
+            .push(EnumItem::new(&mut *self.world, name, on_select)?);
+
+        Ok(self)
+    }
+
+    pub fn build(self) -> Vec<EnumItem> {
+        self.items
     }
 }
 

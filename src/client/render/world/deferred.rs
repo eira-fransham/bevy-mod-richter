@@ -23,8 +23,8 @@ use crate::{
         input::InputFocus,
         menu::Menu,
         render::{
-            pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, RenderConnectionKind,
-            RenderResolution, RenderState, RenderVars, WorldRenderer,
+            pipeline::Pipeline, ui::quad::QuadPipeline, world::WorldRenderer, GraphicsState,
+            RenderConnectionKind, RenderResolution, RenderState, RenderVars,
         },
     },
     common::{
@@ -337,7 +337,11 @@ pub struct DeferredPassLabel;
 pub struct DeferredPass;
 
 impl ViewNode for DeferredPass {
-    type ViewQuery = (&'static ViewTarget, &'static ViewPrepassTextures, &'static Camera3d);
+    type ViewQuery = (
+        &'static ViewTarget,
+        &'static ViewPrepassTextures,
+        &'static Camera3d,
+    );
 
     fn run<'w>(
         &self,

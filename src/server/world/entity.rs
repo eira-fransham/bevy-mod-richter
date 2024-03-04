@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, convert::TryInto, error::Error, fmt, iter, rc::Rc};
+use std::{cell::RefCell, error::Error, fmt, iter, rc::Rc};
 
 use crate::{
     common::{engine::duration_to_f32, net::EntityState},

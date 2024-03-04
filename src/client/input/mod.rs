@@ -20,15 +20,27 @@ pub mod console;
 pub mod game;
 pub mod menu;
 
-use crate::{client::menu::Menu, common::host::Control};
+use bevy::{
+    app::{Plugin, Update},
+    ecs::system::Resource,
+    render::extract_resource::ExtractResource,
+};
 
-use bevy::ecs::system::Resource;
-use failure::Error;
-use winit::event::{Event, WindowEvent};
+use self::game::GameInput;
 
-use self::game::{BindInput, BindTarget, GameInput};
+pub struct RichterInputPlugin;
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Resource)]
+impl Plugin for RichterInputPlugin {
+    fn build(&self, app: &mut bevy::prelude::App) {
+        app.init_resource::<InputFocus>()
+            .init_resource::<GameInput>()
+            .add_systems(Update, (systems::handle_input,));
+
+        commands::register_commands(app);
+    }
+}
+
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Resource, ExtractResource)]
 pub enum InputFocus {
     Game,
     #[default]
@@ -36,104 +48,134 @@ pub enum InputFocus {
     Menu,
 }
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WindowFocusState {
-    #[default]
-    Focused,
-    Unfocused,
-}
+pub mod systems {
+    use bevy::{
+        input::{keyboard::KeyboardInput, ButtonState},
+        prelude::*,
+        window::PrimaryWindow,
+    };
 
-// TODO: Make this a component on player?
-#[derive(Resource, Clone)]
-pub struct Input {
-    window_focused: WindowFocusState,
-    focus: InputFocus,
+    use crate::{client::menu::Menu, common::console::RunCmd};
 
-    game_input: GameInput,
-}
+    use super::{
+        game::{AnyInput, Binding, BindingValidState, GameInput, Trigger},
+        InputFocus,
+    };
 
-impl Default for Input {
-    fn default() -> Self {
-        let mut out = Self {
-            window_focused: Default::default(),
-            focus: Default::default(),
-            game_input: Default::default(),
+    pub fn handle_input(
+        keyboard_events: EventReader<KeyboardInput>,
+        focus: Res<InputFocus>,
+        commands: Commands,
+        windows: Query<&Window, With<PrimaryWindow>>,
+        run_cmds: EventWriter<RunCmd<'static>>,
+        input: Res<GameInput>,
+        menu: Option<ResMut<Menu>>,
+    ) {
+        let Ok(window) = windows.get_single() else {
+            return;
         };
+        if !window.focused {
+            return;
+        }
 
-        out.bind_defaults();
-        out
-    }
-}
-
-impl Input {
-    // TODO: Re-implement input handling
-    pub fn handle_event(
-        &mut self,
-        // menu: &mut Menu,
-        // console: &mut Console,
-        // event: Event<T>,
-    ) -> Result<Control, Error> {
-        // match event {
-        //     // we're polling for hardware events, so we have to check window focus ourselves
-        //     Event::WindowEvent {
-        //         event: WindowEvent::Focused(focused),
-        //         ..
-        //     } => {
-        //         self.window_focused = if focused {
-        //             WindowFocusState::Focused
-        //         } else {
-        //             WindowFocusState::Unfocused
-        //         }
-        //     }
-
-        //     _ => {
-        //         if self.window_focused == WindowFocusState::Focused {
-        //             match self.focus {
-        //                 InputFocus::Game => self.game_input.handle_event(console, event),
-        //                 InputFocus::Console => self::console::handle_event(console, event)?,
-        //                 InputFocus::Menu => return self::menu::handle_event(menu, console, event),
-        //             }
-        //         }
-        //     }
-        // }
-
-        Ok(Control::Continue)
-    }
-
-    pub fn focus(&self) -> InputFocus {
-        self.focus
-    }
-
-    pub fn set_focus(&mut self, new_focus: InputFocus) {
-        self.focus = new_focus;
-    }
-
-    /// Bind a `BindInput` to a `BindTarget`.
-    pub fn bind<I, T>(&mut self, input: I, target: T) -> Option<BindTarget>
-    where
-        I: Into<BindInput>,
-        T: Into<BindTarget>,
-    {
-        self.game_input.bind(input, target)
-    }
-
-    fn bind_defaults(&mut self) {
-        self.game_input.bind_defaults();
-    }
-
-    pub fn game_input(&self) -> Option<&GameInput> {
-        if let InputFocus::Game = self.focus {
-            Some(&self.game_input)
-        } else {
-            None
+        match *focus {
+            InputFocus::Game => game_input(keyboard_events, run_cmds, input),
+            InputFocus::Menu => {
+                if let Some(menu) = menu {
+                    menu_input(commands, keyboard_events, run_cmds, menu, input);
+                }
+            }
+            InputFocus::Console => {
+                // TODO: Implement console input
+            }
         }
     }
 
-    pub fn game_input_mut(&mut self) -> Option<&mut GameInput> {
-        if let InputFocus::Game = self.focus {
-            Some(&mut self.game_input)
-        } else {
-            None
+    fn game_input(
+        mut keyboard_events: EventReader<KeyboardInput>,
+        mut run_cmds: EventWriter<RunCmd<'static>>,
+        input: Res<GameInput>,
+    ) {
+        for (i, key) in keyboard_events.read().enumerate() {
+            // TODO: Make this work better if we have arguments - currently we clone the arguments every time
+            // TODO: Error handling
+            if let Ok(Some(binding)) = input.binding(key.logical_key.clone()) {
+                run_cmds.send_batch(binding.commands.iter().filter_map(|cmd| {
+                    match (cmd.0.trigger, key.state) {
+                        (Some(Trigger::Positive) | None, ButtonState::Pressed) => Some(cmd.clone()),
+                        (Some(Trigger::Positive) | None, ButtonState::Released) => {
+                            cmd.clone().invert()
+                        }
+                        (Some(Trigger::Negative), _) => unreachable!(
+                            "Binding found to a negative edge! TODO: Do we want to support this?"
+                        ),
+                    }
+                }));
+            }
+        }
+    }
+
+    fn menu_input(
+        mut commands: Commands,
+        mut keyboard_events: EventReader<KeyboardInput>,
+        mut run_cmds: EventWriter<RunCmd<'static>>,
+        mut menu: ResMut<Menu>,
+        input: Res<GameInput>,
+    ) {
+        for (i, key) in keyboard_events.read().enumerate() {
+            if let Ok(Some(Binding {
+                valid: BindingValidState::Any,
+                commands,
+            })) = input.binding(key.logical_key.clone())
+            {
+                run_cmds.send_batch(commands.iter().filter_map(|cmd| {
+                    match (cmd.0.trigger, key.state) {
+                        (Some(Trigger::Positive) | None, ButtonState::Pressed) => Some(cmd.clone()),
+                        (Some(Trigger::Positive) | None, ButtonState::Released) => {
+                            cmd.clone().invert()
+                        }
+                        (Some(Trigger::Negative), _) => unreachable!(
+                            "Binding found to a negative edge! TODO: Do we want to support this?"
+                        ),
+                    }
+                }));
+            }
+
+            let KeyboardInput {
+                logical_key: key,
+                state: ButtonState::Pressed,
+                ..
+            } = key
+            else {
+                continue;
+            };
+
+            let input = AnyInput::from(key.clone());
+
+            // TODO: Make this actually respect the `togglemenu` keybinding
+            if input == AnyInput::ESCAPE {
+                if menu.at_root() {
+                    run_cmds.send("togglemenu".into());
+                } else {
+                    menu.back().expect("TODO: Handle menu failures");
+                }
+            } else if input == AnyInput::ENTER {
+                if let Some(func) = menu.activate().expect("TODO: Handle menu failures") {
+                    func(&mut commands);
+                }
+            } else if input == AnyInput::UPARROW {
+                menu.prev().expect("TODO: Handle menu failures");
+            } else if input == AnyInput::DOWNARROW {
+                menu.next().expect("TODO: Handle menu failures");
+            } else if input == AnyInput::LEFTARROW {
+                if let Some(func) = menu.left().expect("TODO: Handle menu failures") {
+                    func(&mut commands);
+                }
+            } else if input == AnyInput::RIGHTARROW {
+                if let Some(func) = menu.right().expect("TODO: Handle menu failures") {
+                    func(&mut commands);
+                }
+            }
         }
     }
 }

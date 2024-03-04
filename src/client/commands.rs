@@ -1,10 +1,10 @@
-use std::{collections::VecDeque, default};
+use std::{collections::VecDeque, io::Read as _};
 
 use beef::Cow;
 use bevy::prelude::*;
 
 use crate::common::{
-    console::{ExecResult, RegisterCmdExt as _, Registry},
+    console::{AliasInfo, ExecResult, RegisterCmdExt as _, Registry, RunCmd},
     net::SignOnStage,
     vfs::Vfs,
 };
@@ -12,8 +12,9 @@ use crate::common::{
 use super::{
     connect,
     demo::DemoServer,
-    input::{Input, InputFocus},
+    input::InputFocus,
     sound::{MixerEvent, MusicSource},
+    state::ClientState,
     Connection, ConnectionKind, ConnectionState, DemoQueue,
 };
 
@@ -39,7 +40,7 @@ pub fn register_commands(app: &mut App) {
 
     app.command(
         "echo",
-        |In(args): In<Box<[String]>>, _: &mut World| -> ExecResult {
+        |In(args): In<Box<[String]>>| -> ExecResult {
             let msg = match args.len() {
                 0 => Cow::from(""),
                 _ => args.join(" ").into(),
@@ -51,40 +52,53 @@ pub fn register_commands(app: &mut App) {
     );
 
     // TODO: Implement alias
-    // app.command(
-    //     "alias",
-    //     move |In(args), world: &mut World| -> ExecResult {
-    //         match args.len() {
-    //             0 => {
-    //                 let console = world.resource::<Registry>();
+    app.command(
+        "alias",
+        move |In(args): In<Box<[String]>>, mut registry: ResMut<Registry>| -> ExecResult {
+            match &*args {
+                [] => {
+                    let aliases = registry.aliases();
 
-    //                 // TODO: We remove the console from the world, we should probably pass it to the
-    //                 //       commands instead
-    //                 let aliases = console.aliases();
-    //                 let num_aliases = aliases.len();
+                    // TODO: There's probably a better way to do this
+                    let mut count = 0;
+                    let alias_text = aliases.flat_map(
+                        |AliasInfo {
+                             name,
+                             target,
+                             help: _,
+                         }| {
+                            count += 1;
+                            ["    ", name, ": ", target, "\n"]
+                        },
+                    );
+                    let mut out = String::new();
+                    for text in alias_text {
+                        out.push_str(text);
+                    }
+                    out.push_str(&count.to_string());
+                    out.push_str("alias command(s)");
 
-    //                 aliases
-    //                     .map(|(name, script)| format!("    {}: {}\n", name, script))
-    //                     .chain(iter::once(format!("{} alias command(s)", num_aliases)))
-    //                     .collect::<String>()
-    //                     .into()
-    //             }
+                    out.into()
+                }
 
-    //             2 => {
-    //                 let name = args[0].to_string();
-    //                 let script = args[1].to_string();
+                [from, to, help] => {
+                    todo!();
+                }
 
-    //                 ExecResult {
-    //                     aliases: vec![(name, script)],
-    //                     ..Default::default()
-    //                 }
-    //             }
+                [from, to, ..] => {
+                    let name = args[0].to_string();
+                    let script = args[1].to_string();
 
-    //             _ => String::new().into(),
-    //         }
-    //     },
-    //     "TODO: Documentation",
-    // );
+                    registry.alias(name, script);
+
+                    default()
+                }
+
+                _ => String::new().into(),
+            }
+        },
+        "TODO: Documentation",
+    );
 
     app.command(
         "find",
@@ -107,45 +121,100 @@ pub fn register_commands(app: &mut App) {
         },
         "TODO: Documentation",
     );
+
+    app.command(
+        "exec",
+        move |In(args): In<Box<[String]>>, vfs: Res<Vfs>| {
+            match args.len() {
+                // exec (filename): execute a script file
+                1 => {
+                    let mut script_file = match vfs.open(&args[0]) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            return ExecResult {
+                                output: format!("Couldn't exec {}: {:?}", args[0], e).into(),
+                                ..default()
+                            };
+                        }
+                    };
+
+                    let mut script = String::new();
+                    // TODO: Error handling
+                    script_file.read_to_string(&mut script).unwrap();
+
+                    let script = match RunCmd::parse_many(&*script) {
+                        Ok(commands) => commands,
+                        Err(e) => {
+                            return ExecResult {
+                                output: format!("Couldn't exec {}: {:?}", args[0], e).into(),
+                                ..default()
+                            }
+                        }
+                    };
+
+                    let extra_commands = Box::new(
+                        script
+                            .into_iter()
+                            .map(RunCmd::into_owned)
+                            .collect::<Vec<_>>()
+                            .into_iter(),
+                    );
+
+                    ExecResult {
+                        extra_commands,
+                        ..default()
+                    }
+                }
+
+                _ => ExecResult {
+                    output: format!("exec (filename): execute a script file").into(),
+                    ..default()
+                },
+            }
+        },
+        "Execute commands from a script file",
+    );
 }
 
 // implements the "toggleconsole" command
-pub fn cmd_toggleconsole(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
-    let has_conn = world.contains_resource::<Connection>();
-    let mut input = world.resource_mut::<Input>();
-    let focus = input.focus();
-    if has_conn {
-        match focus {
-            InputFocus::Game => input.set_focus(InputFocus::Console),
-            InputFocus::Console => input.set_focus(InputFocus::Game),
-            InputFocus::Menu => input.set_focus(InputFocus::Console),
+pub fn cmd_toggleconsole(
+    In(_): In<Box<[String]>>,
+    conn: Option<Res<Connection>>,
+    mut focus: ResMut<InputFocus>,
+) -> ExecResult {
+    if conn.is_some() {
+        match &*focus {
+            InputFocus::Menu | InputFocus::Game => *focus = InputFocus::Console,
+            InputFocus::Console => *focus = InputFocus::Game,
         }
     } else {
-        match focus {
-            InputFocus::Console => input.set_focus(InputFocus::Menu),
-            InputFocus::Game => unreachable!(),
-            InputFocus::Menu => input.set_focus(InputFocus::Console),
+        match &*focus {
+            InputFocus::Console => *focus = InputFocus::Menu,
+            InputFocus::Menu => *focus = InputFocus::Console,
+            InputFocus::Game => unreachable!("Game focus is invalid when we are disconnected"),
         }
     }
+
     default()
 }
 
 // implements the "togglemenu" command
-pub fn cmd_togglemenu(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
-    let has_conn = world.contains_resource::<Connection>();
-    let mut input = world.resource_mut::<Input>();
-    let focus = input.focus();
-    if has_conn {
-        match focus {
-            InputFocus::Game => input.set_focus(InputFocus::Menu),
-            InputFocus::Console => input.set_focus(InputFocus::Menu),
-            InputFocus::Menu => input.set_focus(InputFocus::Game),
+pub fn cmd_togglemenu(
+    In(_): In<Box<[String]>>,
+    conn: Option<Res<Connection>>,
+    mut focus: ResMut<InputFocus>,
+) -> ExecResult {
+    if conn.is_some() {
+        match &*focus {
+            InputFocus::Game => *focus = InputFocus::Menu,
+            InputFocus::Console => *focus = InputFocus::Menu,
+            InputFocus::Menu => *focus = InputFocus::Game,
         }
     } else {
-        match focus {
-            InputFocus::Console => input.set_focus(InputFocus::Menu),
-            InputFocus::Game => unreachable!(),
-            InputFocus::Menu => input.set_focus(InputFocus::Console),
+        match &*focus {
+            InputFocus::Console => *focus = InputFocus::Menu,
+            InputFocus::Menu => *focus = InputFocus::Console,
+            InputFocus::Game => unreachable!("Game focus is invalid when we are disconnected"),
         }
     }
     default()
@@ -153,7 +222,11 @@ pub fn cmd_togglemenu(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult
 
 // TODO: this will hang while connecting. ideally, input should be handled in a
 // separate thread so the OS doesn't think the client has gone unresponsive.
-pub fn cmd_connect(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult {
+pub fn cmd_connect(
+    In(args): In<Box<[String]>>,
+    mut commands: Commands,
+    mut focus: ResMut<InputFocus>,
+) -> ExecResult {
     if args.len() < 1 {
         // TODO: print to console
         return "usage: connect <server_ip>:<server_port>".into();
@@ -161,38 +234,54 @@ pub fn cmd_connect(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult
 
     match connect(&*args[0]) {
         Ok((new_conn, new_state)) => {
-            world.resource_mut::<Input>().set_focus(InputFocus::Game);
-            world.insert_resource(new_conn);
-            world.insert_resource(new_state);
+            *focus = InputFocus::Game;
+            commands.insert_resource(new_conn);
+            commands.insert_resource(new_state);
             default()
         }
         Err(e) => format!("{}", e).into(),
     }
 }
 
-pub fn cmd_reconnect(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult {
-    match world.get_resource_mut::<ConnectionState>() {
-        Some(mut conn) => {
-            // TODO: clear client state
-            *conn = ConnectionState::SignOn(SignOnStage::Prespawn);
-            world.resource_mut::<Input>().set_focus(InputFocus::Game);
-            default()
-        }
+pub fn cmd_reconnect(
+    In(args): In<Box<[String]>>,
+    conn: Option<Res<Connection>>,
+    mut conn_state: ResMut<ConnectionState>,
+    mut focus: ResMut<InputFocus>,
+) -> ExecResult {
+    if conn.is_some() {
+        // TODO: clear client state
+        *conn_state = ConnectionState::SignOn(SignOnStage::Prespawn);
+        *focus = InputFocus::Game;
+        default()
+    } else {
         // TODO: log message, e.g. "can't reconnect while disconnected"
-        None => "not connected".into(),
+        "not connected".into()
     }
 }
 
-pub fn cmd_disconnect(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
-    if world.remove_resource::<Connection>().is_some() {
-        world.resource_mut::<Input>().set_focus(InputFocus::Console);
+pub fn cmd_disconnect(
+    In(_): In<Box<[String]>>,
+    mut commands: Commands,
+    conn: Option<Res<Connection>>,
+    mut focus: ResMut<InputFocus>,
+) -> ExecResult {
+    if conn.is_some() {
+        commands.remove_resource::<Connection>();
+        *focus = InputFocus::Console;
         default()
     } else {
         "not connected".into()
     }
 }
 
-pub fn cmd_playdemo(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult {
+pub fn cmd_playdemo(
+    In(args): In<Box<[String]>>,
+    mut commands: Commands,
+    vfs: Res<Vfs>,
+    mut focus: ResMut<InputFocus>,
+    mut conn_state: ResMut<ConnectionState>,
+) -> ExecResult {
     if args.len() != 1 {
         return "usage: playdemo [DEMOFILE]".into();
     }
@@ -200,7 +289,7 @@ pub fn cmd_playdemo(In(args): In<Box<[String]>>, world: &mut World) -> ExecResul
     let demo = &args[0];
 
     let (new_conn, new_state) = {
-        let mut demo_file = match world.resource::<Vfs>().open(format!("{}.dem", demo)) {
+        let mut demo_file = match vfs.open(format!("{}.dem", demo)) {
             Ok(f) => f,
             Err(e) => {
                 return format!("{}", e).into();
@@ -211,7 +300,7 @@ pub fn cmd_playdemo(In(args): In<Box<[String]>>, world: &mut World) -> ExecResul
             Ok(d) => (
                 Connection {
                     kind: ConnectionKind::Demo(d),
-                    state: todo!(), // ClientState::new(),
+                    state: ClientState::new(),
                 },
                 ConnectionState::SignOn(SignOnStage::Prespawn),
             ),
@@ -221,15 +310,21 @@ pub fn cmd_playdemo(In(args): In<Box<[String]>>, world: &mut World) -> ExecResul
         }
     };
 
-    world.resource_mut::<Input>().set_focus(InputFocus::Game);
+    *focus = InputFocus::Game;
 
-    world.insert_resource(new_conn);
-    *world.resource_mut::<ConnectionState>() = new_state;
+    commands.insert_resource(new_conn);
+    *conn_state = new_state;
 
     default()
 }
 
-pub fn cmd_startdemos(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult {
+pub fn cmd_startdemos(
+    In(args): In<Box<[String]>>,
+    mut commands: Commands,
+    vfs: Res<Vfs>,
+    mut focus: ResMut<InputFocus>,
+    mut conn_state: ResMut<ConnectionState>,
+) -> ExecResult {
     if args.len() == 0 {
         return "usage: startdemos [DEMOS]".into();
     }
@@ -240,7 +335,6 @@ pub fn cmd_startdemos(In(args): In<Box<[String]>>, world: &mut World) -> ExecRes
         .collect::<VecDeque<_>>();
     let (new_conn, new_state) = match demo_queue.pop_front() {
         Some(demo) => {
-            let vfs = world.resource::<Vfs>();
             let mut demo_file = match vfs
                 .open(format!("{}.dem", demo))
                 .or_else(|_| vfs.open(format!("demos/{}.dem", demo)))
@@ -256,7 +350,7 @@ pub fn cmd_startdemos(In(args): In<Box<[String]>>, world: &mut World) -> ExecRes
                 Ok(d) => (
                     Connection {
                         kind: ConnectionKind::Demo(d),
-                        state: todo!(), // ClientState::new(),
+                        state: ClientState::new(),
                     },
                     ConnectionState::SignOn(SignOnStage::Prespawn),
                 ),
@@ -270,11 +364,11 @@ pub fn cmd_startdemos(In(args): In<Box<[String]>>, world: &mut World) -> ExecRes
         None => return "usage: startdemos [DEMOS]".into(),
     };
 
-    world.insert_resource(DemoQueue(demo_queue));
-    world.resource_mut::<Input>().set_focus(InputFocus::Game);
+    commands.insert_resource(DemoQueue(demo_queue));
+    *focus = InputFocus::Game;
 
-    world.insert_resource(new_conn);
-    *world.resource_mut::<ConnectionState>() = new_state;
+    commands.insert_resource(new_conn);
+    *conn_state = new_state;
 
     default()
 }

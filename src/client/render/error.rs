@@ -1,9 +1,6 @@
 use crate::common::{vfs::VfsError, wad::WadError};
 use failure::{Backtrace, Context, Fail};
-use std::{
-    convert::From,
-    fmt::{self, Display},
-};
+use std::fmt::{self, Display};
 
 #[derive(Debug)]
 pub struct RenderError {

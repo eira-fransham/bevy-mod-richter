@@ -142,7 +142,7 @@ impl Capture {
             self.capture_size.width,
             self.capture_size.height,
         );
-        png_encoder.set_color(png::ColorType::RGBA);
+        png_encoder.set_color(png::ColorType::Rgba);
         png_encoder.set_depth(png::BitDepth::Eight);
         let mut writer = png_encoder.write_header().unwrap();
         writer.write_image_data(data).unwrap();

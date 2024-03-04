@@ -57,7 +57,6 @@ mod world;
 
 use beef::Cow;
 use bevy::{
-    app::Plugin,
     core_pipeline::{
         core_3d::graph::{Core3d, Node3d},
         prepass::NORMAL_PREPASS_FORMAT,
@@ -65,7 +64,6 @@ use bevy::{
     ecs::{
         schedule::ScheduleLabel,
         system::{Res, Resource},
-        world::FromWorld,
     },
     prelude::*,
     render::{
@@ -84,12 +82,12 @@ pub use palette::Palette;
 use parking_lot::RwLock;
 pub use pipeline::Pipeline;
 pub use postprocess::PostProcessRenderer;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 pub use target::{PreferredFormat, RenderTarget, RenderTargetResolve};
 pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
 pub use world::{
     deferred::{DeferredRenderer, DeferredUniforms, PointLight},
-    Camera, WorldRenderer,
+    Camera,
 };
 
 use std::{
@@ -182,11 +180,14 @@ impl Plugin for RichterRenderPlugin {
                             .or_else(resource_changed::<RenderResolution>),
                     ),
                     systems::create_menu_renderer.run_if(
-                        resource_exists::<GraphicsState>
-                            .and_then(not(resource_exists::<UiRenderer>).or_else(resource_changed::<Menu>))
-                            ,
+                        resource_exists::<GraphicsState>.and_then(
+                            not(resource_exists::<UiRenderer>).or_else(resource_changed::<Menu>),
+                        ),
                     ),
-                    extract_world_renderer.run_if(resource_changed::<ConnectionState>.and_then(resource_exists::<GraphicsState>)),
+                    extract_world_renderer.run_if(
+                        resource_changed::<ConnectionState>
+                            .and_then(resource_exists::<GraphicsState>),
+                    ),
                 )
                     .chain()
                     .in_set(RenderSet::Prepare),
@@ -336,7 +337,7 @@ impl<'a> TextureData<'a> {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Extent2d {
     pub width: u32,
     pub height: u32,

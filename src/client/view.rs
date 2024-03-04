@@ -1,11 +1,9 @@
 use std::f32::consts::PI;
 
-use crate::{
-    client::input::game::{Action, GameInput},
-    common::{
-        engine::{duration_from_f32, duration_to_f32},
-        math::{self, Angles},
-    },
+use crate::common::{
+    console::Registry,
+    engine::{duration_from_f32, duration_to_f32},
+    math::{self, Angles},
 };
 
 use super::IntermissionKind;
@@ -106,7 +104,7 @@ impl View {
     pub fn handle_input(
         &mut self,
         frame_time: Duration,
-        game_input: &GameInput,
+        game_input: &Registry,
         intermission: Option<&IntermissionKind>,
         mlook: bool,
         cl_anglespeedkey: f32,
@@ -115,7 +113,7 @@ impl View {
         mouse_vars: MouseVars,
     ) {
         let frame_time_f32 = duration_to_f32(frame_time);
-        let speed = if game_input.action_state(Action::Speed) {
+        let speed = if game_input.is_pressed("speed") {
             frame_time_f32 * cl_anglespeedkey
         } else {
             frame_time_f32
@@ -126,22 +124,23 @@ impl View {
             return;
         }
 
-        if !game_input.action_state(Action::Strafe) {
-            let right_factor = game_input.action_state(Action::Right) as i32 as f32;
-            let left_factor = game_input.action_state(Action::Left) as i32 as f32;
+        if !game_input.is_pressed("strafe") {
+            let right_factor = game_input.is_pressed("right") as i32 as f32;
+            let left_factor = game_input.is_pressed("right") as i32 as f32;
             self.input_angles.yaw += Deg(speed * cl_yawspeed * (left_factor - right_factor));
             self.input_angles.yaw = self.input_angles.yaw.normalize();
         }
 
-        let lookup_factor = game_input.action_state(Action::LookUp) as i32 as f32;
-        let lookdown_factor = game_input.action_state(Action::LookDown) as i32 as f32;
+        let lookup_factor = game_input.is_pressed("lookup") as i32 as f32;
+        let lookdown_factor = game_input.is_pressed("lookup") as i32 as f32;
         self.input_angles.pitch += Deg(speed * cl_pitchspeed * (lookdown_factor - lookup_factor));
 
         if mlook {
             let pitch_factor = mouse_vars.pitch_factor * mouse_vars.sensitivity;
             let yaw_factor = mouse_vars.yaw_factor * mouse_vars.sensitivity;
-            self.input_angles.pitch += Deg(game_input.mouse_delta().1 as f32 * pitch_factor);
-            self.input_angles.yaw -= Deg(game_input.mouse_delta().0 as f32 * yaw_factor);
+            todo!("Reimplement mouse look");
+            // self.input_angles.pitch += Deg(game_input.mouse_delta().1 as f32 * pitch_factor);
+            // self.input_angles.yaw -= Deg(game_input.mouse_delta().0 as f32 * yaw_factor);
         }
 
         if lookup_factor != 0.0 || lookdown_factor != 0.0 {

@@ -57,6 +57,7 @@ use bitflags::bitflags;
 use cgmath::{InnerSpace, Vector3, Zero};
 use chrono::Duration;
 use fxhash::FxHashMap;
+use serde::Deserialize;
 
 const MAX_DATAGRAM: usize = 1024;
 const MAX_LIGHTSTYLES: usize = 64;
@@ -284,6 +285,14 @@ impl Session {
             SessionState::Active(ref active) => Some(active.level.time),
         }
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Deserialize)]
+pub struct ServerVars {
+    #[serde(rename(deserialize = "sv_gravity"))]
+    gravity: f32,
+    #[serde(rename(deserialize = "sv_maxvelocity"))]
+    max_velocity: f32,
 }
 
 /// Server-side level state.
@@ -735,6 +744,7 @@ impl LevelState {
         clients: &ClientSlots,
         frame_time: Duration,
         vfs: &Vfs,
+        server_vars: &ServerVars,
     ) -> Result<(), ProgsError> {
         self.globals.store(GlobalAddrEntity::Self_, EntityId(0))?;
         self.globals.store(GlobalAddrEntity::Other, EntityId(0))?;
@@ -769,7 +779,7 @@ impl LevelState {
 
             let max_clients = clients.limit();
             if ent_id.0 != 0 && ent_id.0 < max_clients {
-                self.physics_player(clients, ent_id)?;
+                self.physics_player(clients, ent_id, server_vars)?;
             } else {
                 match self.world.entity(ent_id).move_kind()? {
                     MoveKind::Walk => {
@@ -780,7 +790,7 @@ impl LevelState {
                     // No actual physics for this entity, but still let it think.
                     MoveKind::None => self.think(ent_id, frame_time, vfs)?,
                     MoveKind::NoClip => self.physics_noclip(ent_id, frame_time, vfs)?,
-                    MoveKind::Step => self.physics_step(ent_id, frame_time, vfs)?,
+                    MoveKind::Step => self.physics_step(ent_id, frame_time, vfs, server_vars)?,
 
                     // all airborne entities have the same physics
                     _ => unimplemented!(),
@@ -802,6 +812,7 @@ impl LevelState {
         &mut self,
         clients: &ClientSlots,
         ent_id: EntityId,
+        server_vars: &ServerVars,
     ) -> Result<(), ProgsError> {
         let client_id = ent_id.0.checked_sub(1).ok_or_else(|| {
             ProgsError::with_msg(format!("Invalid client entity ID: {:?}", ent_id))
@@ -813,8 +824,7 @@ impl LevelState {
         }
 
         let ent = self.world.entity_mut(ent_id)?;
-        // ent.limit_velocity(cvars.get_value("sv_maxvelocity").unwrap())?;
-        ent.limit_velocity(todo!())?;
+        ent.limit_velocity(server_vars.max_velocity)?;
         unimplemented!();
     }
 
@@ -894,7 +904,13 @@ impl LevelState {
         ent_id: EntityId,
         frame_time: Duration,
         vfs: &Vfs,
+        server_vars: &ServerVars,
     ) -> Result<(), ProgsError> {
+        let ServerVars {
+            gravity,
+            max_velocity,
+        } = *server_vars;
+
         let in_freefall = !self
             .world
             .entity(ent_id)
@@ -902,7 +918,6 @@ impl LevelState {
             .intersects(EntityFlags::ON_GROUND | EntityFlags::FLY | EntityFlags::IN_WATER);
 
         if in_freefall {
-            let sv_gravity = todo!(); // cvars.get_value("sv_gravity").unwrap();
             let vel: Vector3<f32> = self
                 .world
                 .entity(ent_id)
@@ -910,16 +925,15 @@ impl LevelState {
                 .into();
 
             // If true, play an impact sound when the entity hits the ground.
-            let hit_sound = vel.z < -0.1 * sv_gravity;
+            let hit_sound = vel.z < -0.1 * gravity;
 
             self.world
                 .entity_mut(ent_id)?
-                .apply_gravity(sv_gravity, frame_time)?;
+                .apply_gravity(gravity, frame_time)?;
 
-            let sv_maxvelocity = todo!(); // cvars.get_value("sv_maxvelocity").unwrap();
             self.world
                 .entity_mut(ent_id)?
-                .limit_velocity(sv_maxvelocity)?;
+                .limit_velocity(max_velocity)?;
 
             // Move the entity and relink it.
             self.move_ballistic(frame_time, ent_id, vfs)?;

@@ -15,15 +15,22 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use crate::common::parse::quoted;
+use crate::{
+    client::input::game::{Binding, BindingValidState, Trigger},
+    common::{
+        console::{CmdName, RunCmd},
+        parse::quoted,
+    },
+};
 
 use nom::{
     branch::alt,
-    bytes::streaming::tag,
-    character::streaming::{line_ending, not_line_ending, one_of, space0},
+    bytes::complete::tag,
+    character::complete::{line_ending, not_line_ending, one_of, space0},
     combinator::{opt, recognize},
-    multi::{many0, many1},
+    multi::many0,
     sequence::{delimited, preceded, terminated, tuple},
+    Parser,
 };
 
 /// Match a line comment.
@@ -67,8 +74,8 @@ pub fn basic_arg(input: &str) -> nom::IResult<&str, &str> {
 
     // consume characters not matching any of the patterns
     loop {
-        let remaining = input.split_at(match_len).1;
-        let terminator = patterns.iter().fold(false, |found_match: bool, p| {
+        let (_, remaining) = input.split_at(match_len);
+        let terminator = patterns.iter().fold(false, |found_match, p| {
             found_match || remaining.starts_with(*p)
         });
 
@@ -86,7 +93,10 @@ pub fn basic_arg(input: &str) -> nom::IResult<&str, &str> {
 
     match match_len {
         // TODO: more descriptive error?
-        0 => Err(nom::Err::Error((input, nom::error::ErrorKind::Many1))),
+        0 => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Many1,
+        ))),
         len => {
             let (matched, rest) = input.split_at(len);
             Ok((rest, matched))
@@ -108,21 +118,81 @@ pub fn command_terminator(input: &str) -> nom::IResult<&str, &str> {
     alt((empty_line, tag(";")))(input)
 }
 
+pub fn trigger(input: &str) -> nom::IResult<&str, Trigger> {
+    alt((
+        tag("+").map(|_| Trigger::Positive),
+        tag("-").map(|_| Trigger::Negative),
+    ))(input)
+}
+
+pub fn command_name(input: &str) -> nom::IResult<&str, CmdName> {
+    tuple((opt(trigger), arg))
+        .map(|(trigger, name)| CmdName {
+            name: name.into(),
+            trigger,
+        })
+        .parse(input)
+}
+
 /// Match a single command.
 ///
 /// A command is considered to be composed of:
 /// - Zero or more leading non-newline whitespace characters
 /// - One or more arguments, separated by non-newline whitespace characters
 /// - A command terminator (see `command_terminator`)
-pub fn command(input: &str) -> nom::IResult<&str, Vec<&str>> {
-    terminated(many1(preceded(space0, arg)), command_terminator)(input)
+pub fn terminated_command(input: &str) -> nom::IResult<&str, RunCmd> {
+    terminated(command, command_terminator)(input)
 }
 
-pub fn commands(input: &str) -> nom::IResult<&str, Vec<Vec<&str>>> {
+/// Match a single command.
+///
+/// A command is considered to be composed of:
+/// - Zero or more leading non-newline whitespace characters
+/// - One or more arguments, separated by non-newline whitespace characters
+pub fn command(input: &str) -> nom::IResult<&str, RunCmd> {
+    tuple((
+        command_name,
+        many0(preceded(space0, arg.map(|arg| arg.to_owned()))),
+    ))
+    .map(|(cmd, rest)| RunCmd(cmd, rest.into()))
+    .parse(input)
+}
+
+/// Match a binding - command set possibly preceded by `*` in order to make the binding valid for any focus state.
+///
+/// A command is considered to be composed of:
+/// - Zero or more leading non-newline whitespace characters
+/// - One or more arguments, separated by non-newline whitespace characters
+pub fn binding(input: &str) -> nom::IResult<&str, Binding> {
+    tuple((
+        opt(tag("*")).map(|val| {
+            if val.is_some() {
+                BindingValidState::Any
+            } else {
+                BindingValidState::Game
+            }
+        }),
+        commands,
+    ))
+    .map(|(valid, commands)| Binding { commands, valid })
+    .parse(input)
+}
+
+pub fn commands(input: &str) -> nom::IResult<&str, Vec<RunCmd>> {
     delimited(
-        many0(empty_line),
-        many0(terminated(command, many0(empty_line))),
-        many0(empty_line),
+        tuple((many0(command_terminator), space0)),
+        tuple((
+            many0(terminated(terminated_command, tuple((many0(command_terminator), space0)))),
+            opt(command),
+        ))
+        .map(|(mut commands, last)| {
+            if let Some(last) = last {
+                commands.push(last);
+            }
+
+            commands
+        }),
+        tuple((many0(command_terminator), space0)),
     )(input)
 }
 
@@ -175,19 +245,19 @@ mod test {
     #[test]
     fn test_command_basic() {
         let result = command("arg_0 arg_1;\n");
-        assert_eq!(result, Ok(("\n", vec!["arg_0", "arg_1"])));
+        assert_eq!(result, Ok(("\n", RunCmd("arg_0".into(), vec!["arg_1".to_owned()].into()))));
     }
 
     #[test]
     fn test_command_quoted() {
         let result = command("bind \"space\" \"+jump\";\n");
-        assert_eq!(result, Ok(("\n", vec!["bind", "space", "+jump"])));
+        assert_eq!(result, Ok(("\n", RunCmd("bind".into(), vec!["space".to_owned(), "jump".to_owned()].into()))));
     }
 
     #[test]
     fn test_command_comment() {
         let result = command("bind \"space\" \"+jump\" // bind space to jump\n\n");
-        assert_eq!(result, Ok(("\n", vec!["bind", "space", "+jump"])));
+        assert_eq!(result, Ok(("\n", RunCmd("bind".into(), vec!["space".to_owned(), "jump".to_owned()].into()))));
     }
 
     #[test]
@@ -211,11 +281,11 @@ stuffcmds
 startdemos demo1 demo2 demo3
 ";
         let expected = vec![
-            vec!["exec", "default.cfg"],
-            vec!["exec", "config.cfg"],
-            vec!["exec", "autoexec.cfg"],
-            vec!["stuffcmds"],
-            vec!["startdemos", "demo1", "demo2", "demo3"],
+            RunCmd("bind".into(), vec!["default.cfg".to_owned()].into()),
+            RunCmd("exec".into(), vec!["config.cfg".to_owned()].into()),
+            RunCmd("bind".into(), vec!["autoexec.cfg".to_owned()].into()),
+            RunCmd("stuffcmds".into(), vec![].into()),
+            RunCmd("startdemos".into(), vec!["demo1".to_owned(), "demo2".to_owned(), "demo3".to_owned()].into()),
         ];
 
         let result = commands(script);

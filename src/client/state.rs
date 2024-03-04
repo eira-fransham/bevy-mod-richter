@@ -7,14 +7,14 @@ use crate::{
             particle::{Particle, Particles, TrailKind, MAX_PARTICLES},
             Beam, ClientEntity, Light, LightDesc, Lights, MAX_BEAMS, MAX_LIGHTS, MAX_TEMP_ENTITIES,
         },
-        input::game::{Action, GameInput},
         render::Camera,
         sound::{Listener, StartSound},
         view::{IdleVars, KickVars, MouseVars, RollVars, View},
         ClientError, ColorShiftCode, IntermissionKind, MoveVars, MAX_STATS,
     },
     common::{
-        bsp::{self, BspLeafContents},
+        bsp,
+        console::Registry,
         engine,
         math::{self, Angles},
         model::{Model, ModelFlags, ModelKind, SyncType},
@@ -26,12 +26,7 @@ use crate::{
     },
 };
 use arrayvec::ArrayVec;
-use bevy::{
-    asset::{AssetServer, Handle},
-    audio::AudioSource,
-    ecs::event::EventWriter,
-    prelude::*,
-};
+use bevy::prelude::*;
 use cgmath::{Angle as _, Deg, InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
 use fxhash::FxHashMap;
@@ -609,17 +604,15 @@ impl ClientState {
 
     pub fn handle_input(
         &mut self,
-        game_input: &mut GameInput,
+        registry: &Registry,
         frame_time: Duration,
         move_vars: MoveVars,
         mouse_vars: MouseVars,
     ) -> ClientCmd {
-        use Action::*;
-
-        let mlook = game_input.action_state(MLook);
+        let mlook = registry.is_pressed("mlook");
         self.view.handle_input(
             frame_time,
-            game_input,
+            &*registry,
             self.intermission.as_ref(),
             mlook,
             move_vars.cl_anglespeedkey,
@@ -628,27 +621,26 @@ impl ClientState {
             mouse_vars,
         );
 
-        let mut move_left = game_input.action_state(MoveLeft);
-        let mut move_right = game_input.action_state(MoveRight);
-        if game_input.action_state(Strafe) {
-            move_left |= game_input.action_state(Left);
-            move_right |= game_input.action_state(Right);
+        let mut move_left = registry.is_pressed("moveleft");
+        let mut move_right = registry.is_pressed("moveright");
+        if registry.is_pressed("strafe") {
+            move_left |= registry.is_pressed("left");
+            move_right |= registry.is_pressed("right");
         }
 
         let mut sidemove = move_vars.cl_sidespeed * (move_right as i32 - move_left as i32) as f32;
 
         let mut upmove = move_vars.cl_upspeed
-            * (game_input.action_state(MoveUp) as i32 - game_input.action_state(MoveDown) as i32)
+            * (registry.is_pressed("moveup") as i32 - registry.is_pressed("movedown") as i32)
                 as f32;
 
         let mut forwardmove = 0.0;
-        if !game_input.action_state(KLook) {
-            forwardmove +=
-                move_vars.cl_forwardspeed * game_input.action_state(Forward) as i32 as f32;
-            forwardmove -= move_vars.cl_backspeed * game_input.action_state(Back) as i32 as f32;
+        if !registry.is_pressed("klook") {
+            forwardmove += move_vars.cl_forwardspeed * registry.is_pressed("forward") as i32 as f32;
+            forwardmove -= move_vars.cl_backspeed * registry.is_pressed("back") as i32 as f32;
         }
 
-        if game_input.action_state(Speed) {
+        if registry.is_pressed("speed") {
             sidemove *= move_vars.cl_movespeedkey;
             upmove *= move_vars.cl_movespeedkey;
             forwardmove *= move_vars.cl_movespeedkey;
@@ -656,11 +648,11 @@ impl ClientState {
 
         let mut button_flags = ButtonFlags::empty();
 
-        if game_input.action_state(Attack) {
+        if registry.is_pressed("attack") {
             button_flags |= ButtonFlags::ATTACK;
         }
 
-        if game_input.action_state(Jump) {
+        if registry.is_pressed("jump") {
             button_flags |= ButtonFlags::JUMP;
         }
 
@@ -679,7 +671,7 @@ impl ClientState {
             side_move: sidemove as i16,
             up_move: upmove as i16,
             button_flags,
-            impulse: game_input.impulse(),
+            impulse: todo!("Reimplement `impulse`"), // registry.impulse(),
         }
     }
 

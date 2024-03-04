@@ -24,13 +24,14 @@
 #![cfg_attr(debug_assertions, allow(dead_code))]
 #![cfg_attr(debug_assertions, allow(unused_variables))]
 #![cfg_attr(debug_assertions, allow(unused_assignments))]
+#![recursion_limit = "256"]
 
 mod capture;
 mod game;
 mod menu;
 mod trace;
 
-use std::{fs, io::Read, net::SocketAddr, path::PathBuf, process::ExitCode};
+use std::{fs, net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use bevy::{
     core_pipeline::{
@@ -39,98 +40,12 @@ use bevy::{
     },
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
-    render::{camera::Exposure, renderer::RenderDevice},
+    render::camera::Exposure,
     window::{PresentMode, WindowTheme},
 };
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
-use chrono::Duration;
-use richter::{
-    client::{
-        input::{Input, InputFocus},
-        menu::Menu,
-        render::{Extent2d, GraphicsState},
-        RichterPlugin,
-    },
-    common::{
-        console::ConsoleInput,
-        host::{Control, Program},
-    },
-};
+use richter::{client::RichterPlugin, common::console::RunCmd};
 use structopt::StructOpt;
-use winit::{
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoopWindowTarget},
-    window::{CursorGrabMode, Window},
-};
-
-struct ClientProgram;
-
-impl Program for ClientProgram {
-    fn handle_event<T>(
-        &mut self,
-        event: Event<T>,
-        _target: &EventLoopWindowTarget<T>,
-        _control_flow: &mut ControlFlow,
-    ) -> Control {
-        let input: &mut Input = todo!();
-        let menu: &mut Menu = todo!();
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::Resized(_),
-                ..
-            } => {
-                // self.window_dimensions_changed = true;
-                Control::Continue
-            }
-
-            e => input.handle_event().unwrap(),
-        }
-    }
-
-    fn frame(&mut self, frame_duration: Duration) {
-        // recreate swapchain if needed
-        // if self.window_dimensions_changed {
-        //     self.window_dimensions_changed = false;
-        //     self.recreate_swap_chain();
-        // }
-
-        let gfx_state: &mut GraphicsState = todo!();
-        let input: &mut Input = todo!();
-        let window: &Window = todo!();
-        let render_device: &RenderDevice = todo!();
-
-        let size: Extent2d = window.inner_size().into();
-
-        // recreate attachments and rebuild pipelines if necessary
-        // gfx_state.update(render_device, size, sample_count);
-        // self.game.frame(&*gfx_state, frame_duration);
-
-        match input.focus() {
-            InputFocus::Game => {
-                if let Err(e) = window.set_cursor_grab(CursorGrabMode::Locked) {
-                    // This can happen if the window is running in another
-                    // workspace. It shouldn't be considered an error.
-                    debug!("Couldn't grab cursor: {}", e);
-                }
-
-                window.set_cursor_visible(false);
-            }
-
-            _ => {
-                if let Err(e) = window.set_cursor_grab(CursorGrabMode::None) {
-                    debug!("Couldn't release cursor: {}", e);
-                };
-                window.set_cursor_visible(true);
-            }
-        }
-
-        // run console commands
-        // console.execute(todo!());
-
-        // TODO
-        // self.render();
-    }
-}
 
 #[derive(StructOpt, Debug)]
 struct Opt {
@@ -159,8 +74,8 @@ struct Opt {
     game: Option<String>,
 }
 
-fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<ConsoleInput>) {
-    move |mut commands, mut console| {
+fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
+    move |mut commands, mut console_cmds| {
         // camera
         commands.spawn((
             Camera3dBundle {
@@ -184,14 +99,18 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<ConsoleInput>) {
             },
         ));
 
-        console.append_text("exec quake.rc\n");
+        console_cmds.send(RunCmd::parse("exec quake.rc").unwrap());
 
         if let Some(ref server) = opt.connect {
-            console.append_text(format!("connect {}", server));
+            console_cmds.send(format!("connect {}", server).parse().unwrap());
         } else if let Some(ref demo) = opt.demo {
-            console.append_text(format!("playdemo {}", demo));
+            console_cmds.send(format!("playdemo {}", demo).parse().unwrap());
         } else if !opt.demos.is_empty() {
-            console.append_text(format!("startdemos {}", opt.demos.join(" ")));
+            console_cmds.send(
+                format!("startdemos {}", opt.demos.join(" "))
+                    .parse()
+                    .unwrap(),
+            );
         }
     }
 }
@@ -200,33 +119,37 @@ fn main() -> ExitCode {
     let opt = Opt::from_args();
 
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(bevy::window::Window {
-            title: "Richter client".into(),
-            name: Some("Richter client".into()),
-            resolution: (1366., 768.).into(),
-            present_mode: PresentMode::AutoVsync,
-            // Tells wasm not to override default event handling, like F5, Ctrl+R etc.
-            prevent_default_event_handling: false,
-            window_theme: Some(WindowTheme::Dark),
-            enabled_buttons: bevy::window::EnabledButtons {
-                maximize: false,
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(bevy::window::Window {
+                    title: "Richter client".into(),
+                    name: Some("Richter client".into()),
+                    resolution: (1366., 768.).into(),
+                    present_mode: PresentMode::AutoVsync,
+                    // Tells wasm not to override default event handling, like F5, Ctrl+R etc.
+                    prevent_default_event_handling: false,
+                    window_theme: Some(WindowTheme::Dark),
+                    enabled_buttons: bevy::window::EnabledButtons {
+                        maximize: false,
+                        ..Default::default()
+                    },
+                    // This will spawn an invisible window
+                    // The window will be made visible in the make_visible() system after 3 frames.
+                    // This is useful when you want to avoid the white window that shows up before the GPU is ready to render the app.
+                    // visible: false,
+                    ..Default::default()
+                }),
                 ..Default::default()
-            },
-            // This will spawn an invisible window
-            // The window will be made visible in the make_visible() system after 3 frames.
-            // This is useful when you want to avoid the white window that shows up before the GPU is ready to render the app.
-            // visible: false,
-            ..Default::default()
-        }),
-        ..Default::default()
-    }).set(ImagePlugin::default_nearest()))
+            })
+            .set(ImagePlugin::default_nearest()),
+    )
     .insert_resource(Msaa::Off)
     .add_plugins(AutoExposurePlugin)
     .add_plugins(RichterPlugin {
         base_dir: opt.base_dir.clone(),
         game: opt.game.clone(),
-        main_menu: menu::build_main_menu().expect("TODO: Error handling"),
+        main_menu: menu::build_main_menu,
     })
     .insert_resource(DefaultOpaqueRendererMethod::deferred())
     .add_systems(Startup, startup(opt));

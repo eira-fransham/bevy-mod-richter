@@ -20,20 +20,10 @@
 
 use std::{mem, path::PathBuf, sync::Once};
 
-use bevy::ecs::{
-    system::{Res, ResMut},
-    world::World,
-};
+use bevy::ecs::world::World;
 use video_rs::Encoder;
 
-use crate::{
-    capture::cmd_screenshot,
-    trace::{cmd_trace_begin, cmd_trace_end},
-};
-
-use richter::client::input::Input;
-
-use chrono::{Duration, TimeDelta, Utc};
+use chrono::{TimeDelta, Utc};
 
 fn cmd_startvideo(args: &[&str], world: &mut World) -> String {
     static VIDEO_INIT: Once = Once::new();
@@ -121,51 +111,6 @@ enum VideoState {
 //     }
 
 // advance the simulation
-pub fn frame(input: ResMut<Input>, frame_duration: Duration) {
-    // let trace_frames: &mut Option<Vec<TraceFrame>> = todo!();
-
-    // match client.frame(frame_duration, gfx_state) {
-    //     Ok(()) => (),
-    //     Err(e) => match e {
-    //         Cvar(_)
-    //         | UnrecognizedProtocol(_)
-    //         | NoSuchClient(_)
-    //         | NoSuchPlayer(_)
-    //         | NoSuchEntity(_)
-    //         | NullEntity
-    //         | EntityExists(_)
-    //         | InvalidViewEntity(_)
-    //         | TooManyStaticEntities
-    //         | NoSuchLightmapAnimation(_)
-    //         | Model(_)
-    //         | Network(_)
-    //         | Sound(_)
-    //         | Vfs(_) => {
-    //             log::error!("{}", e);
-    //             // TODO
-    //             // self.client.disconnect();
-    //         }
-
-    //         _ => panic!("{}", e),
-    //     },
-    // };
-
-    // if let Some(ref mut game_input) = input.game_input_mut() {
-    //     // TODO
-    //     self.client
-    //         .handle_input(game_input, frame_duration)
-    //         .unwrap();
-    // }
-
-    // if there's an active trace, record this frame
-    // if let Some(ref mut trace_frames) = trace_frames {
-    //     trace_frames.push(
-    //         todo!(), // self.client
-    //                  //     .trace(&[self.client.view_entity_id().unwrap()])
-    //                  //     .unwrap(),
-    //     );
-    // }
-}
 
 //     pub fn render(
 //         &mut self,
