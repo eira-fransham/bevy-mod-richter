@@ -756,9 +756,10 @@ impl Connection {
                     if self.state.static_entities.len() >= MAX_STATIC_ENTITIES {
                         Err(ClientError::TooManyStaticEntities)?;
                     }
+                    let id = self.state.static_entities.len();
                     self.state
                         .static_entities
-                        .push_back(ClientEntity::from_baseline(EntityState {
+                        .push_back(ClientEntity::from_baseline(id, EntityState {
                             origin,
                             angles,
                             model_id: model_id as usize,

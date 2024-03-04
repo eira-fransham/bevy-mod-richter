@@ -566,7 +566,6 @@ impl GameInput {
             .try_into()
             .map_err(|e| format_err!("Failed to parse input: {}", e))?;
 
-
         Ok(self.bindings.insert(input, target))
     }
 

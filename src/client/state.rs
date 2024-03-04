@@ -77,6 +77,7 @@ pub struct ClientState {
 
     // entities and entity-like things
     pub entities: im::Vector<ClientEntity>,
+    pub entity_map: im::HashMap<usize, Entity>,
     pub static_entities: im::Vector<ClientEntity>,
     pub temp_entities: im::Vector<ClientEntity>,
     // dynamic point lights
@@ -125,26 +126,27 @@ impl ClientState {
         ClientState {
             rng: SmallRng::from_entropy(),
             models: iter::once(Model::none()).collect(),
-            model_names: Default::default(),
-            sounds: Default::default(),
-            cached_sounds: Default::default(),
-            entities: Default::default(),
-            static_entities: Default::default(),
-            temp_entities: Default::default(),
+            model_names: default(),
+            sounds: default(),
+            cached_sounds: default(),
+            entities: default(),
+            entity_map: default(),
+            static_entities: default(),
+            temp_entities: default(),
             lights: Lights::with_capacity(MAX_LIGHTS).into(),
             beams: [None; MAX_BEAMS],
             particles: Particles::with_capacity(MAX_PARTICLES).into(),
-            visible_entity_ids: Default::default(),
-            light_styles: Default::default(),
+            visible_entity_ids: default(),
+            light_styles: default(),
             stats: [0; MAX_STATS],
             max_players: 0,
-            player_info: Default::default(),
+            player_info: default(),
             msg_times: [Duration::zero(), Duration::zero()],
             time: Duration::zero(),
             lerp_factor: 0.0,
             items: ItemFlags::empty(),
             item_get_time: [Duration::zero(); net::MAX_ITEMS],
-            color_shifts: Default::default(),
+            color_shifts: default(),
             view: View::new(),
             face_anim_time: Duration::zero(),
             msg_velocity: [Vector3::zero(), Vector3::zero()],
@@ -537,7 +539,8 @@ impl ClientState {
                 let len = vec.magnitude();
                 let direction = vec.normalize();
                 for interval in 0..(len / 30.0) as i32 {
-                    let mut ent = ClientEntity::uninitialized();
+                    let id = self.temp_entities.len();
+                    let mut ent = ClientEntity::uninitialized(id);
                     ent.origin = beam.start + 30.0 * interval as f32 * direction;
                     ent.angles =
                         Vector3::new(pitch, yaw, Deg(ANGLE_DISTRIBUTION.sample(&mut self.rng)));
@@ -751,7 +754,7 @@ impl ClientState {
         // spawn intermediate entities (uninitialized)
         self.entities.extend((self.entities.len()..id).map(|i| {
             debug!("Spawning uninitialized entity with ID {}", i);
-            ClientEntity::uninitialized()
+            ClientEntity::uninitialized(i)
         }));
 
         debug!(
@@ -759,7 +762,7 @@ impl ClientState {
             id, baseline
         );
         self.entities
-            .push_back(ClientEntity::from_baseline(baseline));
+            .push_back(ClientEntity::from_baseline(id, baseline));
 
         Ok(())
     }

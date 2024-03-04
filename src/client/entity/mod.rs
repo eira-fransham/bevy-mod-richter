@@ -38,6 +38,7 @@ pub const MAX_STATIC_ENTITIES: usize = 128;
 
 #[derive(Debug, Clone)]
 pub struct ClientEntity {
+    pub id: usize,
     pub force_link: bool,
     pub baseline: EntityState,
     pub msg_time: Duration,
@@ -57,8 +58,9 @@ pub struct ClientEntity {
 }
 
 impl ClientEntity {
-    pub fn from_baseline(baseline: EntityState) -> ClientEntity {
+    pub fn from_baseline(id: usize, baseline: EntityState) -> ClientEntity {
         ClientEntity {
+            id,
             force_link: false,
             baseline: baseline.clone(),
             msg_time: Duration::zero(),
@@ -80,8 +82,9 @@ impl ClientEntity {
         }
     }
 
-    pub fn uninitialized() -> ClientEntity {
+    pub fn uninitialized(id: usize) -> ClientEntity {
         ClientEntity {
+            id,
             force_link: false,
             baseline: EntityState::uninitialized(),
             msg_time: Duration::zero(),

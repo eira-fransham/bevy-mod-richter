@@ -1438,26 +1438,37 @@ mod systems {
                 ))
                 .into();
 
-            commands.spawn((
-                NodeBundle {
+            commands
+                .spawn(NodeBundle {
                     style: Style {
                         width: Val::Percent(100.0),
                         height: Val::Percent(100.0),
                         ..default()
                     },
                     ..default()
-                },
-                AtlasText {
-                    text: "".into(),
-                    image,
-                    layout,
-                    glyph_size: (
-                        Val::Px(GLYPH_WIDTH as _) * SCALE,
-                        Val::Px(GLYPH_HEIGHT as _) * SCALE,
-                    ),
-                },
-                AlertOutput::default(),
-            ));
+                })
+                .with_children(|commands| {
+                    commands.spawn((
+                        NodeBundle {
+                            style: Style {
+                                left: Val::Px(GLYPH_WIDTH as _) * SCALE / 2.,
+                                top: Val::Px(GLYPH_WIDTH as _) * SCALE / 2.,
+                                ..default()
+                            },
+                            ..default()
+                        },
+                        AtlasText {
+                            text: "".into(),
+                            image,
+                            layout,
+                            glyph_size: (
+                                Val::Px(GLYPH_WIDTH as _) * SCALE,
+                                Val::Px(GLYPH_HEIGHT as _) * SCALE,
+                            ),
+                        },
+                        AlertOutput::default(),
+                    ));
+                });
         }
     }
 

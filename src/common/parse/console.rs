@@ -182,7 +182,10 @@ pub fn commands(input: &str) -> nom::IResult<&str, Vec<RunCmd>> {
     delimited(
         tuple((many0(command_terminator), space0)),
         tuple((
-            many0(terminated(terminated_command, tuple((many0(command_terminator), space0)))),
+            many0(terminated(
+                terminated_command,
+                tuple((many0(command_terminator), space0)),
+            )),
             opt(command),
         ))
         .map(|(mut commands, last)| {
@@ -245,19 +248,43 @@ mod test {
     #[test]
     fn test_command_basic() {
         let result = command("arg_0 arg_1;\n");
-        assert_eq!(result, Ok(("\n", RunCmd("arg_0".into(), vec!["arg_1".to_owned()].into()))));
+        assert_eq!(
+            result,
+            Ok((
+                "\n",
+                RunCmd("arg_0".into(), vec!["arg_1".to_owned()].into())
+            ))
+        );
     }
 
     #[test]
     fn test_command_quoted() {
         let result = command("bind \"space\" \"+jump\";\n");
-        assert_eq!(result, Ok(("\n", RunCmd("bind".into(), vec!["space".to_owned(), "jump".to_owned()].into()))));
+        assert_eq!(
+            result,
+            Ok((
+                "\n",
+                RunCmd(
+                    "bind".into(),
+                    vec!["space".to_owned(), "jump".to_owned()].into()
+                )
+            ))
+        );
     }
 
     #[test]
     fn test_command_comment() {
         let result = command("bind \"space\" \"+jump\" // bind space to jump\n\n");
-        assert_eq!(result, Ok(("\n", RunCmd("bind".into(), vec!["space".to_owned(), "jump".to_owned()].into()))));
+        assert_eq!(
+            result,
+            Ok((
+                "\n",
+                RunCmd(
+                    "bind".into(),
+                    vec!["space".to_owned(), "jump".to_owned()].into()
+                )
+            ))
+        );
     }
 
     #[test]
@@ -285,7 +312,10 @@ startdemos demo1 demo2 demo3
             RunCmd("exec".into(), vec!["config.cfg".to_owned()].into()),
             RunCmd("bind".into(), vec!["autoexec.cfg".to_owned()].into()),
             RunCmd("stuffcmds".into(), vec![].into()),
-            RunCmd("startdemos".into(), vec!["demo1".to_owned(), "demo2".to_owned(), "demo3".to_owned()].into()),
+            RunCmd(
+                "startdemos".into(),
+                vec!["demo1".to_owned(), "demo2".to_owned(), "demo3".to_owned()].into(),
+            ),
         ];
 
         let result = commands(script);

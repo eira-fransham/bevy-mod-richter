@@ -1,7 +1,4 @@
-use std::{
-    io::{self, BufReader},
-    path::PathBuf,
-};
+use std::io::BufReader;
 
 use crate::{
     client::render::{DiffuseData, FullbrightData},
@@ -9,24 +6,24 @@ use crate::{
 };
 
 use beef::Cow;
-use bevy::{asset::AssetLoader, prelude::*, render::render_asset::RenderAssetUsages};
+use bevy::{
+    asset::AssetLoader,
+    prelude::*,
+    render::{
+        render_resource::{AsBindGroup, ShaderRef},
+        texture::ImageSampler,
+    },
+    sprite::Material2d,
+};
 use byteorder::ReadBytesExt;
 use futures::AsyncReadExt;
-use serde::{Deserialize, Serialize};
-use wgpu::{Extent3d, TextureDimension};
-
-use super::{Extent2d, DIFFUSE_TEXTURE_FORMAT};
-
-#[derive(Asset, TypePath, Debug)]
-pub struct Palette {
-    rgb: [[u8; 3]; 256],
-}
+use wgpu::{Extent3d, TextureUsages};
 
 #[derive(Default)]
 struct PaletteLoader;
 
 impl AssetLoader for PaletteLoader {
-    type Asset = Palette;
+    type Asset = Image;
     type Settings = ();
     type Error = std::io::Error;
 
@@ -37,11 +34,34 @@ impl AssetLoader for PaletteLoader {
         load_context: &'a mut bevy::asset::LoadContext,
     ) -> bevy::utils::BoxedFuture<'a, Result<Self::Asset, Self::Error>> {
         Box::pin(async move {
-            let mut rgb = [0u8; 3 * 256];
-            reader.read_exact(&mut rgb).await.and_then(|rgb| {
-                Ok(Palette {
-                    rgb: bytemuck::cast(rgb),
-                })
+            const PALETTE_SIZE: usize = 3 * 256;
+
+            let mut rgb = [0u8; PALETTE_SIZE];
+            reader.read_exact(&mut rgb).await?;
+
+            let rgba = rgb
+                .chunks(3)
+                .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 0xff])
+                .collect();
+
+            Ok(Image {
+                data: rgba,
+                texture_descriptor: wgpu::TextureDescriptor {
+                    label: Some("palette"),
+                    size: Extent3d {
+                        width: PALETTE_SIZE as u32,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D1,
+                    format: wgpu::TextureFormat::Rgba8Uint,
+                    usage: TextureUsages::TEXTURE_BINDING,
+                    view_formats: default(),
+                },
+                sampler: ImageSampler::Default,
+                ..default()
             })
         })
     }
@@ -51,83 +71,51 @@ impl AssetLoader for PaletteLoader {
     }
 }
 
-#[derive(Default)]
-pub struct PalettedImageLoader;
-
-#[derive(Serialize, Deserialize)]
-pub struct PalettedImageLoaderSettings {
-    pub transparent: u8,
-    pub dimensions: Extent2d,
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct PalettedMaterial {
+    /// The transparent color index. Set to a negative number to disable
+    #[uniform(0)]
+    pub transparent: i32,
+    #[texture(1)]
+    #[sampler(2)]
+    pub greyscale: Option<Handle<Image>>,
+    #[texture(3)]
+    #[sampler(4)]
+    pub palette: Option<Handle<Image>>,
+    pub alpha_mode: AlphaMode,
 }
 
-impl Default for PalettedImageLoaderSettings {
+impl Default for PalettedMaterial {
     fn default() -> Self {
         Self {
-            transparent: 0xFF,
-            dimensions: Extent2d {
-                width: 256,
-                height: 256,
-            },
+            transparent: 0xff,
+            greyscale: None,
+            palette: None,
+            alpha_mode: AlphaMode::default(),
         }
     }
 }
 
-impl AssetLoader for PalettedImageLoader {
-    type Asset = Image;
-    type Settings = PalettedImageLoaderSettings;
-    type Error = io::Error;
-
-    fn load<'a>(
-        &'a self,
-        reader: &'a mut bevy::asset::io::Reader,
-        settings: &'a Self::Settings,
-        load_context: &'a mut bevy::asset::LoadContext,
-    ) -> bevy::utils::BoxedFuture<'a, Result<Self::Asset, Self::Error>> {
-        Box::pin(async move {
-            let Some(palette_path) = load_context.asset_path().label() else {
-                return Err(io::Error::from(io::ErrorKind::NotFound));
-            };
-            let palette_path = palette_path.to_owned();
-
-            let palette = load_context
-                .load_direct(PathBuf::from(palette_path))
-                .await
-                .map_err(|_| io::Error::from(io::ErrorKind::NotFound))?;
-            let palette = palette
-                .get::<Palette>()
-                .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
-            let mut data_buf =
-                vec![0u8; (settings.dimensions.width * settings.dimensions.height) as usize];
-            let image = reader.read_exact(&mut data_buf).await?;
-            let data = data_buf
-                .into_iter()
-                .flat_map(move |i| {
-                    if i == settings.transparent {
-                        [0u8; 4]
-                    } else {
-                        let [r, g, b] = palette.rgb[i as usize];
-                        [r, g, b, 0xff]
-                    }
-                })
-                .collect();
-
-            Ok(Image::new(
-                Extent3d {
-                    width: settings.dimensions.width,
-                    height: settings.dimensions.height,
-                    depth_or_array_layers: 1,
-                },
-                TextureDimension::D2,
-                data,
-                DIFFUSE_TEXTURE_FORMAT,
-                RenderAssetUsages::RENDER_WORLD,
-            ))
-        })
+impl Material for PalettedMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/paletted_image.wgsl".into()
     }
+}
 
-    fn extensions(&self) -> &[&str] {
-        &["lmp"]
+impl Material2d for PalettedMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/paletted_image_2d.wgsl".into()
     }
+}
+
+impl UiMaterial for PalettedMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/paletted_image_ui.wgsl".into()
+    }
+}
+
+pub struct Palette {
+    pub rgb: [[u8; 3]; 256],
 }
 
 impl Palette {
