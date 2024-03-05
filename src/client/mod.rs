@@ -155,6 +155,7 @@ where
             .init_resource::<Vfs>()
             .init_resource::<MusicPlayer>()
             .init_resource::<DemoQueue>()
+            .add_event::<Impulse>()
             // TODO: Use bevy's state system
             .insert_resource(ConnectionState::SignOn(SignOnStage::Not))
             .add_systems(
