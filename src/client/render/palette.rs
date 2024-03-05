@@ -15,6 +15,7 @@ use bevy::{
     },
     sprite::Material2d,
 };
+use bytemuck::{Pod, Zeroable};
 use byteorder::ReadBytesExt;
 use futures::AsyncReadExt;
 use wgpu::{Extent3d, TextureUsages};
@@ -114,6 +115,8 @@ impl UiMaterial for PalettedMaterial {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
 pub struct Palette {
     pub rgb: [[u8; 3]; 256],
 }

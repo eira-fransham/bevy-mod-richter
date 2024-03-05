@@ -7,15 +7,15 @@ use bevy::{
         renderer::{RenderDevice, RenderQueue},
     },
 };
+use bytemuck::{Pod, Zeroable};
 use wgpu::BindGroupLayoutEntry;
 
-use crate::{
-    client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState},
-    common::util::any_as_bytes,
-};
+use crate::
+    client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState}
+;
 
-#[repr(C, align(256))]
-#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
 pub struct PostProcessUniforms {
     pub color_shift: [f32; 4],
     pub brightness: f32,
@@ -43,13 +43,11 @@ impl PostProcessPipeline {
             PostProcessPipeline::create(device, compiler, &[], sample_count, swapchain_format);
         let uniform_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: unsafe {
-                any_as_bytes(&PostProcessUniforms {
-                    color_shift: [0.0; 4],
-                    brightness: BRIGHTNESS,
-                    inv_gamma: GAMMA.recip(),
-                })
-            },
+            contents: bytemuck::cast_slice(&[PostProcessUniforms {
+                color_shift: [0.0; 4],
+                brightness: BRIGHTNESS,
+                inv_gamma: GAMMA.recip(),
+            }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -242,13 +240,15 @@ impl PostProcessRenderer {
         color_shift: [f32; 4],
     ) {
         // update color shift
-        queue.write_buffer(state.postprocess_pipeline().uniform_buffer(), 0, unsafe {
-            any_as_bytes(&PostProcessUniforms {
+        queue.write_buffer(
+            state.postprocess_pipeline().uniform_buffer(),
+            0,
+            bytemuck::cast_slice(&[PostProcessUniforms {
                 color_shift,
                 brightness: BRIGHTNESS,
                 inv_gamma: GAMMA.recip(),
-            })
-        });
+            }]),
+        );
     }
 
     pub fn record_draw<'this, 'a>(

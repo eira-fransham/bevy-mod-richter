@@ -27,10 +27,7 @@ use crate::{
             RenderConnectionKind, RenderResolution, RenderState, RenderVars,
         },
     },
-    common::{
-        console::{ConsoleInput, ConsoleOutput},
-        util::any_as_bytes,
-    },
+    common::console::{ConsoleInput, ConsoleOutput},
 };
 
 #[repr(C)]
@@ -67,17 +64,15 @@ impl DeferredPipeline {
 
         let uniform_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: unsafe {
-                any_as_bytes(&DeferredUniforms {
-                    inv_projection: Matrix4::identity().into(),
-                    light_count: 0,
-                    _pad: [0; 3],
-                    lights: [PointLight {
-                        origin: Vector3::zero(),
-                        radius: 0.0,
-                    }; MAX_LIGHTS],
-                })
-            },
+            contents: bytemuck::cast_slice(&[DeferredUniforms {
+                inv_projection: Matrix4::identity().into(),
+                light_count: 0,
+                _pad: [0; 3],
+                lights: [PointLight {
+                    origin: Vector3::zero(),
+                    radius: 0.0,
+                }; MAX_LIGHTS],
+            }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -310,9 +305,11 @@ impl DeferredRenderer {
         uniforms: DeferredUniforms,
     ) {
         // update color shift
-        queue.write_buffer(state.deferred_pipeline().uniform_buffer(), 0, unsafe {
-            any_as_bytes(&uniforms)
-        });
+        queue.write_buffer(
+            state.deferred_pipeline().uniform_buffer(),
+            0,
+            bytemuck::cast_slice(&uniforms),
+        );
     }
 
     pub fn record_draw<'this, 'a>(

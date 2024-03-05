@@ -199,6 +199,7 @@ impl AssetReader for Pak {
 
 impl Pak {
     // TODO: rename to from_path or similar
+    #[allow(unsafe_code)]
     pub fn new<P>(path: P) -> Result<Pak, PakError>
     where
         P: AsRef<Path>,

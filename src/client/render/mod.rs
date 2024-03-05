@@ -68,9 +68,14 @@ use bevy::{
     prelude::*,
     render::{
         extract_resource::{ExtractResource, ExtractResourcePlugin},
+        render_asset::{RenderAssetUsages, RenderAssets},
         render_graph::{RenderGraphApp, ViewNodeRunner},
-        render_resource::{BindGroup, BindGroupLayout, Buffer, Sampler, Texture, TextureView},
+        render_resource::{
+            AsBindGroup, BindGroupLayout, DynamicUniformBuffer, PreparedBindGroup, Sampler,
+            Texture, UniformBuffer,
+        },
         renderer::{RenderDevice, RenderQueue},
+        texture::FallbackImage,
         view::ViewTarget,
         Render, RenderApp, RenderSet,
     },
@@ -79,10 +84,9 @@ use bevy::{
 pub use cvars::register_cvars;
 pub use error::{RenderError, RenderErrorKind};
 pub use palette::Palette;
-use parking_lot::RwLock;
 pub use pipeline::Pipeline;
 pub use postprocess::PostProcessRenderer;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 pub use target::{PreferredFormat, RenderTarget, RenderTargetResolve};
 pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
 pub use world::{
@@ -90,12 +94,7 @@ pub use world::{
     Camera,
 };
 
-use std::{
-    cell::RefCell,
-    mem::size_of,
-    num::NonZeroU64,
-    ops::{Deref, DerefMut},
-};
+use std::cell::RefCell;
 
 use crate::{
     client::{
@@ -103,7 +102,6 @@ use crate::{
         menu::Menu,
         render::{
             ui::{glyph::GlyphPipeline, quad::QuadPipeline},
-            uniform::DynamicUniformBuffer,
             world::{
                 alias::AliasPipeline,
                 brush::BrushPipeline,
@@ -123,7 +121,7 @@ use self::{
     ui::{UiPass, UiPassLabel},
     world::{
         deferred::{DeferredPass, DeferredPassLabel},
-        extract_world_renderer,
+        extract_world_renderer, FrameUniforms,
     },
 };
 
@@ -337,26 +335,88 @@ impl<'a> TextureData<'a> {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Extent2d {
-    pub width: u32,
-    pub height: u32,
+#[derive(Debug, Clone)]
+pub struct Conchars {
+    pub image: UiImage,
+    pub layout: Handle<TextureAtlasLayout>,
+    pub glyph_size: (Val, Val),
 }
 
-impl std::convert::Into<wgpu::Extent3d> for Extent2d {
-    fn into(self) -> wgpu::Extent3d {
-        wgpu::Extent3d {
-            width: self.width,
-            height: self.height,
-            depth_or_array_layers: 1,
+#[derive(Resource, Clone, ExtractResource)]
+pub struct Gfx {
+    pub palette: Palette,
+    pub conchars: Conchars,
+    pub wad: Wad,
+}
+
+impl FromWorld for Gfx {
+    fn from_world(world: &mut World) -> Self {
+        // TODO: Deduplicate with glyph.rs
+        const GLYPH_WIDTH: usize = 8;
+        const GLYPH_HEIGHT: usize = 8;
+        const GLYPH_COLS: usize = 16;
+        const GLYPH_ROWS: usize = 8;
+        const GLYPH_COUNT: usize = GLYPH_ROWS * GLYPH_COLS;
+        const GLYPH_TEXTURE_WIDTH: usize = GLYPH_WIDTH * GLYPH_COLS;
+        const SCALE: f32 = 2.;
+
+        let vfs = world.resource::<Vfs>();
+        let assets = world.resource::<AssetServer>();
+
+        let palette = Palette::load(&vfs, "gfx/palette.lmp");
+        let wad = Wad::load(vfs.open("gfx.wad").unwrap()).unwrap();
+
+        let conchars = wad.open_conchars().unwrap();
+
+        // TODO: validate conchars dimensions
+
+        let indices = conchars
+            .indices()
+            .iter()
+            .map(|i| if *i == 0 { 0xFF } else { *i })
+            .collect::<Vec<_>>();
+
+        let layout = assets.add(TextureAtlasLayout::from_grid(
+            Vec2::new(GLYPH_WIDTH as _, GLYPH_HEIGHT as _),
+            GLYPH_COLS,
+            GLYPH_COLS,
+            None,
+            None,
+        ));
+
+        let image = {
+            let (diffuse_data, _) = palette.translate(&indices);
+            let diffuse_data = TextureData::Diffuse(diffuse_data);
+
+            assets
+                .add(Image::new(
+                    wgpu::Extent3d {
+                        width: conchars.width(),
+                        height: conchars.height(),
+                        depth_or_array_layers: 1,
+                    },
+                    wgpu::TextureDimension::D2,
+                    diffuse_data.data().to_owned(),
+                    diffuse_data.format(),
+                    RenderAssetUsages::RENDER_WORLD,
+                ))
+                .into()
+        };
+
+        let conchars = Conchars {
+            image,
+            layout,
+            glyph_size: (
+                Val::Px(GLYPH_WIDTH as _) * SCALE,
+                Val::Px(GLYPH_HEIGHT as _) * SCALE,
+            ),
+        };
+
+        Self {
+            palette,
+            wad,
+            conchars,
         }
-    }
-}
-
-impl std::convert::From<winit::dpi::PhysicalSize<u32>> for Extent2d {
-    fn from(other: winit::dpi::PhysicalSize<u32>) -> Extent2d {
-        let winit::dpi::PhysicalSize { width, height } = other;
-        Extent2d { width, height }
     }
 }
 
@@ -402,15 +462,24 @@ impl ExtractResource for RenderState {
     }
 }
 
+#[derive(AsBindGroup, Default)]
+struct PerFrameBindGroup {
+    frame_uniforms: UniformBuffer<FrameUniforms>,
+}
+
+#[derive(AsBindGroup)]
+struct EntityBindGroup {
+    entity_uniforms: DynamicUniformBuffer<EntityUniforms>,
+    diffuse_sampler: Sampler,
+    lightmap_sampler: Sampler,
+}
+
 #[derive(Resource)]
 pub struct GraphicsState {
-    world_bind_group_layouts: Vec<BindGroupLayout>,
-    world_bind_groups: Vec<BindGroup>,
-
-    frame_uniform_buffer: Buffer,
-
-    // TODO: This probably doesn't need to be a rwlock
-    entity_uniform_buffer: RwLock<DynamicUniformBuffer<EntityUniforms>>,
+    per_frame_bind_group: PerFrameBindGroup,
+    entity_bind_group: EntityBindGroup,
+    world_layouts: [BindGroupLayout; 2],
+    world_bind_groups: [PreparedBindGroup<()>; 2],
 
     diffuse_sampler: Sampler,
     nearest_sampler: Sampler,
@@ -427,9 +496,6 @@ pub struct GraphicsState {
     glyph_pipeline: GlyphPipeline,
     quad_pipeline: QuadPipeline,
 
-    default_lightmap: Texture,
-    default_lightmap_view: TextureView,
-
     palette: Palette,
     gfx_wad: Wad,
 }
@@ -442,10 +508,11 @@ impl GraphicsState {
     pub fn new(
         device: &RenderDevice,
         queue: &RenderQueue,
-        size: Extent2d,
         view_target: &ViewTarget,
         sample_count: u32,
         vfs: &Vfs,
+        fallback: &FallbackImage,
+        assets: &RenderAssets<Image>,
     ) -> Result<GraphicsState, Error> {
         let diffuse_format = view_target.main_texture_format();
         let normal_format = NORMAL_PREPASS_FORMAT;
@@ -453,13 +520,9 @@ impl GraphicsState {
         let palette = Palette::load(&vfs, "gfx/palette.lmp");
         let gfx_wad = Wad::load(vfs.open("gfx.wad")?).unwrap();
 
-        let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("frame uniform buffer"),
-            size: size_of::<world::FrameUniforms>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let entity_uniform_buffer = DynamicUniformBuffer::new(device);
+        let frame_uniforms = UniformBuffer::default();
+        let entity_uniforms =
+            DynamicUniformBuffer::new_with_alignment(uniform::DYNAMIC_UNIFORM_BUFFER_ALIGNMENT);
 
         let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
@@ -503,47 +566,20 @@ impl GraphicsState {
             ..Default::default()
         });
 
-        let world_bind_group_layouts: Vec<BindGroupLayout> = world::BIND_GROUP_LAYOUT_DESCRIPTORS
-            .iter()
-            .map(|desc| device.create_bind_group_layout(None, desc))
-            .collect();
-        let world_bind_groups = vec![
-            device.create_bind_group(
-                Some("per-frame bind group"),
-                &world_bind_group_layouts[world::BindGroupLayoutId::PerFrame as usize],
-                &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &frame_uniform_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                }],
-            ),
-            device.create_bind_group(
-                Some("brush per-entity bind group"),
-                &world_bind_group_layouts[world::BindGroupLayoutId::PerEntity as usize],
-                &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &entity_uniform_buffer.buffer(),
-                            offset: 0,
-                            size: Some(
-                                NonZeroU64::new(size_of::<EntityUniforms>() as u64).unwrap(),
-                            ),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&lightmap_sampler),
-                    },
-                ],
-            ),
+        let per_frame_bind_group = PerFrameBindGroup { frame_uniforms };
+        let entity_bind_group = EntityBindGroup {
+            entity_uniforms,
+            diffuse_sampler: diffuse_sampler.clone(),
+            lightmap_sampler: lightmap_sampler.clone(),
+        };
+
+        let world_layouts = [
+            PerFrameBindGroup::bind_group_layout(device),
+            EntityBindGroup::bind_group_layout(device),
+        ];
+        let world_bind_groups = [
+            per_frame_bind_group.as_bind_group(&world_layouts[0], device, assets, fallback)?,
+            entity_bind_group.as_bind_group(&world_layouts[1], device, assets, fallback)?,
         ];
 
         let (
@@ -559,7 +595,7 @@ impl GraphicsState {
             let alias_pipeline = AliasPipeline::new(
                 device,
                 compiler,
-                &world_bind_group_layouts,
+                &world_layouts,
                 diffuse_format,
                 normal_format,
                 sample_count,
@@ -567,7 +603,7 @@ impl GraphicsState {
             let brush_pipeline = BrushPipeline::new(
                 device,
                 compiler,
-                &world_bind_group_layouts,
+                &world_layouts,
                 diffuse_format,
                 normal_format,
                 sample_count,
@@ -575,7 +611,7 @@ impl GraphicsState {
             let sprite_pipeline = SpritePipeline::new(
                 device,
                 compiler,
-                &world_bind_group_layouts,
+                &world_layouts,
                 diffuse_format,
                 normal_format,
                 sample_count,
@@ -609,23 +645,11 @@ impl GraphicsState {
             )
         });
 
-        let default_lightmap = create_texture(
-            device,
-            queue,
-            None,
-            1,
-            1,
-            &TextureData::Lightmap(LightmapData {
-                lightmap: (&[0xFF][..]).into(),
-            }),
-        );
-        let default_lightmap_view = default_lightmap.create_view(&Default::default());
-
         Ok(GraphicsState {
-            frame_uniform_buffer,
-            entity_uniform_buffer: entity_uniform_buffer.into(),
+            per_frame_bind_group,
+            entity_bind_group,
 
-            world_bind_group_layouts,
+            world_layouts,
             world_bind_groups,
 
             sample_count,
@@ -643,8 +667,6 @@ impl GraphicsState {
             nearest_sampler,
             lightmap_sampler,
 
-            default_lightmap,
-            default_lightmap_view,
             palette,
             gfx_wad,
         })
@@ -662,20 +684,28 @@ impl GraphicsState {
         create_texture(device, queue, label, width, height, data)
     }
 
-    pub fn frame_uniform_buffer(&self) -> &Buffer {
-        &self.frame_uniform_buffer
+    pub fn per_frame_bind_group(&self) -> &PreparedBindGroup<()> {
+        &self.world_bind_groups[0]
     }
 
-    pub fn entity_uniform_buffer(
-        &self,
-    ) -> impl Deref<Target = DynamicUniformBuffer<EntityUniforms>> + '_ {
-        self.entity_uniform_buffer.read()
+    pub fn entities_bind_group(&self) -> &PreparedBindGroup<()> {
+        &self.world_bind_groups[1]
     }
 
-    pub fn entity_uniform_buffer_mut(
-        &self,
-    ) -> impl DerefMut<Target = DynamicUniformBuffer<EntityUniforms>> + '_ {
-        self.entity_uniform_buffer.write()
+    pub fn frame_uniforms(&self) -> &UniformBuffer<FrameUniforms> {
+        &self.per_frame_bind_group.frame_uniforms
+    }
+
+    pub fn frame_uniforms_mut(&mut self) -> &mut UniformBuffer<FrameUniforms> {
+        &mut self.per_frame_bind_group.frame_uniforms
+    }
+
+    pub fn entity_uniform_buffer(&self) -> &DynamicUniformBuffer<EntityUniforms> {
+        &self.entity_bind_group.entity_uniforms
+    }
+
+    pub fn entity_uniform_buffer_mut(&mut self) -> &mut DynamicUniformBuffer<EntityUniforms> {
+        &mut self.entity_bind_group.entity_uniforms
     }
 
     pub fn diffuse_sampler(&self) -> &Sampler {
@@ -686,24 +716,8 @@ impl GraphicsState {
         &self.nearest_sampler
     }
 
-    pub fn default_lightmap(&self) -> &Texture {
-        &self.default_lightmap
-    }
-
-    pub fn default_lightmap_view(&self) -> &TextureView {
-        &self.default_lightmap_view
-    }
-
     pub fn lightmap_sampler(&self) -> &Sampler {
         &self.lightmap_sampler
-    }
-
-    pub fn world_bind_group_layouts(&self) -> &[BindGroupLayout] {
-        &self.world_bind_group_layouts
-    }
-
-    pub fn world_bind_groups(&self) -> &[BindGroup] {
-        &self.world_bind_groups
     }
 
     // pipelines
@@ -787,6 +801,8 @@ mod systems {
         render_resolution: Res<RenderResolution>,
         vfs: Res<Vfs>,
         render_vars: Res<RenderVars>,
+        fallback: Res<FallbackImage>,
+        assets: Res<RenderAssets<Image>>,
     ) {
         let mut sample_count = render_vars.msaa_samples;
         if !&[2, 4].contains(&sample_count) {
@@ -799,13 +815,11 @@ mod systems {
             match GraphicsState::new(
                 &*device,
                 &*queue,
-                Extent2d {
-                    width: render_resolution.0,
-                    height: render_resolution.1,
-                },
                 view_target,
                 sample_count,
                 &*vfs,
+                &*fallback,
+                &*assets,
             ) {
                 Ok(state) => {
                     commands.insert_resource(state);

@@ -10,17 +10,17 @@ use crate::{
             Palette, TextureData,
         },
     },
-    common::{math::Angles, util::any_slice_as_bytes},
+    common::math::Angles,
 };
 
 use bevy::render::{
     render_resource::{
-        BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Sampler, Texture,
-        TextureView,
+        BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Sampler, ShaderType, Texture, TextureView
     },
     renderer::{RenderDevice, RenderQueue},
 };
 use bumpalo::Bump;
+use bytemuck::{Pod, Zeroable};
 use cgmath::Matrix4;
 use lazy_static::lazy_static;
 
@@ -77,7 +77,7 @@ impl ParticlePipeline {
 
         let vertex_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: unsafe { any_slice_as_bytes(&VERTICES) },
+            contents: bytemuck::cast_slice(&VERTICES),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -212,7 +212,7 @@ impl ParticlePipeline {
             Self::set_push_constants(
                 pass,
                 Update(bump.alloc(VertexPushConstants {
-                    transform: camera.view_projection() * translation * rotation,
+                    transform: (camera.view_projection() * translation * rotation).into(),
                 })),
                 Retain,
                 Update(bump.alloc(FragmentPushConstants {
@@ -225,12 +225,14 @@ impl ParticlePipeline {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Zeroable, Pod)]
 pub struct VertexPushConstants {
-    pub transform: Matrix4<f32>,
+    pub transform: [[f32; 4]; 4],
 }
 
-#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Zeroable, Pod)]
 pub struct FragmentPushConstants {
     pub color: u32,
 }
@@ -331,7 +333,7 @@ impl Pipeline for ParticlePipeline {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Zeroable, Pod, ShaderType)]
 pub struct ParticleVertex {
     position: [f32; 3],
     texcoord: [f32; 2],

@@ -28,7 +28,7 @@ use crate::common::util;
 use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use failure::{bail, Backtrace, Context, Error, Fail};
-use fxhash::FxHashMap;
+use fxhash::FxBuildHasher;
 
 // see definition of lumpinfo_t:
 // https://github.com/id-Software/Quake/blob/master/WinQuake/wad.h#L54-L63
@@ -86,6 +86,9 @@ impl Display for WadError {
     }
 }
 
+// `derive(Fail)` triggers this, at time of writing `failure` is updated to the most-recent version
+// but this lint appears to be added by a recent nightly build
+#[allow(non_local_definitions)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Fail)]
 pub enum WadErrorKind {
     #[fail(display = "CONCHARS must be loaded with the dedicated function")]
@@ -149,8 +152,9 @@ struct LumpInfo {
     name: String,
 }
 
+#[derive(Debug, Clone)]
 pub struct Wad {
-    files: FxHashMap<String, Box<[u8]>>,
+    files: im::HashMap<String, Box<[u8]>, FxBuildHasher>,
 }
 
 impl Wad {
@@ -189,7 +193,7 @@ impl Wad {
             lump_infos.push(LumpInfo { offset, size, name });
         }
 
-        let mut files = FxHashMap::default();
+        let mut files = Default::default();
 
         for lump_info in lump_infos {
             let mut data = Vec::with_capacity(lump_info.size as usize);

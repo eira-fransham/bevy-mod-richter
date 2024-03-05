@@ -15,13 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::mem::size_of;
-
 use byteorder::{LittleEndian, ReadBytesExt};
-
-/// A plain-old-data type.
-pub trait Pod: 'static + Copy + Sized + Send + Sync {}
-impl<T: 'static + Copy + Sized + Send + Sync> Pod for T {}
 
 /// Read a `[f32; 3]` in little-endian byte order.
 pub fn read_f32_3<R>(reader: &mut R) -> Result<[f32; 3], std::io::Error>
@@ -47,37 +41,4 @@ where
     src.read_until(0, &mut bytes).unwrap();
     bytes.pop();
     String::from_utf8_lossy(&*bytes).into_owned()
-}
-
-pub unsafe fn any_as_bytes<T>(t: &T) -> &[u8]
-where
-    T: Pod,
-{
-    std::slice::from_raw_parts((t as *const T) as *const u8, size_of::<T>())
-}
-
-pub unsafe fn any_slice_as_bytes<T>(t: &[T]) -> &[u8]
-where
-    T: Pod,
-{
-    std::slice::from_raw_parts(t.as_ptr() as *const u8, size_of::<T>() * t.len())
-}
-
-pub unsafe fn bytes_as_any<T>(bytes: &[u8]) -> T
-where
-    T: Pod,
-{
-    assert_eq!(bytes.len(), size_of::<T>());
-    std::ptr::read_unaligned(bytes.as_ptr() as *const T)
-}
-
-pub unsafe fn any_as_u32_slice<T>(t: &T) -> &[u32]
-where
-    T: Pod,
-{
-    assert!(size_of::<T>() % size_of::<u32>() == 0);
-    std::slice::from_raw_parts(
-        (t as *const T) as *const u32,
-        size_of::<T>() / size_of::<u32>(),
-    )
 }

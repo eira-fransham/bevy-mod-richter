@@ -13,7 +13,7 @@ use crate::{
         uniform::{self, DynamicUniformBuffer, DynamicUniformBufferBlock},
         Extent2d, GraphicsState, Pipeline, TextureData,
     },
-    common::{util::any_slice_as_bytes, wad::QPic},
+    common::wad::QPic,
 };
 
 use bevy::render::{
@@ -23,6 +23,7 @@ use bevy::render::{
     },
     renderer::{RenderDevice, RenderQueue},
 };
+use bytemuck::{Pod, Zeroable};
 use cgmath::Matrix4;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -107,7 +108,7 @@ impl QuadPipeline {
 
         let vertex_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: unsafe { any_slice_as_bytes(&VERTICES) },
+            contents: bytemuck::cast_slice(&VERTICES),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -264,10 +265,10 @@ impl Pipeline for QuadPipeline {
     }
 }
 
-#[repr(C, align(256))]
-#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
 pub struct QuadUniforms {
-    transform: Matrix4<f32>,
+    transform: [[f32; 4]; 4],
 }
 
 pub struct QuadTexture {

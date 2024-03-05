@@ -27,7 +27,6 @@ use crate::{
         math::Angles,
         model::{Model, ModelKind},
         sprite::SpriteKind,
-        util::any_as_bytes,
     },
 };
 
@@ -35,11 +34,11 @@ use bevy::{
     core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT,
     prelude::*,
     render::{
-        render_resource::BindGroupLayoutEntry,
-        renderer::{RenderDevice, RenderQueue},
-    },
+        render_phase::TrackedRenderPass, render_resource::{AsBindGroup, BindGroupLayoutEntry, ShaderType}, renderer::{RenderDevice, RenderQueue}
+    }, utils::tracing::instrument::WithSubscriber,
 };
 use bumpalo::Bump;
+use bytemuck::{Pod, Zeroable};
 use cgmath::{Euler, InnerSpace, Matrix4, SquareMatrix as _, Vector3, Vector4};
 use chrono::Duration;
 use lazy_static::lazy_static;
@@ -273,27 +272,35 @@ impl Camera {
     }
 }
 
-#[repr(C, align(256))]
-#[derive(Copy, Clone)]
-// TODO: derive Debug once const generics are stable
-pub struct FrameUniforms {
-    // TODO: pack frame values into a [Vector4<f32>; 16],
-    lightmap_anim_frames: [UniformArrayFloat; 64],
-    camera_pos: Vector4<f32>,
-    time: f32,
+#[repr(C)]
+#[derive(ShaderType, Copy, Clone, Debug, Zeroable, Pod)]
+struct LightmapAnimFrames {
+    frames: [f32; 64],
+}
 
-    // TODO: pack flags into a bit string
+impl Default for LightmapAnimFrames {
+    fn default() -> Self {
+        Self { frames: [1.; 64] }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug, ShaderType, Zeroable, Pod)]
+pub struct FrameUniforms {
+    lightmap_anim_frames: LightmapAnimFrames,
+    camera_pos: [f32; 4],
+    time: f32,
     r_lightmap: UniformBool,
 }
 
-#[repr(C, align(256))]
-#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, ShaderType, Zeroable, Pod)]
 pub struct EntityUniforms {
     /// Model-view-projection transform matrix
-    transform: Matrix4<f32>,
+    transform: [[f32; 4]; 4],
 
     /// Model-only transform matrix
-    model: Matrix4<f32>,
+    model: [[f32; 4]; 4],
 }
 
 enum EntityRenderer {
@@ -311,8 +318,8 @@ pub struct WorldRenderer {
     worldmodel_renderer: BrushRenderer,
     entity_renderers: Vec<EntityRenderer>,
 
-    world_uniform_block: DynamicUniformBufferBlock<EntityUniforms>,
-    entity_uniform_blocks: RwLock<Vec<DynamicUniformBufferBlock<EntityUniforms>>>,
+    world_uniform_block: u32,
+    entity_uniform_blocks: Vec<u32>,
 }
 
 pub fn extract_world_renderer(
@@ -356,9 +363,9 @@ impl WorldRenderer {
         let mut worldmodel_renderer = None;
         let mut entity_renderers = Vec::new();
 
-        let world_uniform_block = state.entity_uniform_buffer_mut().allocate(EntityUniforms {
-            transform: Matrix4::identity(),
-            model: Matrix4::identity(),
+        let world_uniform_block = state.entity_uniform_buffer_mut().push(&EntityUniforms {
+            transform: Matrix4::identity().into(),
+            model: Matrix4::identity().into(),
         });
 
         for (i, model) in models.enumerate() {
@@ -410,9 +417,8 @@ impl WorldRenderer {
     }
 
     pub fn update_uniform_buffers<'a, I>(
-        &self,
-        state: &GraphicsState,
-        queue: &RenderQueue,
+        &mut self,
+        state: &mut GraphicsState,
         camera: &Camera,
         time: Duration,
         entities: I,
@@ -422,8 +428,7 @@ impl WorldRenderer {
         I: Iterator<Item = &'a ClientEntity>,
     {
         trace!("Updating frame uniform buffer");
-        queue.write_buffer(state.frame_uniform_buffer(), 0, unsafe {
-            any_as_bytes(&FrameUniforms {
+        state.frame_uniforms_mut().set(FrameUniforms {
                 lightmap_anim_frames: {
                     let mut frames = [UniformArrayFloat::new(0.0); 64];
                     for i in 0..64 {
@@ -431,45 +436,37 @@ impl WorldRenderer {
                     }
                     frames
                 },
-                camera_pos: camera.origin.extend(1.0),
+                camera_pos: camera.origin.extend(1.0).into(),
                 time: engine::duration_to_f32(time),
                 r_lightmap: UniformBool::new(render_vars.lightmap),
-            })
-        });
+            });
 
         trace!("Updating entity uniform buffer");
         let world_uniforms = EntityUniforms {
-            transform: camera.view_projection(),
-            model: Matrix4::identity(),
+            transform: camera.view_projection().into(),
+            model: Matrix4::identity().into(),
         };
-        state
+        self.world_uniform_block = state
             .entity_uniform_buffer_mut()
-            .write_block(&self.world_uniform_block, world_uniforms);
+            .push(&world_uniforms);
 
-        for (ent_pos, ent) in entities.into_iter().enumerate() {
+        self.entity_uniform_blocks.clear();
+        self.entity_uniform_blocks.extend(entities.into_iter().enumerate().map(|(ent_pos, ent)| {
             let ent_uniforms = EntityUniforms {
-                transform: self.calculate_mvp_transform(camera, ent),
-                model: self.calculate_model_transform(camera, ent),
+                transform: self.calculate_mvp_transform(camera, ent).into(),
+                model: self.calculate_model_transform(camera, ent).into(),
             };
 
-            if ent_pos >= self.entity_uniform_blocks.read().len() {
-                // if we don't have enough blocks, get a new one
-                let block = state.entity_uniform_buffer_mut().allocate(ent_uniforms);
-                self.entity_uniform_blocks.write().push(block);
-            } else {
-                state
-                    .entity_uniform_buffer_mut()
-                    .write_block(&self.entity_uniform_blocks.read()[ent_pos], ent_uniforms);
-            }
-        }
-
-        state.entity_uniform_buffer().flush(queue);
+            state
+                .entity_uniform_buffer_mut()
+                .push(&ent_uniforms)
+        }));
     }
 
     pub fn render_pass<'a, E, P>(
         &'a self,
         state: &'a GraphicsState,
-        pass: &mut wgpu::RenderPass<'a>,
+        pass: &mut TrackedRenderPass<'a>,
         bump: &'a Bump,
         camera: &Camera,
         time: Duration,
@@ -484,14 +481,14 @@ impl WorldRenderer {
         info!("Updating uniform buffers");
 
         pass.set_bind_group(
-            BindGroupLayoutId::PerFrame as u32,
-            &state.world_bind_groups()[BindGroupLayoutId::PerFrame as usize],
+            0,
+            &state.per_frame_bind_group().bind_group,
             &[],
         );
 
         // draw world
         info!("Drawing world");
-        pass.set_pipeline(state.brush_pipeline().pipeline());
+        pass.set_render_pipeline(state.brush_pipeline().pipeline());
         BrushPipeline::set_push_constants(
             pass,
             Update(bump.alloc(brush::VertexPushConstants {
@@ -502,9 +499,9 @@ impl WorldRenderer {
             Clear,
         );
         pass.set_bind_group(
-            BindGroupLayoutId::PerEntity as u32,
-            &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
-            &[self.world_uniform_block.offset()],
+            1,
+            &state.per_frame_bind_group().bind_group,
+            &[self.world_uniform_block],
         );
         self.worldmodel_renderer
             .record_draw(state, pass, &bump, time, camera, 0);
@@ -512,7 +509,7 @@ impl WorldRenderer {
         // draw entities
         info!("Drawing entities");
         for (ent_pos, ent) in entities.enumerate() {
-            if let Some(uniforms) = self.entity_uniform_blocks.read().get(ent_pos) {
+            if let Some(uniforms) = self.entity_uniform_blocks.get(ent_pos) {
                 pass.set_bind_group(
                     BindGroupLayoutId::PerEntity as u32,
                     &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],

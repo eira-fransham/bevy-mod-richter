@@ -5,21 +5,20 @@ use crate::{
         world::{BindGroupLayoutId, WorldPipelineBase},
         GraphicsState, Pipeline, TextureData,
     },
-    common::{
-        mdl::{self, AliasModel},
-        util::any_slice_as_bytes,
-    },
+    common::mdl::{self, AliasModel},
 };
 
 use bevy::{
     ecs::component::Component,
     render::{
         render_resource::{
-            BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, TextureView,
+            BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, ShaderType,
+            TextureView,
         },
         renderer::{RenderDevice, RenderQueue},
     },
 };
+use bytemuck::{Pod, Zeroable};
 use cgmath::{InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
 use failure::Error;
@@ -170,7 +169,7 @@ type Normal = [f32; 3];
 type DiffuseTexcoord = [f32; 2];
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, ShaderType, Zeroable, Pod)]
 struct AliasVertex {
     position: Position,
     normal: Normal,
@@ -359,7 +358,7 @@ impl AliasRenderer {
 
         let vertex_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: unsafe { any_slice_as_bytes(vertices.as_slice()) },
+            contents: bytemuck::cast_slice(vertices.as_slice()),
             usage: wgpu::BufferUsages::VERTEX,
         });
 

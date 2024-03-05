@@ -58,6 +58,9 @@ impl Display for RenderError {
     }
 }
 
+// `derive(Fail)` triggers this, at time of writing `failure` is updated to the most-recent version
+// but this lint appears to be added by a recent nightly build
+#[allow(non_local_definitions)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Fail)]
 pub enum RenderErrorKind {
     #[fail(display = "Failed to load resource")]

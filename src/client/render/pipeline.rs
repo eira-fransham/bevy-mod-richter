@@ -18,18 +18,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::mem::size_of;
+use std::{mem::size_of, slice};
 
 use bevy::{
     prelude::*,
     render::{
-        render_resource::{BindGroupLayout, RenderPipeline},
-        renderer::RenderDevice,
+        render_phase::TrackedRenderPass, render_resource::{BindGroupLayout, RenderPipeline}, renderer::RenderDevice
     },
 };
+use bytemuck::Pod;
 use wgpu::BindGroupLayoutEntry;
-
-use crate::common::util::{any_as_bytes, Pod};
 
 /// The `Pipeline` trait, which allows render pipelines to be defined more-or-less declaratively.
 
@@ -335,7 +333,7 @@ pub trait Pipeline {
     /// constant range is updated. If the value is `None`, the corresponding push
     /// constant range is cleared.
     fn set_push_constants<'a>(
-        pass: &mut wgpu::RenderPass<'a>,
+        pass: &mut TrackedRenderPass<'a>,
         vpc: PushConstantUpdate<&'a Self::VertexPushConstants>,
         spc: PushConstantUpdate<&'a Self::SharedPushConstants>,
         fpc: PushConstantUpdate<&'a Self::FragmentPushConstants>,
@@ -351,7 +349,7 @@ pub trait Pipeline {
 
         if size_of::<Self::VertexPushConstants>() > 0 {
             let data = match vpc {
-                Update(v) => Some(unsafe { any_as_bytes(v) }),
+                Update(v) => Some(bytemuck::cast_slice(slice::from_ref(v))),
                 Retain => None,
                 Clear => Some(&[][..]),
             };
@@ -369,7 +367,7 @@ pub trait Pipeline {
 
         if size_of::<Self::SharedPushConstants>() > 0 {
             let data = match spc {
-                Update(s) => Some(unsafe { any_as_bytes(s) }),
+                Update(s) => Some(bytemuck::cast_slice(slice::from_ref(s))),
                 Retain => None,
                 Clear => Some(&[][..]),
             };
@@ -391,7 +389,7 @@ pub trait Pipeline {
 
         if size_of::<Self::FragmentPushConstants>() > 0 {
             let data = match fpc {
-                Update(f) => Some(unsafe { any_as_bytes(f) }),
+                Update(f) => Some(bytemuck::cast_slice(slice::from_ref(f))),
                 Retain => None,
                 Clear => Some(&[][..]),
             };

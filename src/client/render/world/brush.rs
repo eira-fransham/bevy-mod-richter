@@ -41,27 +41,28 @@ use crate::{
             BspTextureMipmap,
         },
         math,
-        util::any_slice_as_bytes,
     },
 };
 
 use beef::Cow;
 use bevy::{
-    ecs::component::Component,
+    prelude::*,
     render::{
-        render_resource::{
-            BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
-            TextureView,
-        },
-        renderer::{RenderDevice, RenderQueue},
+        render_phase::TrackedRenderPass, render_resource::{
+            PreparedBindGroup,
+            AsBindGroup, BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, ShaderType, Texture, 
+        }, renderer::{RenderDevice, RenderQueue}, texture::CachedTexture
     },
 };
 use bumpalo::Bump;
-use cgmath::{InnerSpace as _, Matrix4, Vector3};
+use bytemuck::{Pod, Zeroable};
+use cgmath::{InnerSpace as _, Vector3};
 use chrono::Duration;
 use failure::Error;
 use fxhash::FxHashMap;
 use lazy_static::lazy_static;
+use num::FromPrimitive;
+use num_derive::FromPrimitive;
 
 pub struct BrushPipeline {
     pipeline: RenderPipeline,
@@ -128,16 +129,32 @@ impl BrushPipeline {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Zeroable, Pod, ShaderType)]
 pub struct VertexPushConstants {
-    pub transform: Matrix4<f32>,
-    pub model_view: Matrix4<f32>,
+    pub transform: [[f32; 4]; 4],
+    pub model_view: [[f32; 4]; 4],
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Zeroable, Pod, ShaderType)]
 pub struct SharedPushConstants {
     pub texture_kind: u32,
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct BrushMaterial {
+    #[texture(0)]
+    diffuse: Handle<Image>,
+    #[texture(1)]
+    fullbright: Handle<Image>,
+    #[uniform(2)]
+    kind: u32,
+}
+
+#[derive(AsBindGroup)]
+pub struct LightmapMaterial {
+    #[texture(0, dimension = "2d_array")]
+    lightmaps: Handle<Image>,
 }
 
 const BIND_GROUP_LAYOUT_ENTRIES: &[&[BindGroupLayoutEntry]] = &[
@@ -267,10 +284,10 @@ type Position = [f32; 3];
 type Normal = [f32; 3];
 type DiffuseTexcoord = [f32; 2];
 type LightmapTexcoord = [f32; 2];
-type LightmapAnim = [u8; 4];
+type LightmapAnim = u32;
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Zeroable, Pod, ShaderType)]
 struct BrushVertex {
     position: Position,
     normal: Normal,
@@ -280,7 +297,7 @@ struct BrushVertex {
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, FromPrimitive)]
 pub enum TextureKind {
     Normal = 0,
     Warp = 1,
@@ -288,37 +305,27 @@ pub enum TextureKind {
 }
 
 /// A single frame of a brush texture.
+#[derive(Clone)]
 pub struct BrushTextureFrame {
     bind_group_id: usize,
-    diffuse: Texture,
-    fullbright: Texture,
-    diffuse_view: TextureView,
-    fullbright_view: TextureView,
-    kind: TextureKind,
+    diffuse: CachedTexture,
+    fullbright: CachedTexture,
+    kind: u32,
 }
 
 /// A brush texture.
 pub enum BrushTexture {
     /// A brush texture with a single frame.
-    Static(BrushTextureFrame),
+    Static(Handle<BrushMaterial>),
 
     /// A brush texture with multiple frames.
     ///
     /// Animated brush textures advance one frame every 200 milliseconds, i.e.,
     /// they have a framerate of 5 fps.
     Animated {
-        primary: Vec<BrushTextureFrame>,
-        alternate: Option<Vec<BrushTextureFrame>>,
+        primary: Vec<Handle<BrushMaterial>>,
+        alternate: Option<Vec<Handle<BrushMaterial>>>,
     },
-}
-
-impl BrushTexture {
-    fn kind(&self) -> TextureKind {
-        match self {
-            BrushTexture::Static(ref frame) => frame.kind,
-            BrushTexture::Animated { ref primary, .. } => primary[0].kind,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -437,7 +444,7 @@ impl BrushRendererBuilder {
                         ((vert.dot(texinfo.t_vector) + texinfo.t_offset) / tex.height() as f32),
                     ],
                     lightmap_texcoord: calculate_lightmap_texcoords(vert.into(), face, texinfo),
-                    lightmap_anim: face.light_styles,
+                    lightmap_anim: bytemuck::cast(face.light_styles),
                 })
             }
         } else {
@@ -472,7 +479,7 @@ impl BrushRendererBuilder {
                             face,
                             texinfo,
                         ),
-                        lightmap_anim: face.light_styles,
+                        lightmap_anim: bytemuck::cast(face.light_styles),
                     });
                 }
 
@@ -535,11 +542,11 @@ impl BrushRendererBuilder {
             &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&tex.diffuse_view),
+                    resource: wgpu::BindingResource::TextureView(&tex.diffuse.default_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&tex.fullbright_view),
+                    resource: wgpu::BindingResource::TextureView(&tex.fullbright.default_view),
                 },
             ],
         )
@@ -551,16 +558,16 @@ impl BrushRendererBuilder {
         device: &RenderDevice,
         face_id: usize,
     ) -> BindGroup {
-        let mut lightmap_views: Vec<_> = self.faces[face_id]
-            .lightmap_ids
-            .iter()
-            .map(|id| self.lightmaps[*id].create_view(&Default::default()))
-            .collect();
-        lightmap_views.resize_with(4, || {
-            state.default_lightmap().create_view(&Default::default())
-        });
+        // let mut lightmap_views: Vec<_> = self.faces[face_id]
+        //     .lightmap_ids
+        //     .iter()
+        //     .map(|id| self.lightmaps[*id].create_view(&Default::default()))
+        //     .collect();
+        // lightmap_views.resize_with(4, || {
+        //     state.default_lightmap().create_view(&Default::default())
+        // });
 
-        let lightmap_view_refs = lightmap_views.iter().map(|t| &**t).collect::<Vec<_>>();
+        let lightmap_view_refs = todo!();//lightmap_views.iter().map(|t| &**t).collect::<Vec<_>>();
 
         let layout = &state
             .brush_pipeline()
@@ -735,7 +742,7 @@ impl BrushRendererBuilder {
 
         let vertex_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: unsafe { any_slice_as_bytes(self.vertices.as_slice()) },
+            contents: bytemuck::cast_slice(self.vertices.as_slice()),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -761,15 +768,19 @@ pub struct BrushRenderer {
     leaves: Option<Vec<BrushLeaf>>,
 
     vertex_buffer: Buffer,
-    per_texture_bind_groups: Vec<BindGroup>,
-    per_face_bind_groups: Vec<BindGroup>,
+
+    per_texture_materials: Vec<BrushMaterial>,
+    lightmap_material: LightmapMaterial,
+
+    per_texture_bind_groups: Vec<PreparedBindGroup<()>>,
+    per_face_bind_groups: Vec<PreparedBindGroup<()>>,
 
     // faces are grouped by texture to reduce the number of texture rebinds
     // texture_chains maps texture ids to face ids
     texture_chains: FxHashMap<usize, Vec<usize>>,
     faces: Vec<BrushFace>,
     textures: Vec<BrushTexture>,
-    lightmaps: Vec<Texture>,
+    lightmaps: LightmapMaterial,
     //lightmap_views: Vec<wgpu::TextureView>,
 }
 
@@ -778,14 +789,14 @@ impl BrushRenderer {
     pub fn record_draw<'a>(
         &'a self,
         state: &'a GraphicsState,
-        pass: &mut wgpu::RenderPass<'a>,
+        pass: &mut TrackedRenderPass<'a>,
         bump: &'a Bump,
         time: Duration,
         camera: &Camera,
         frame_id: usize,
     ) {
-        pass.set_pipeline(state.brush_pipeline().pipeline());
-        pass.set_vertex_buffer(0, *self.vertex_buffer.slice(..));
+        pass.set_render_pipeline(state.brush_pipeline().pipeline());
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
         // if this is a worldmodel, mark faces to be drawn
         if let Some(ref leaves) = self.leaves {

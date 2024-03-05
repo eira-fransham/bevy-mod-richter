@@ -1,24 +1,21 @@
 use std::{mem::size_of, num::NonZeroU32};
 
-use crate::{
-    client::render::{
-        ui::{
-            layout::{Anchor, ScreenPosition},
-            quad::{QuadPipeline, QuadVertex},
-            screen_space_vertex_scale, screen_space_vertex_translate,
-        },
-        Extent2d, GraphicsState, Pipeline, TextureData,
+use crate::client::render::{
+    ui::{
+        layout::{Anchor, ScreenPosition},
+        quad::{QuadPipeline, QuadVertex},
+        screen_space_vertex_scale, screen_space_vertex_translate,
     },
-    common::util::any_slice_as_bytes,
+    GraphicsState, Pipeline, TextureData,
 };
 
 use bevy::render::{
     render_resource::{
-        BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
-        TextureView,
+        BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, ShaderType, Texture, TextureView
     },
     renderer::{RenderDevice, RenderQueue},
 };
+use bytemuck::{Pod, Zeroable};
 use cgmath::Vector2;
 use lazy_static::lazy_static;
 
@@ -178,10 +175,10 @@ impl Pipeline for GlyphPipeline {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Zeroable, Pod, ShaderType)]
 pub struct GlyphInstance {
-    pub position: Vector2<f32>,
-    pub scale: Vector2<f32>,
+    pub position: [f32; 2],
+    pub scale: [f32; 2],
     pub layer: u32,
 }
 
@@ -279,13 +276,16 @@ impl GlyphRenderer {
     pub fn generate_instances(
         &self,
         commands: &[GlyphRendererCommand],
-        target_size: Extent2d,
+        target_size: wgpu::Extent3d,
     ) -> Vec<GlyphInstance> {
         let mut instances = Vec::new();
-        let Extent2d {
+        let wgpu::Extent3d {
             width: display_width,
             height: display_height,
-        } = target_size;
+            depth_or_array_layers: 1,
+        } = target_size else {
+            panic!("Display size should never have depth");
+        };
         for cmd in commands {
             match cmd {
                 GlyphRendererCommand::Glyph {
@@ -365,13 +365,15 @@ impl GlyphRenderer {
         state: &'a GraphicsState,
         queue: &RenderQueue,
         pass: &mut wgpu::RenderPass<'a>,
-        target_size: Extent2d,
+        target_size: wgpu::Extent3d,
         commands: &[GlyphRendererCommand],
     ) {
         let instances = self.generate_instances(commands, target_size);
-        queue.write_buffer(state.glyph_pipeline().instance_buffer(), 0, unsafe {
-            any_slice_as_bytes(&instances)
-        });
+        queue.write_buffer(
+            state.glyph_pipeline().instance_buffer(),
+            0,
+            bytemuck::cast_slice(&instances),
+        );
         pass.set_pipeline(state.glyph_pipeline().pipeline());
         pass.set_vertex_buffer(0, *state.quad_pipeline().vertex_buffer().slice(..));
         pass.set_vertex_buffer(1, *state.glyph_pipeline().instance_buffer().slice(..));

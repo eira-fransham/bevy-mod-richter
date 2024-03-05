@@ -18,20 +18,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// TODO: These should be removed, but we're still in the refactoring process
-#![cfg_attr(debug_assertions, allow(dead_code))]
-#![cfg_attr(debug_assertions, allow(unreachable_code))]
-#![cfg_attr(debug_assertions, allow(dead_code))]
-#![cfg_attr(debug_assertions, allow(unused_variables))]
-#![cfg_attr(debug_assertions, allow(unused_assignments))]
-#![recursion_limit = "256"]
-
-mod capture;
-mod game;
 mod menu;
-mod trace;
 
-use std::{fs, net::SocketAddr, path::PathBuf, process::ExitCode};
+use std::{
+    fs,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use bevy::{
     core_pipeline::{
@@ -40,23 +34,21 @@ use bevy::{
     },
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
-    render::camera::Exposure,
-    window::{PresentMode, WindowTheme},
+    render::{camera::Exposure, view::screenshot::ScreenshotManager},
+    window::{PresentMode, PrimaryWindow, WindowTheme},
 };
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
-use richter::{client::RichterPlugin, common::console::RunCmd};
+use chrono::Utc;
+use richter::{
+    client::RichterPlugin,
+    common::console::{ExecResult, RunCmd},
+};
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
 struct Opt {
     #[structopt(long)]
-    trace: bool,
-
-    #[structopt(long)]
     connect: Option<SocketAddr>,
-
-    #[structopt(long)]
-    dump_demo: Option<String>,
 
     #[structopt(long)]
     demo: Option<String>,
@@ -112,9 +104,46 @@ fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
                     .unwrap(),
             );
         }
+
+        if !opt.commands.is_empty() {
+            console_cmds.send_batch(
+                RunCmd::parse_many(&opt.commands)
+                    .expect("Invalid commands")
+                    .into_iter()
+                    .map(RunCmd::into_owned),
+            );
+        }
     }
 }
 
+/// Implements the "screenshot" command.
+pub fn cmd_screenshot(
+    In(args): In<Box<[String]>>,
+    windows: Query<Entity, With<PrimaryWindow>>,
+    mut screenshot_manager: ResMut<ScreenshotManager>,
+) -> ExecResult {
+    let Ok(window) = windows.get_single() else {
+        return "No window to screenshot".into();
+    };
+
+    let path_buf;
+    let path = match args.split_first() {
+        // TODO: make default path configurable
+        None => {
+            path_buf = PathBuf::from(format!("richter-{}.png", Utc::now().format("%FT%H-%M-%S")));
+            &*path_buf
+        }
+        Some((path, [])) => Path::new(path),
+        _ => {
+            return "Usage: screenshot [PATH]".into();
+        }
+    };
+
+    match screenshot_manager.save_screenshot_to_disk(window, &*path) {
+        Ok(()) => format!("Saved to {}", path.display()).into(),
+        Err(e) => format!("Couldn't save screenshot: {}", e).into(),
+    }
+}
 fn main() -> ExitCode {
     let opt = Opt::from_args();
 

@@ -5,10 +5,7 @@ use crate::{
         world::{BindGroupLayoutId, WorldPipelineBase},
         GraphicsState, Pipeline, TextureData,
     },
-    common::{
-        sprite::{SpriteFrame, SpriteKind, SpriteModel, SpriteSubframe},
-        util::any_slice_as_bytes,
-    },
+    common::sprite::{SpriteFrame, SpriteKind, SpriteModel, SpriteSubframe},
 };
 
 use bevy::{
@@ -49,7 +46,7 @@ impl SpritePipeline {
 
         let vertex_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: unsafe { any_slice_as_bytes(&VERTICES) },
+            contents: bytemuck::cast_slice(&VERTICES),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
