@@ -21,7 +21,7 @@ use crate::{
         },
     },
     common::{
-        console::{ConsoleInput, ConsoleOutput},
+        console::{RenderConsoleInput, RenderConsoleOutput},
         vfs::Vfs,
     },
 };
@@ -86,7 +86,7 @@ pub fn screen_space_vertex_transform(
 
 pub enum UiOverlay<'a> {
     Menu(&'a Menu),
-    Console(&'a ConsoleInput, &'a ConsoleOutput),
+    Console(&'a RenderConsoleInput, &'a RenderConsoleOutput),
 }
 
 pub enum UiState<'a> {
@@ -206,8 +206,8 @@ impl ViewNode for UiPass {
         else {
             return Ok(());
         };
-        let console_out = world.get_resource::<ConsoleOutput>();
-        let console_in = world.get_resource::<ConsoleInput>();
+        let console_out = world.get_resource::<RenderConsoleOutput>();
+        let console_in = world.get_resource::<RenderConsoleInput>();
         let menu = world.get_resource::<Menu>();
         let focus = world.resource::<InputFocus>();
 

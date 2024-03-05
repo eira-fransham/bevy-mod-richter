@@ -544,7 +544,7 @@ impl Connection {
                 }
 
                 ServerCmd::CenterPrint { text } => {
-                    console_output.set_center_print(text);
+                    console_output.set_center_print(text, self.state.time);
                 }
 
                 ServerCmd::PlayerData(player_data) => self.state.update_player(player_data),
@@ -759,15 +759,18 @@ impl Connection {
                     let id = self.state.static_entities.len();
                     self.state
                         .static_entities
-                        .push_back(ClientEntity::from_baseline(id, EntityState {
-                            origin,
-                            angles,
-                            model_id: model_id as usize,
-                            frame_id: frame_id as usize,
-                            colormap,
-                            skin_id: skin_id as usize,
-                            effects: EntityEffects::empty(),
-                        }));
+                        .push_back(ClientEntity::from_baseline(
+                            id,
+                            EntityState {
+                                origin,
+                                angles,
+                                model_id: model_id as usize,
+                                frame_id: frame_id as usize,
+                                colormap,
+                                skin_id: skin_id as usize,
+                                effects: EntityEffects::empty(),
+                            },
+                        ));
                 }
 
                 ServerCmd::SpawnStaticSound {

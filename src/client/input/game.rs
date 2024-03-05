@@ -359,6 +359,10 @@ impl AnyInput {
     pub const SHIFT: Self = AnyInput::Keyboard(Key::Shift);
     pub const TAB: Self = AnyInput::Keyboard(Key::Tab);
     pub const UPARROW: Self = AnyInput::Keyboard(Key::ArrowUp);
+
+    pub fn char(char: &str) -> Self {
+        Self::Keyboard(Key::Character(char.into()))
+    }
 }
 
 impl From<Key> for AnyInput {

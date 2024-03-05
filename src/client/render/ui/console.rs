@@ -8,7 +8,7 @@ use crate::{
         GraphicsState,
     },
     common::{
-        console::{ConsoleInput, ConsoleOutput},
+        console::{RenderConsoleInput, RenderConsoleOutput},
         vfs::Vfs,
         wad::QPic,
     },
@@ -45,8 +45,8 @@ impl ConsoleRenderer {
 
     pub fn generate_commands<'a>(
         &'a self,
-        output: &ConsoleOutput,
-        input: &ConsoleInput,
+        output: &RenderConsoleOutput,
+        input: &RenderConsoleInput,
         time: Duration,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
@@ -90,18 +90,16 @@ impl ConsoleRenderer {
             scale,
         });
         // TODO: Implement colours
-        for (i, chr) in input.get_text().enumerate() {
-            glyph_cmds.push(GlyphRendererCommand::Glyph {
-                glyph_id: chr as _,
-                position: ScreenPosition::Relative {
-                    anchor: console_anchor,
-                    x_ofs: PAD_LEFT + GLYPH_WIDTH as i32 * i as i32,
-                    y_ofs: 0,
-                },
-                anchor: Anchor::BOTTOM_LEFT,
-                scale,
-            });
-        }
+        glyph_cmds.push(GlyphRendererCommand::Text {
+            text: input.cur_text.clone(),
+            position: ScreenPosition::Relative {
+                anchor: console_anchor,
+                x_ofs: PAD_LEFT,
+                y_ofs: 0,
+            },
+            anchor: Anchor::BOTTOM_LEFT,
+            scale,
+        });
         // blink cursor in half-second intervals
         // TODO: Reimplement cursor
         // if engine::duration_to_f32(time).fract() > 0.5 {
@@ -118,24 +116,32 @@ impl ConsoleRenderer {
         // }
 
         let mut line_id = 0;
+        let mut char_id = 0;
 
         // draw previous output
-        for (_, line) in output.text() {
-            let line = &line.text;
+        for (_, chunk) in &output.text_chunks {
+            let chunk = &chunk.text;
             // TODO: implement scrolling
             if line_id > 100 {
                 break;
             }
 
-            for (chr_id, chr) in line.chars().enumerate() {
+            let mut chunk_out = String::new();
+            for chr in chunk
+                .chars()
+                .filter(|c| c.is_ascii() && (c.is_ascii_whitespace() || !c.is_ascii_control()))
+            {
                 if chr == '\n' {
                     line_id += 1;
+                    char_id = 0;
                     continue;
                 }
 
+                chunk_out.push(chr);
+
                 let position = ScreenPosition::Relative {
                     anchor: console_anchor,
-                    x_ofs: PAD_LEFT + (1 + chr_id * GLYPH_WIDTH) as i32,
+                    x_ofs: PAD_LEFT + (1 + char_id * GLYPH_WIDTH) as i32,
                     y_ofs: ((line_id + 1) * GLYPH_HEIGHT) as i32,
                 };
 
@@ -155,6 +161,8 @@ impl ConsoleRenderer {
                     anchor: Anchor::BOTTOM_LEFT,
                     scale,
                 });
+
+                char_id += 1;
             }
         }
     }

@@ -11,7 +11,7 @@ use crate::{
         IntermissionKind,
     },
     common::{
-        console::ConsoleOutput,
+        console::RenderConsoleOutput,
         net::{ClientStat, ItemFlags},
         vfs::Vfs,
         wad::QPic,
@@ -44,13 +44,13 @@ pub enum HudState<'a> {
         item_pickup_time: &'a [Duration],
         stats: &'a [i32],
         face_anim_time: Duration,
-        console: Option<&'a ConsoleOutput>,
+        console: Option<&'a RenderConsoleOutput>,
     },
     Intermission {
         kind: &'a IntermissionKind,
         completion_duration: Duration,
         stats: &'a [i32],
-        console: Option<&'a ConsoleOutput>,
+        console: Option<&'a RenderConsoleOutput>,
     },
 }
 

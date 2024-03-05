@@ -31,8 +31,9 @@ use bevy::{
         world::World,
     },
     prelude::*,
+    render::render_asset::RenderAssetUsages,
 };
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use fxhash::FxHashMap;
 use liner::{
     BasicCompleter, Editor, EditorContext, Emacs, Key, KeyBindings, KeyMap as _, Prompt, Tty,
@@ -43,10 +44,14 @@ use serde::{
 };
 use serde_lexpr::Value;
 use thiserror::Error;
+use wgpu::{Extent3d, TextureDimension};
 
-use crate::client::input::game::Trigger;
+use crate::client::{
+    input::{game::Trigger, InputFocus},
+    render::{Palette, TextureData},
+};
 
-use super::parse;
+use super::{parse, vfs::Vfs, wad::Wad};
 
 pub struct RichterConsolePlugin;
 
@@ -54,18 +59,32 @@ impl Plugin for RichterConsolePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ConsoleOutput>()
             .init_resource::<ConsoleInput>()
+            .init_resource::<RenderConsoleOutput>()
+            .init_resource::<RenderConsoleInput>()
             .init_resource::<Registry>()
             .init_resource::<ConsoleAlertSettings>()
+            .init_resource::<Gfx>()
             .add_event::<RunCmd<'static>>()
-            .add_systems(Startup, systems::startup::init_alert_output)
             .add_systems(
-                PostUpdate,
+                Startup,
                 (
-                    systems::write_to_screen,
-                    systems::execute_console,
+                    systems::startup::init_alert_output,
+                    systems::startup::init_console,
+                ),
+            )
+            .add_systems(
+                Update,
+                (
+                    systems::update_render_console,
+                    systems::update_console_in,
+                    systems::write_alert.run_if(resource_changed::<RenderConsoleOutput>),
+                    systems::write_console_out.run_if(resource_changed::<RenderConsoleOutput>),
+                    systems::write_console_in.run_if(resource_changed::<RenderConsoleInput>),
+                    systems::update_console_visibility.run_if(resource_changed::<InputFocus>),
                     console_text::systems::update_atlas_text,
                 ),
-            );
+            )
+            .add_systems(Update, systems::execute_console);
     }
 }
 
@@ -1009,18 +1028,18 @@ impl Cvar {
 
 /// The line of text currently being edited in the console.
 #[derive(Default)]
-struct ConsoleInputContext {
-    input_buf: String,
-    history: liner::History,
-    key_bindings: KeyBindings,
-    commands: Vec<RunCmd<'static>>,
-    terminal: ConsoleInputTerminal,
-    cmd_buf: String,
+pub struct ConsoleInputContext {
+    pub input_buf: String,
+    pub history: liner::History,
+    pub key_bindings: KeyBindings,
+    pub commands: Vec<RunCmd<'static>>,
+    pub terminal: ConsoleInputTerminal,
+    pub cmd_buf: String,
 }
 
 #[derive(Default)]
-struct ConsoleInputTerminal {
-    stdout: Vec<u8>,
+pub struct ConsoleInputTerminal {
+    pub stdout: Vec<u8>,
 }
 
 impl io::Write for ConsoleInputTerminal {
@@ -1098,6 +1117,11 @@ pub struct ConsoleInput {
     keymap: Emacs,
 }
 
+#[derive(Resource, Default)]
+pub struct RenderConsoleInput {
+    pub cur_text: String,
+}
+
 impl Default for ConsoleInput {
     fn default() -> Self {
         Self::new().unwrap()
@@ -1105,6 +1129,8 @@ impl Default for ConsoleInput {
 }
 
 impl ConsoleInput {
+    const PROMPT: &'static str = "] ";
+
     /// Constructs a new `ConsoleInput`.
     ///
     /// Initializes the text content to be empty and places the cursor at position 0.
@@ -1112,7 +1138,7 @@ impl ConsoleInput {
         let mut keymap = Emacs::new();
 
         let mut editor = Editor::new(
-            Prompt::from("] ".to_owned()),
+            Prompt::from(Self::PROMPT.to_owned()),
             None,
             ConsoleInputContext::default(),
         )
@@ -1138,34 +1164,52 @@ impl ConsoleInput {
             }
         }
 
-        return Ok(None);
+        Ok(None)
     }
 
     /// Returns the text currently being edited
     pub fn get_text(&self) -> impl Iterator<Item = char> + '_ {
-        self.editor.current_buffer().chars().copied()
+        Self::PROMPT
+            .chars()
+            .chain(self.editor.current_buffer().chars().copied())
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ConsoleText {
     pub output_type: OutputType,
     pub text: CName,
 }
 
-#[derive(Resource, Default)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Timestamp {
+    pub timestamp: i64,
+    pub generation: u16,
+}
+
+impl Timestamp {
+    pub fn new(timestamp: i64, generation: u16) -> Self {
+        Self {
+            timestamp,
+            generation,
+        }
+    }
+}
+
+#[derive(Resource, Default, Debug)]
 pub struct ConsoleOutput {
-    // A ring buffer of lines of text. Each line has an optional timestamp used
-    // to determine whether it should be displayed on screen. If the timestamp
-    // is `None`, the message will not be displayed.
-    //
-    // The timestamp is specified in seconds since the Unix epoch (so it is
-    // decoupled from client/server time).
-    text_chunks: BTreeMap<(i64, u16), ConsoleText>,
     generation: u16,
-    center_print: (String, i64),
+    center_print: Option<(Timestamp, String)>,
     buffer_ty: OutputType,
     buffer: String,
     last_timestamp: i64,
+    unwritten_chunks: Vec<(Timestamp, ConsoleText)>,
+}
+
+#[derive(Resource, Default)]
+pub struct RenderConsoleOutput {
+    pub text_chunks: BTreeMap<Timestamp, ConsoleText>,
+    pub center_print: (Timestamp, String),
 }
 
 impl ConsoleOutput {
@@ -1199,7 +1243,6 @@ impl ConsoleOutput {
         self.last_timestamp = timestamp;
 
         // TODO: set maximum capacity and pop_back when we reach it
-        let generation = self.generation;
         if ty != self.buffer_ty {
             self.flush();
         }
@@ -1212,42 +1255,29 @@ impl ConsoleOutput {
 
     fn try_flush(&mut self) {
         if let Some(last_newline) = self.buffer.rfind('\n') {
-            let (to_flush, rest) = self.buffer.split_at(last_newline);
-            let new_buf = rest
-                .char_indices()
-                .nth(1)
-                .and_then(|(i, _)| rest.get(i..))
-                .unwrap_or_default()
-                .to_owned();
+            let (to_flush, rest) = self.buffer.split_at(last_newline + 1);
+            let new_buf = rest.to_owned();
             self.buffer.truncate(to_flush.len());
-            self.generation = self.generation.wrapping_add(1);
-            self.text_chunks.insert(
-                (self.last_timestamp, self.generation),
+            let generation = self.generation();
+            self.unwritten_chunks.push((
+                Timestamp::new(self.last_timestamp, generation),
                 ConsoleText {
                     text: mem::replace(&mut self.buffer, new_buf).into(),
                     output_type: self.buffer_ty,
                 },
-            );
-            self.generation = self.generation.wrapping_add(1);
-            self.text_chunks.insert(
-                (self.last_timestamp, self.generation.wrapping_add(1)),
-                ConsoleText {
-                    text: "\n".into(),
-                    output_type: self.buffer_ty,
-                },
-            );
+            ));
         }
     }
 
     fn flush(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
-        self.text_chunks.insert(
-            (self.last_timestamp, self.generation),
+        let generation = self.generation();
+        self.unwritten_chunks.push((
+            Timestamp::new(self.last_timestamp, generation),
             ConsoleText {
                 text: mem::take(&mut self.buffer).into(),
                 output_type: self.buffer_ty,
             },
-        );
+        ));
     }
 
     fn push_line<S: AsRef<str>>(&mut self, chars: S, timestamp: i64, ty: OutputType) {
@@ -1255,17 +1285,41 @@ impl ConsoleOutput {
         self.push("\n", timestamp, ty);
     }
 
-    pub fn set_center_print<S: Into<String>>(&mut self, print: S) {
-        self.center_print = (print.into(), Utc::now().timestamp());
+    fn generation(&mut self) -> u16 {
+        let out = self.generation;
+        self.generation = self.generation.wrapping_add(1);
+        out
     }
 
+    pub fn set_center_print<S: Into<String>>(&mut self, print: S, timestamp: Duration) {
+        let generation = self.generation();
+        self.center_print = Some((
+            Timestamp::new(timestamp.num_milliseconds(), generation),
+            print.into(),
+        ));
+    }
+
+    pub fn drain_center_print(&mut self) -> Option<(Timestamp, String)> {
+        self.center_print.take()
+    }
+
+    pub fn drain_unwritten(
+        &mut self,
+    ) -> impl ExactSizeIterator<Item = (Timestamp, ConsoleText)> + '_ {
+        self.unwritten_chunks.drain(..)
+    }
+}
+
+impl RenderConsoleOutput {
     pub fn text(&self) -> impl Iterator<Item = (i64, &ConsoleText)> + '_ {
-        self.text_chunks.iter().map(|((k, _), v)| (*k, v))
+        self.text_chunks
+            .iter()
+            .map(|(Timestamp { timestamp: k, .. }, v)| (*k, v))
     }
 
-    pub fn center_print(&self, max_time: Duration) -> Option<&str> {
-        if self.center_print.1 > (Utc::now() - max_time).timestamp() {
-            Some(&*self.center_print.0)
+    pub fn center_print(&self, since: Duration) -> Option<&str> {
+        if self.center_print.0.timestamp >= since.num_milliseconds() {
+            Some(&*self.center_print.1)
         } else {
             None
         }
@@ -1279,25 +1333,15 @@ impl ConsoleOutput {
     /// `max_candidates` specifies the maximum number of lines to consider,
     /// while `max_results` specifies the maximum number of lines that should
     /// be returned.
-    pub fn recent(&self, since: i64) -> impl Iterator<Item = (i64, &ConsoleText)> + '_ {
+    pub fn recent(&self, since: Duration) -> impl Iterator<Item = (i64, &ConsoleText)> + '_ {
         self.text_chunks
-            .range((since, 0)..)
-            .map(|((k, _), v)| (*k, v))
+            .range(Timestamp::new(since.num_milliseconds(), 0)..)
+            .map(|(Timestamp { timestamp: k, .. }, v)| (*k, v))
     }
 }
 
-#[derive(Component)]
-struct AlertOutput {
-    last_timestamp: Option<i64>,
-}
-
-impl Default for AlertOutput {
-    fn default() -> Self {
-        Self {
-            last_timestamp: Some(0),
-        }
-    }
-}
+#[derive(Component, Default)]
+struct AlertOutput;
 
 #[derive(Resource)]
 pub struct ConsoleAlertSettings {
@@ -1314,6 +1358,100 @@ impl Default for ConsoleAlertSettings {
     }
 }
 
+#[derive(Component)]
+struct ConsoleUi;
+
+#[derive(Component)]
+struct ConsoleTextOutputUi;
+
+#[derive(Component)]
+struct ConsoleTextInputUi;
+
+#[derive(Debug, Clone)]
+pub struct Conchars {
+    pub image: UiImage,
+    pub layout: Handle<TextureAtlasLayout>,
+    pub glyph_size: (Val, Val),
+}
+
+#[derive(Resource)]
+pub struct Gfx {
+    pub palette: Palette,
+    pub conchars: Conchars,
+    pub wad: Wad,
+}
+
+impl FromWorld for Gfx {
+    fn from_world(world: &mut World) -> Self {
+        // TODO: Deduplicate with glyph.rs
+        const GLYPH_WIDTH: usize = 8;
+        const GLYPH_HEIGHT: usize = 8;
+        const GLYPH_COLS: usize = 16;
+        const GLYPH_ROWS: usize = 8;
+        const GLYPH_COUNT: usize = GLYPH_ROWS * GLYPH_COLS;
+        const GLYPH_TEXTURE_WIDTH: usize = GLYPH_WIDTH * GLYPH_COLS;
+        const SCALE: f32 = 2.;
+
+        let vfs = world.resource::<Vfs>();
+        let assets = world.resource::<AssetServer>();
+
+        let palette = Palette::load(&vfs, "gfx/palette.lmp");
+        let wad = Wad::load(vfs.open("gfx.wad").unwrap()).unwrap();
+
+        let conchars = wad.open_conchars().unwrap();
+
+        // TODO: validate conchars dimensions
+
+        let indices = conchars
+            .indices()
+            .iter()
+            .map(|i| if *i == 0 { 0xFF } else { *i })
+            .collect::<Vec<_>>();
+
+        let layout = assets.add(TextureAtlasLayout::from_grid(
+            Vec2::new(GLYPH_WIDTH as _, GLYPH_HEIGHT as _),
+            GLYPH_COLS,
+            GLYPH_COLS,
+            None,
+            None,
+        ));
+
+        let image = {
+            let (diffuse_data, _) = palette.translate(&indices);
+            let diffuse_data = TextureData::Diffuse(diffuse_data);
+
+            assets
+                .add(Image::new(
+                    Extent3d {
+                        width: conchars.width(),
+                        height: conchars.height(),
+                        depth_or_array_layers: 1,
+                    },
+                    TextureDimension::D2,
+                    diffuse_data.data().to_owned(),
+                    diffuse_data.format(),
+                    RenderAssetUsages::RENDER_WORLD,
+                ))
+                .into()
+        };
+
+        let conchars = Conchars {
+            image,
+            layout,
+            glyph_size: (
+                Val::Px(GLYPH_WIDTH as _) * SCALE,
+                Val::Px(GLYPH_HEIGHT as _) * SCALE,
+            ),
+        };
+
+        Self {
+            palette,
+            wad,
+            conchars,
+        }
+    }
+}
+
 // TODO: Extract this so that it can be used elsewhere in the UI
 mod console_text {
     use super::*;
@@ -1322,6 +1460,7 @@ mod console_text {
     pub struct AtlasText {
         pub text: String,
         pub image: UiImage,
+        pub line_padding: UiRect,
         pub layout: Handle<TextureAtlasLayout>,
         pub glyph_size: (Val, Val),
     }
@@ -1340,29 +1479,46 @@ mod console_text {
                 let mut commands = commands.entity(entity);
 
                 commands.with_children(|commands| {
-                    for (line_id, line) in text.text.lines().enumerate() {
-                        let glyph_y = text.glyph_size.1 * line_id as f32;
-
-                        for (char_id, chr) in line.chars().enumerate() {
-                            let glyph_x = text.glyph_size.0 * char_id as f32;
-
-                            commands.spawn(AtlasImageBundle {
-                                image: text.image.clone(),
-                                texture_atlas: TextureAtlas {
-                                    layout: text.layout.clone(),
-                                    index: chr as _,
-                                },
+                    for line in text.text.lines() {
+                        commands
+                            .spawn(NodeBundle {
                                 style: Style {
-                                    position_type: PositionType::Absolute,
-                                    width: text.glyph_size.0,
-                                    height: text.glyph_size.1,
-                                    left: glyph_x,
-                                    top: glyph_y,
+                                    flex_direction: FlexDirection::Row,
+                                    min_height: text.glyph_size.1,
+                                    flex_wrap: FlexWrap::Wrap,
+                                    padding: text.line_padding.clone(),
                                     ..default()
                                 },
                                 ..default()
+                            })
+                            .with_children(|commands| {
+                                for chr in line.chars() {
+                                    if chr.is_ascii_whitespace() {
+                                        commands.spawn(NodeBundle {
+                                            style: Style {
+                                                width: text.glyph_size.0,
+                                                height: text.glyph_size.1,
+                                                ..default()
+                                            },
+                                            ..default()
+                                        });
+                                    } else {
+                                        commands.spawn(AtlasImageBundle {
+                                            image: text.image.clone(),
+                                            texture_atlas: TextureAtlas {
+                                                layout: text.layout.clone(),
+                                                index: chr as _,
+                                            },
+                                            style: Style {
+                                                width: text.glyph_size.0,
+                                                height: text.glyph_size.1,
+                                                ..default()
+                                            },
+                                            ..default()
+                                        });
+                                    }
+                                }
                             });
-                        }
                     }
                 });
             }
@@ -1371,7 +1527,7 @@ mod console_text {
 }
 
 mod systems {
-    use std::collections::VecDeque;
+    use std::{collections::VecDeque, iter};
 
     use chrono::TimeDelta;
 
@@ -1380,55 +1536,64 @@ mod systems {
     use super::*;
 
     pub mod startup {
-        use bevy::render::render_asset::RenderAssetUsages;
-        use wgpu::{Extent3d, TextureDimension};
-
-        use crate::{
-            client::render::{Palette, TextureData},
-            common::{vfs::Vfs, wad::Wad},
-        };
+        use crate::common::wad::QPic;
 
         use super::*;
 
-        pub fn init_alert_output(mut commands: Commands, vfs: Res<Vfs>, assets: Res<AssetServer>) {
-            let palette = Palette::load(&vfs, "gfx/palette.lmp");
-            let gfx_wad = Wad::load(vfs.open("gfx.wad").unwrap()).unwrap();
+        pub fn init_alert_output(mut commands: Commands, gfx: Res<Gfx>, assets: Res<AssetServer>) {
+            let Conchars {
+                image,
+                layout,
+                glyph_size,
+            } = gfx.conchars.clone();
+            commands.spawn((
+                NodeBundle {
+                    style: Style {
+                        left: glyph_size.0 / 2.,
+                        top: glyph_size.1 / 2.,
+                        flex_direction: FlexDirection::Column,
+                        ..default()
+                    },
+                    ..default()
+                },
+                AtlasText {
+                    text: "".into(),
+                    image,
+                    layout,
+                    line_padding: UiRect {
+                        top: Val::Px(4.),
+                        ..default()
+                    },
+                    glyph_size: (glyph_size.0, glyph_size.1),
+                },
+                AlertOutput,
+            ));
+        }
 
-            let conchars = gfx_wad.open_conchars().unwrap();
+        pub fn init_console(
+            mut commands: Commands,
+            vfs: Res<Vfs>,
+            gfx: Res<Gfx>,
+            assets: Res<AssetServer>,
+        ) {
+            let Conchars {
+                image: conchars_img,
+                layout,
+                glyph_size,
+            } = gfx.conchars.clone();
+
+            let conback = QPic::load(vfs.open("gfx/conback.lmp").unwrap()).unwrap();
 
             // TODO: validate conchars dimensions
 
-            let indices = conchars
-                .indices()
-                .iter()
-                .map(|i| if *i == 0 { 0xFF } else { *i })
-                .collect::<Vec<_>>();
-
-            let (diffuse_data, _) = palette.translate(&indices);
+            let (diffuse_data, _) = gfx.palette.translate(&conback.indices());
             let diffuse_data = TextureData::Diffuse(diffuse_data);
-
-            // TODO: Deduplicate with glyph.rs
-            const GLYPH_WIDTH: usize = 8;
-            const GLYPH_HEIGHT: usize = 8;
-            const GLYPH_COLS: usize = 16;
-            const GLYPH_ROWS: usize = 8;
-            const GLYPH_COUNT: usize = GLYPH_ROWS * GLYPH_COLS;
-            const GLYPH_TEXTURE_WIDTH: usize = GLYPH_WIDTH * GLYPH_COLS;
-            const SCALE: f32 = 3.;
-
-            let layout = assets.add(TextureAtlasLayout::from_grid(
-                Vec2::new(GLYPH_WIDTH as _, GLYPH_HEIGHT as _),
-                GLYPH_COLS,
-                GLYPH_COLS,
-                None,
-                None,
-            ));
 
             let image = assets
                 .add(Image::new(
                     Extent3d {
-                        width: GLYPH_TEXTURE_WIDTH as _,
-                        height: GLYPH_TEXTURE_WIDTH as _,
+                        width: conback.width(),
+                        height: conback.height(),
                         depth_or_array_layers: 1,
                     },
                     TextureDimension::D2,
@@ -1439,51 +1604,187 @@ mod systems {
                 .into();
 
             commands
-                .spawn(NodeBundle {
-                    style: Style {
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
+                .spawn((
+                    NodeBundle {
+                        style: Style {
+                            position_type: PositionType::Absolute,
+                            width: Val::Percent(100.),
+                            height: Val::Percent(30.),
+                            overflow: Overflow::clip(),
+                            flex_direction: FlexDirection::Column,
+                            justify_content: JustifyContent::End,
+                            ..default()
+                        },
+                        visibility: Visibility::Hidden,
+                        z_index: ZIndex::Global(1),
                         ..default()
                     },
-                    ..default()
-                })
+                    ConsoleUi,
+                ))
                 .with_children(|commands| {
-                    commands.spawn((
-                        NodeBundle {
+                    commands.spawn(ImageBundle {
+                        image,
+                        style: Style {
+                            position_type: PositionType::Absolute,
+                            width: Val::Vw(100.),
+                            height: Val::Vh(100.),
+                            ..default()
+                        },
+                        z_index: ZIndex::Local(-1),
+                        ..default()
+                    });
+                    commands
+                        .spawn(NodeBundle {
                             style: Style {
-                                left: Val::Px(GLYPH_WIDTH as _) * SCALE / 2.,
-                                top: Val::Px(GLYPH_WIDTH as _) * SCALE / 2.,
+                                flex_direction: FlexDirection::Column,
+                                flex_wrap: FlexWrap::NoWrap,
+                                justify_content: JustifyContent::End,
                                 ..default()
                             },
                             ..default()
-                        },
-                        AtlasText {
-                            text: "".into(),
-                            image,
-                            layout,
-                            glyph_size: (
-                                Val::Px(GLYPH_WIDTH as _) * SCALE,
-                                Val::Px(GLYPH_HEIGHT as _) * SCALE,
-                            ),
-                        },
-                        AlertOutput::default(),
-                    ));
+                        })
+                        .with_children(|commands| {
+                            commands.spawn((
+                                NodeBundle {
+                                    style: Style {
+                                        flex_direction: FlexDirection::Column,
+                                        ..default()
+                                    },
+                                    ..default()
+                                },
+                                AtlasText {
+                                    text: "".into(),
+                                    image: conchars_img.clone(),
+                                    layout: layout.clone(),
+                                    glyph_size,
+                                    line_padding: UiRect {
+                                        top: Val::Px(4.),
+                                        ..default()
+                                    },
+                                },
+                                ConsoleTextOutputUi,
+                            ));
+                            commands.spawn((
+                                NodeBundle {
+                                    style: Style {
+                                        flex_direction: FlexDirection::Column,
+                                        ..default()
+                                    },
+                                    ..default()
+                                },
+                                AtlasText {
+                                    text: "] ".into(),
+                                    image: conchars_img,
+                                    layout,
+                                    glyph_size,
+                                    line_padding: UiRect {
+                                        top: Val::Px(4.),
+                                        ..default()
+                                    },
+                                },
+                                ConsoleTextInputUi,
+                            ));
+                        });
                 });
         }
     }
 
-    pub fn read_console(console_in: ResMut<ConsoleInput>, run_cmds: EventWriter<RunCmd<'static>>) {}
+    pub fn update_console_visibility(
+        mut consoles: Query<&mut Visibility, With<ConsoleUi>>,
+        focus: Res<InputFocus>,
+    ) {
+        for mut vis in consoles.iter_mut() {
+            match *focus {
+                InputFocus::Console => {
+                    *vis = Visibility::Visible;
+                }
+                InputFocus::Game | InputFocus::Menu => {
+                    *vis = Visibility::Hidden;
+                }
+            }
+        }
+    }
 
-    pub fn write_to_screen(
+    pub fn update_render_console(
+        mut console_out: ResMut<ConsoleOutput>,
+        mut render_out: ResMut<RenderConsoleOutput>,
+        console_in: Res<ConsoleInput>,
+        mut render_in: ResMut<RenderConsoleInput>,
+    ) {
+        if let Some(center) = console_out.drain_center_print() {
+            render_out.center_print = center;
+        }
+
+        let new_text = console_out.drain_unwritten();
+        if new_text.len() > 0 {
+            render_out.text_chunks.extend(new_text);
+        }
+
+        if !itertools::equal(render_in.cur_text.chars(), console_in.get_text()) {
+            render_in.cur_text.clear();
+            render_in.cur_text.extend(console_in.get_text());
+        }
+    }
+
+    pub fn write_console_out(
+        console_out: Res<RenderConsoleOutput>,
+        mut out_ui: Query<&mut AtlasText, With<ConsoleTextOutputUi>>,
+    ) {
+        for mut text in out_ui.iter_mut() {
+            let mut lines = console_out.text_chunks.iter();
+
+            let first = lines.next();
+            let last_timestamp = first.map(|(ts, _)| ts);
+
+            // TODO: Write only extra lines
+            if !text.text.is_empty() {
+                text.text.clear();
+            }
+
+            let Some((_, first)) = first else {
+                continue;
+            };
+
+            text.text.push_str(first.text.as_ref());
+
+            for (_, line) in lines {
+                text.text.push_str(&*line.text);
+            }
+        }
+    }
+
+    pub fn write_console_in(
+        console_in: Res<RenderConsoleInput>,
+        mut in_ui: Query<&mut AtlasText, With<ConsoleTextInputUi>>,
+    ) {
+        for mut text in in_ui.iter_mut() {
+            if console_in.cur_text == text.text {
+                continue;
+            }
+
+            // TODO: Write only extra lines
+            if !text.text.is_empty() {
+                text.text.clear();
+            }
+
+            if !console_in.cur_text.is_empty() {
+                text.text.push_str(&console_in.cur_text);
+            }
+        }
+    }
+
+    pub fn update_console_in(mut console_in: ResMut<ConsoleInput>) {
+        console_in.update(iter::empty()).unwrap();
+    }
+
+    pub fn write_alert(
         settings: Res<ConsoleAlertSettings>,
         time: Res<Time<Virtual>>,
-        console_out: Res<ConsoleOutput>,
-        mut alert: Query<(&mut AtlasText, &mut AlertOutput)>,
+        console_out: Res<RenderConsoleOutput>,
+        mut alert: Query<&mut AtlasText, With<AlertOutput>>,
     ) {
-        // TODO
-        for (mut text, mut alert_out) in alert.iter_mut() {
-            let since = (TimeDelta::from_std(time.elapsed()).unwrap() - settings.timeout)
-                .num_milliseconds();
+        for mut text in alert.iter_mut() {
+            let since = TimeDelta::from_std(time.elapsed()).unwrap() - settings.timeout;
             let mut lines = console_out
                 .recent(since)
                 .filter(|(_, line)| line.output_type == OutputType::Alert)
@@ -1492,12 +1793,6 @@ mod systems {
 
             let first = lines.next();
             let last_timestamp = first.map(|(ts, _)| ts);
-
-            if last_timestamp == alert_out.last_timestamp {
-                continue;
-            }
-
-            alert_out.last_timestamp = last_timestamp;
 
             text.text.clear();
 
@@ -1528,29 +1823,23 @@ mod systems {
                     // TODO: Implement helptext
                     Some(CommandImpl { kind, help }) => {
                         match (trigger, kind) {
-                            (None, CmdKind::Cvar(cvar)) => {
-                                match args.split_first() {
-                                    None => (
-                                        Cow::from(format!("\"{}\" is \"{}\"", name, cvar.value())),
-                                        OutputType::Console,
-                                    ),
-                                    Some((new_value, [])) => {
-                                        cvar.value =
-                                            Some(Value::from_str(new_value).unwrap_or_else(|_| {
-                                                Value::String(new_value.clone().into())
-                                            }));
-                                        break;
-                                    }
-                                    Some(_) => {
-                                        // TODO: Collect into vector
-
-                                        (
-                                            Cow::from("Too many arguments, expected 1"),
-                                            OutputType::Console,
-                                        )
-                                    }
+                            (None, CmdKind::Cvar(cvar)) => match args.split_first() {
+                                None => (
+                                    Cow::from(format!("\"{}\" is \"{}\"", name, cvar.value())),
+                                    OutputType::Console,
+                                ),
+                                Some((new_value, [])) => {
+                                    cvar.value =
+                                        Some(Value::from_str(new_value).unwrap_or_else(|_| {
+                                            Value::String(new_value.clone().into())
+                                        }));
+                                    break;
                                 }
-                            }
+                                Some(_) => (
+                                    Cow::from("Too many arguments, expected 1"),
+                                    OutputType::Console,
+                                ),
+                            },
                             (Some(_), CmdKind::Cvar(_)) => (
                                 Cow::from(format!("{} is a cvar", name)),
                                 OutputType::Console,
@@ -1627,13 +1916,15 @@ mod systems {
                     ),
                 };
 
-                match output_ty {
-                    OutputType::Console => world
-                        .resource_mut::<ConsoleOutput>()
-                        .print(output, timestamp),
-                    OutputType::Alert => world
-                        .resource_mut::<ConsoleOutput>()
-                        .print_alert(output, timestamp),
+                if !output.is_empty() {
+                    match output_ty {
+                        OutputType::Console => world
+                            .resource_mut::<ConsoleOutput>()
+                            .println(output, timestamp),
+                        OutputType::Alert => world
+                            .resource_mut::<ConsoleOutput>()
+                            .println_alert(output, timestamp),
+                    }
                 }
 
                 break;

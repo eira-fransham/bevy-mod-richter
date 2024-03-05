@@ -79,7 +79,9 @@ pub struct ClientState {
     pub entities: im::Vector<ClientEntity>,
     pub entity_map: im::HashMap<usize, Entity>,
     pub static_entities: im::Vector<ClientEntity>,
+    pub static_entity_map: im::HashMap<usize, Entity>,
     pub temp_entities: im::Vector<ClientEntity>,
+    pub temp_entity_map: im::HashMap<usize, Entity>,
     // dynamic point lights
     pub lights: Arc<Lights>,
     // lightning bolts and grappling hook cable
@@ -132,7 +134,9 @@ impl ClientState {
             entities: default(),
             entity_map: default(),
             static_entities: default(),
+            static_entity_map: default(),
             temp_entities: default(),
+            temp_entity_map: default(),
             lights: Lights::with_capacity(MAX_LIGHTS).into(),
             beams: [None; MAX_BEAMS],
             particles: Particles::with_capacity(MAX_PARTICLES).into(),

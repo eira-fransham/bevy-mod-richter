@@ -85,13 +85,11 @@ pub mod systems {
                     menu_input(commands, keyboard_events, run_cmds, menu, input);
                 }
             }
-            InputFocus::Console => {
-                // TODO: Implement console input
-            }
+            InputFocus::Console => game_input(keyboard_events, run_cmds, input),
         }
     }
 
-    fn game_input(
+    fn console_input(
         mut keyboard_events: EventReader<KeyboardInput>,
         mut run_cmds: EventWriter<RunCmd<'static>>,
         input: Res<GameInput>,
@@ -111,6 +109,32 @@ pub mod systems {
                         ),
                     }
                 }));
+            }
+        }
+    }
+
+    fn game_input(
+        mut keyboard_events: EventReader<KeyboardInput>,
+        mut run_cmds: EventWriter<RunCmd<'static>>,
+        input: Res<GameInput>,
+    ) {
+        for (i, key) in keyboard_events.read().enumerate() {
+            let KeyboardInput {
+                logical_key: key,
+                state: ButtonState::Pressed,
+                ..
+            } = key
+            else {
+                continue;
+            };
+
+            let input = AnyInput::from(key.clone());
+
+            // TODO: Make this actually respect the `togglemenu` keybinding
+            if input == AnyInput::ESCAPE {
+                run_cmds.send("togglemenu".into());
+            } else if input == AnyInput::char("`") {
+                run_cmds.send("toggleconsole".into());
             }
         }
     }
