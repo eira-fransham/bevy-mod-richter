@@ -15,8 +15,7 @@ use crate::{
 
 use bevy::render::{
     render_resource::{
-        BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Sampler, Texture,
-        TextureView,
+        BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
     },
     renderer::{RenderDevice, RenderQueue},
 };
@@ -50,10 +49,8 @@ const PARTICLE_TEXTURE_PIXELS: [u8; 64] = [
 pub struct ParticlePipeline {
     pipeline: RenderPipeline,
     bind_group_layouts: Vec<BindGroupLayout>,
+    _textures: Vec<Texture>,
     vertex_buffer: Buffer,
-    sampler: Sampler,
-    textures: Vec<Texture>,
-    texture_views: Vec<TextureView>,
     bind_group: BindGroup,
 }
 
@@ -143,9 +140,7 @@ impl ParticlePipeline {
         ParticlePipeline {
             pipeline,
             bind_group_layouts,
-            sampler,
-            textures,
-            texture_views,
+            _textures: textures,
             bind_group,
             vertex_buffer,
         }
@@ -363,8 +358,3 @@ pub const VERTICES: [ParticleVertex; 6] = [
         texcoord: [1.0, 1.0],
     },
 ];
-
-#[repr(C)]
-pub struct ParticleInstance {
-    color: u32,
-}

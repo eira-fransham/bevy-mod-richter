@@ -43,8 +43,6 @@
 ///   - Inputs:
 ///     - `BlitPipeline`
 ///   - Output: `SwapChainTarget`
-mod atlas;
-mod blit;
 mod cvars;
 mod error;
 pub mod palette;
@@ -84,7 +82,7 @@ pub use pipeline::Pipeline;
 pub use postprocess::PostProcessRenderer;
 use serde::{Deserialize, Serialize};
 pub use target::{PreferredFormat, RenderTarget, RenderTargetResolve};
-pub use ui::{hud::HudState, UiOverlay, UiRenderer, UiState};
+pub use ui::{hud::HudState, UiRenderer, UiState};
 pub use world::{
     deferred::{DeferredRenderer, DeferredUniforms, PointLight},
     Camera,
@@ -149,7 +147,6 @@ impl Plugin for RichterRenderPlugin {
         app.add_plugins((
             ExtractResourcePlugin::<Menu>::default(),
             ExtractResourcePlugin::<RenderState>::default(),
-            ExtractResourcePlugin::<RenderResolution>::default(),
             ExtractResourcePlugin::<InputFocus>::default(),
             ExtractResourcePlugin::<RenderVars>::default(),
             ExtractResourcePlugin::<ConnectionState>::default(),
@@ -416,8 +413,6 @@ pub struct GraphicsState {
     nearest_sampler: Sampler,
     lightmap_sampler: Sampler,
 
-    sample_count: u32,
-
     alias_pipeline: AliasPipeline,
     brush_pipeline: BrushPipeline,
     sprite_pipeline: SpritePipeline,
@@ -442,7 +437,6 @@ impl GraphicsState {
     pub fn new(
         device: &RenderDevice,
         queue: &RenderQueue,
-        size: Extent2d,
         view_target: &ViewTarget,
         sample_count: u32,
         vfs: &Vfs,
@@ -628,8 +622,6 @@ impl GraphicsState {
             world_bind_group_layouts,
             world_bind_groups,
 
-            sample_count,
-
             alias_pipeline,
             brush_pipeline,
             sprite_pipeline,
@@ -780,33 +772,17 @@ mod systems {
     use super::*;
 
     pub fn create_graphics_state(
-        targets: Query<(Entity, &ViewTarget), With<Camera3d>>,
+        targets: Query<&ViewTarget, With<Camera3d>>,
         mut commands: Commands,
         device: Res<RenderDevice>,
         queue: Res<RenderQueue>,
-        render_resolution: Res<RenderResolution>,
         vfs: Res<Vfs>,
         render_vars: Res<RenderVars>,
     ) {
-        let mut sample_count = render_vars.msaa_samples;
-        if !&[2, 4].contains(&sample_count) {
-            sample_count = 2;
-        }
-        // TODO: Reimplement MSAA
-        sample_count = 1;
+        let sample_count = render_vars.msaa_samples;
 
-        if let Ok((entity, view_target)) = targets.get_single() {
-            match GraphicsState::new(
-                &*device,
-                &*queue,
-                Extent2d {
-                    width: render_resolution.0,
-                    height: render_resolution.1,
-                },
-                view_target,
-                sample_count,
-                &*vfs,
-            ) {
+        if let Ok(view_target) = targets.get_single() {
+            match GraphicsState::new(&*device, &*queue, view_target, sample_count, &*vfs) {
                 Ok(state) => {
                     commands.insert_resource(state);
                 }

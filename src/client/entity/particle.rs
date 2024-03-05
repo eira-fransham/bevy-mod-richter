@@ -238,7 +238,7 @@ impl Particles {
     ///
     /// This determines the capacity of both the underlying `Slab` and the set of
     /// live particles.
-    pub fn with_capacity(capacity: usize) -> Particles {
+    pub fn new() -> Particles {
         lazy_static! {
             // avelocities initialized with (rand() & 255) * 0.01;
             static ref VELOCITY_DISTRIBUTION: Uniform<f32> = Uniform::new(0.0, 2.56);

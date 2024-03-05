@@ -116,7 +116,7 @@ impl ConnectPacket for RequestConnect {
     where
         W: WriteBytesExt,
     {
-        writer.write(self.game_name.as_bytes())?;
+        writer.write_all(self.game_name.as_bytes())?;
         writer.write_u8(0)?;
         writer.write_u8(self.proto_ver)?;
         Ok(())
@@ -142,7 +142,7 @@ impl ConnectPacket for RequestServerInfo {
     where
         W: WriteBytesExt,
     {
-        writer.write(self.game_name.as_bytes())?;
+        writer.write_all(self.game_name.as_bytes())?;
         writer.write_u8(0)?;
         Ok(())
     }
@@ -191,7 +191,7 @@ impl ConnectPacket for RequestRuleInfo {
     where
         W: WriteBytesExt,
     {
-        writer.write(self.prev_cvar.as_bytes())?;
+        writer.write_all(self.prev_cvar.as_bytes())?;
         writer.write_u8(0)?;
         Ok(())
     }
@@ -327,7 +327,7 @@ impl ConnectPacket for ResponseReject {
     where
         W: WriteBytesExt,
     {
-        writer.write(self.message.as_bytes())?;
+        writer.write_all(self.message.as_bytes())?;
         writer.write_u8(0)?;
         Ok(())
     }
@@ -376,11 +376,11 @@ impl ConnectPacket for ResponseServerInfo {
     where
         W: WriteBytesExt,
     {
-        writer.write(self.address.as_bytes())?;
+        writer.write_all(self.address.as_bytes())?;
         writer.write_u8(0)?;
-        writer.write(self.hostname.as_bytes())?;
+        writer.write_all(self.hostname.as_bytes())?;
         writer.write_u8(0)?;
-        writer.write(self.levelname.as_bytes())?;
+        writer.write_all(self.levelname.as_bytes())?;
         writer.write_u8(0)?;
         writer.write_u8(self.client_count)?;
         writer.write_u8(self.client_max)?;
@@ -433,12 +433,12 @@ impl ConnectPacket for ResponsePlayerInfo {
         W: WriteBytesExt,
     {
         writer.write_u8(self.player_id)?;
-        writer.write(self.player_name.as_bytes())?;
+        writer.write_all(self.player_name.as_bytes())?;
         writer.write_u8(0)?; // NUL-terminate
         writer.write_i32::<LittleEndian>(self.colors)?;
         writer.write_i32::<LittleEndian>(self.frags)?;
         writer.write_i32::<LittleEndian>(self.connect_duration)?;
-        writer.write(self.address.as_bytes())?;
+        writer.write_all(self.address.as_bytes())?;
         writer.write_u8(0)?;
         Ok(())
     }
@@ -471,9 +471,9 @@ impl ConnectPacket for ResponseRuleInfo {
     where
         W: WriteBytesExt,
     {
-        writer.write(self.cvar_name.as_bytes())?;
+        writer.write_all(self.cvar_name.as_bytes())?;
         writer.write_u8(0)?;
-        writer.write(self.cvar_val.as_bytes())?;
+        writer.write_all(self.cvar_val.as_bytes())?;
         writer.write_u8(0)?;
         Ok(())
     }

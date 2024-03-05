@@ -21,7 +21,7 @@
 use std::cell::RefCell;
 
 use bevy::{
-    core_pipeline::{core_3d::Camera3d, prepass::ViewPrepassTextures},
+    core_pipeline::prepass::ViewPrepassTextures,
     render::{
         render_graph::{RenderLabel, ViewNode},
         render_resource::{RenderPassColorAttachment, Texture, TextureView},
@@ -92,17 +92,13 @@ pub struct InitPassLabel;
 pub struct InitPass;
 
 impl ViewNode for InitPass {
-    type ViewQuery = (
-        &'static ViewTarget,
-        &'static ViewPrepassTextures,
-        &'static Camera3d,
-    );
+    type ViewQuery = (&'static ViewTarget, &'static ViewPrepassTextures);
 
     fn run<'w>(
         &self,
-        graph: &mut bevy::render::render_graph::RenderGraphContext,
+        _graph: &mut bevy::render::render_graph::RenderGraphContext,
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
-        (target, prepass, _): (&ViewTarget, &ViewPrepassTextures, &Camera3d),
+        (target, prepass): (&ViewTarget, &ViewPrepassTextures),
         world: &'w bevy::prelude::World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let gfx_state = world.resource::<GraphicsState>();

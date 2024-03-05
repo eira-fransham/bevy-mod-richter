@@ -18,7 +18,6 @@
 pub mod commands;
 pub mod console;
 pub mod game;
-pub mod menu;
 
 use bevy::{
     app::{Plugin, Update},
@@ -85,16 +84,16 @@ pub mod systems {
                     menu_input(commands, keyboard_events, run_cmds, menu, input);
                 }
             }
-            InputFocus::Console => game_input(keyboard_events, run_cmds, input),
+            InputFocus::Console => console_input(keyboard_events, run_cmds, input),
         }
     }
 
-    fn console_input(
+    fn game_input(
         mut keyboard_events: EventReader<KeyboardInput>,
         mut run_cmds: EventWriter<RunCmd<'static>>,
         input: Res<GameInput>,
     ) {
-        for (i, key) in keyboard_events.read().enumerate() {
+        for key in keyboard_events.read() {
             // TODO: Make this work better if we have arguments - currently we clone the arguments every time
             // TODO: Error handling
             if let Ok(Some(binding)) = input.binding(key.logical_key.clone()) {
@@ -113,28 +112,30 @@ pub mod systems {
         }
     }
 
-    fn game_input(
+    fn console_input(
         mut keyboard_events: EventReader<KeyboardInput>,
         mut run_cmds: EventWriter<RunCmd<'static>>,
         input: Res<GameInput>,
     ) {
-        for (i, key) in keyboard_events.read().enumerate() {
+        for key in keyboard_events.read() {
             let KeyboardInput {
                 logical_key: key,
-                state: ButtonState::Pressed,
+                state,
                 ..
-            } = key
-            else {
-                continue;
-            };
+            } = key;
 
-            let input = AnyInput::from(key.clone());
-
-            // TODO: Make this actually respect the `togglemenu` keybinding
-            if input == AnyInput::ESCAPE {
-                run_cmds.send("togglemenu".into());
-            } else if input == AnyInput::char("`") {
-                run_cmds.send("toggleconsole".into());
+            if let Ok(Some(Binding { commands, .. })) = input.binding(key.clone()) {
+                run_cmds.send_batch(commands.iter().filter_map(|cmd| {
+                    match (cmd.0.trigger, state) {
+                        (Some(Trigger::Positive) | None, ButtonState::Pressed) => Some(cmd.clone()),
+                        (Some(Trigger::Positive) | None, ButtonState::Released) => {
+                            cmd.clone().invert()
+                        }
+                        (Some(Trigger::Negative), _) => unreachable!(
+                            "Binding found to a negative edge! TODO: Do we want to support this?"
+                        ),
+                    }
+                }));
             }
         }
     }
@@ -146,7 +147,7 @@ pub mod systems {
         mut menu: ResMut<Menu>,
         input: Res<GameInput>,
     ) {
-        for (i, key) in keyboard_events.read().enumerate() {
+        for key in keyboard_events.read() {
             if let Ok(Some(Binding {
                 valid: BindingValidState::Any,
                 commands,

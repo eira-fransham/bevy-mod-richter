@@ -257,17 +257,16 @@ impl Globals {
     pub fn type_check(&self, addr: usize, type_: Type) -> Result<(), GlobalsError> {
         match self.defs.iter().find(|def| def.offset as usize == addr) {
             Some(d) => {
-                if type_ == d.type_ {
-                    return Ok(());
-                } else if type_ == Type::QFloat && d.type_ == Type::QVector {
-                    return Ok(());
-                } else if type_ == Type::QVector && d.type_ == Type::QFloat {
-                    return Ok(());
+                if type_ == d.type_
+                    || (type_ == Type::QFloat && d.type_ == Type::QVector)
+                    || (type_ == Type::QVector && d.type_ == Type::QFloat)
+                {
+                    Ok(())
                 } else {
-                    return Err(GlobalsError::with_msg("type check failed"));
+                    Err(GlobalsError::with_msg("type check failed"))
                 }
             }
-            None => return Ok(()),
+            None => Ok(()),
         }
     }
 
@@ -365,8 +364,8 @@ impl Globals {
 
         let mut v = [0.0; 3];
 
-        for i in 0..3 {
-            v[i] = self.get_float(addr + i as i16)?;
+        for (i, v) in v.iter_mut().enumerate() {
+            *v = self.get_float(addr + i as i16)?;
         }
 
         Ok(v)
@@ -484,9 +483,7 @@ impl Globals {
         let src = self.get_addr(src_addr)?.to_owned();
         let dst = self.get_addr_mut(dst_addr)?;
 
-        for i in 0..4 {
-            dst[i] = src[i]
-        }
+        dst[..4].copy_from_slice(&src[..4]);
 
         Ok(())
     }

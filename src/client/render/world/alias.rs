@@ -15,9 +15,10 @@ use bevy::{
     ecs::component::Component,
     render::{
         render_resource::{
-            BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, TextureView,
+            BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline,
         },
         renderer::{RenderDevice, RenderQueue},
+        texture::CachedTexture,
     },
 };
 use cgmath::{InnerSpace as _, Matrix4, Vector3, Zero as _};
@@ -214,13 +215,11 @@ impl Keyframe {
 
 enum Texture {
     Static {
-        diffuse_texture: bevy::render::render_resource::Texture,
-        diffuse_view: TextureView,
+        _diffuse_texture: CachedTexture,
         bind_group: BindGroup,
     },
     Animated {
-        diffuse_textures: Vec<bevy::render::render_resource::Texture>,
-        diffuse_views: Vec<TextureView>,
+        _diffuse_textures: Vec<CachedTexture>,
         bind_groups: Vec<BindGroup>,
         total_duration: Duration,
         durations: Vec<Duration>,
@@ -388,8 +387,10 @@ impl AliasRenderer {
                         }],
                     );
                     textures.push(Texture::Static {
-                        diffuse_texture,
-                        diffuse_view,
+                        _diffuse_texture: CachedTexture {
+                            texture: diffuse_texture,
+                            default_view: diffuse_view,
+                        },
                         bind_group,
                     });
                 }
@@ -397,7 +398,6 @@ impl AliasRenderer {
                     let mut total_duration = Duration::zero();
                     let mut durations = Vec::new();
                     let mut diffuse_textures = Vec::new();
-                    let mut diffuse_views = Vec::new();
                     let mut bind_groups = Vec::new();
 
                     for frame in tex.frames() {
@@ -425,14 +425,15 @@ impl AliasRenderer {
                             }],
                         );
 
-                        diffuse_textures.push(diffuse_texture);
-                        diffuse_views.push(diffuse_view);
+                        diffuse_textures.push(CachedTexture {
+                            texture: diffuse_texture,
+                            default_view: diffuse_view,
+                        });
                         bind_groups.push(bind_group);
                     }
 
                     textures.push(Texture::Animated {
-                        diffuse_textures,
-                        diffuse_views,
+                        _diffuse_textures: diffuse_textures,
                         bind_groups,
                         total_duration,
                         durations,

@@ -116,25 +116,25 @@ impl serde::de::Error for ConsoleError {
     }
 
     // Provided methods
-    fn invalid_type(unexp: serde::de::Unexpected<'_>, exp: &dyn serde::de::Expected) -> Self {
+    fn invalid_type(_: serde::de::Unexpected<'_>, _: &dyn serde::de::Expected) -> Self {
         ConsoleError::CvarParseInvalid
     }
-    fn invalid_value(unexp: serde::de::Unexpected<'_>, exp: &dyn serde::de::Expected) -> Self {
+    fn invalid_value(_: serde::de::Unexpected<'_>, _: &dyn serde::de::Expected) -> Self {
         ConsoleError::CvarParseInvalid
     }
-    fn invalid_length(len: usize, exp: &dyn serde::de::Expected) -> Self {
+    fn invalid_length(_: usize, _: &dyn serde::de::Expected) -> Self {
         ConsoleError::CvarParseInvalid
     }
-    fn unknown_variant(variant: &str, expected: &'static [&'static str]) -> Self {
+    fn unknown_variant(_: &str, _: &'static [&'static str]) -> Self {
         ConsoleError::CvarParseInvalid
     }
-    fn unknown_field(field: &str, expected: &'static [&'static str]) -> Self {
+    fn unknown_field(_: &str, _: &'static [&'static str]) -> Self {
         ConsoleError::CvarParseInvalid
     }
-    fn missing_field(field: &'static str) -> Self {
+    fn missing_field(_: &'static str) -> Self {
         ConsoleError::CvarParseInvalid
     }
-    fn duplicate_field(field: &'static str) -> Self {
+    fn duplicate_field(_: &'static str) -> Self {
         ConsoleError::CvarParseInvalid
     }
 }
@@ -301,12 +301,6 @@ impl From<String> for RunCmd<'static> {
     }
 }
 
-#[derive(Event)]
-pub struct Print {
-    text: CName,
-    output_ty: OutputType,
-}
-
 pub trait RegisterCmdExt {
     fn command<N, I, S, M>(&mut self, name: N, run: S, usage: I) -> &mut Self
     where
@@ -415,7 +409,7 @@ pub struct Registry {
 }
 
 impl Registry {
-    fn new() -> Registry {
+    pub fn new() -> Registry {
         Self::default()
     }
 
@@ -496,14 +490,14 @@ impl Registry {
     ///
     /// Returns an error if there was no command with that name.
     // TODO: If we remove a builtin we should also remove the corresponding system from the world
-    fn remove<S>(&mut self, name: S) -> Result<(), ConsoleError>
+    pub fn remove<S>(&mut self, name: S) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
         let name = name.as_ref();
         // TODO: Use `HashMap::extract_if` when stabilised
         match self.commands.get_mut(name) {
-            Some((cmd, overlays)) => {
+            Some((_, overlays)) => {
                 if overlays.pop().is_none() {
                     self.commands.remove(name);
                 }
@@ -514,10 +508,10 @@ impl Registry {
         }
     }
 
-    /// Removes the command with the given name.
+    /// Removes the alias with the given name.
     ///
     /// Returns an error if there was no command with that name.
-    fn remove_alias<S>(&mut self, name: S) -> Result<(), ConsoleError>
+    pub fn remove_alias<S>(&mut self, name: S) -> Result<(), ConsoleError>
     where
         S: AsRef<str>,
     {
@@ -566,7 +560,7 @@ impl Registry {
             .map(|(first, rest)| rest.last_mut().unwrap_or(first))
     }
 
-    fn contains<S>(&self, name: S) -> bool
+    pub fn contains<S>(&self, name: S) -> bool
     where
         S: AsRef<str>,
     {
@@ -592,6 +586,20 @@ impl Registry {
             CmdKind::Action { state, .. } => Some(*state),
             _ => None,
         }) == Some(Trigger::Positive)
+    }
+
+    pub fn set_cvar<N, V>(&mut self, name: N, value: V) -> Result<Value, ConsoleError>
+    where
+        N: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let value = Value::from_str(value.as_ref()).map_err(|_| ConsoleError::CvarParseInvalid)?;
+
+        let cvar = self
+            .get_cvar_mut(name.as_ref())
+            .ok_or_else(|| ConsoleError::NoSuchCvar(name.as_ref().to_owned().into()))?;
+
+        Ok(mem::replace(&mut cvar.value, Some(value)).unwrap_or(cvar.default.clone()))
     }
 
     /// Deserialize a single value from cvars
@@ -691,7 +699,7 @@ impl Registry {
 
             fn deserialize_struct<V>(
                 self,
-                name: &'static str,
+                _name: &'static str,
                 fields: &'static [&'static str],
                 visitor: V,
             ) -> Result<V::Value, Self::Error>
@@ -710,133 +718,133 @@ impl Registry {
                 visitor.visit_map(de)
             }
 
-            fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_any<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_bool<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_i8<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_i16<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_i32<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_i64<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_u8<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_u16<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_u32<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_u64<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_f32<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_f64<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_char<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_str<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_string<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_bytes<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_byte_buf<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_option<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_unit<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
@@ -845,8 +853,8 @@ impl Registry {
 
             fn deserialize_unit_struct<V>(
                 self,
-                name: &'static str,
-                visitor: V,
+                _: &'static str,
+                _: V,
             ) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
@@ -856,8 +864,8 @@ impl Registry {
 
             fn deserialize_newtype_struct<V>(
                 self,
-                name: &'static str,
-                visitor: V,
+                _: &'static str,
+                _: V,
             ) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
@@ -865,14 +873,14 @@ impl Registry {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_seq<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_tuple<V>(self, _: usize, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
@@ -881,9 +889,9 @@ impl Registry {
 
             fn deserialize_tuple_struct<V>(
                 self,
-                name: &'static str,
-                len: usize,
-                visitor: V,
+                _: &'static str,
+                _: usize,
+                _: V,
             ) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
@@ -891,7 +899,7 @@ impl Registry {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_map<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
@@ -900,9 +908,9 @@ impl Registry {
 
             fn deserialize_enum<V>(
                 self,
-                name: &'static str,
-                variants: &'static [&'static str],
-                visitor: V,
+                _: &'static str,
+                _: &'static [&'static str],
+                _: V,
             ) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
@@ -910,14 +918,14 @@ impl Registry {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_identifier<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
                 Err(ConsoleError::CvarParseInvalid)
             }
 
-            fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            fn deserialize_ignored_any<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
@@ -1114,7 +1122,6 @@ impl EditorContext for ConsoleInputContext {
 #[derive(Resource)]
 pub struct ConsoleInput {
     editor: Editor<ConsoleInputContext>,
-    keymap: Emacs,
 }
 
 #[derive(Resource, Default)]
@@ -1146,7 +1153,7 @@ impl ConsoleInput {
         // TODO: Error handling
         keymap.init(&mut editor)?;
 
-        Ok(ConsoleInput { editor, keymap })
+        Ok(ConsoleInput { editor })
     }
 
     /// Send characters to the inner editor
@@ -1341,7 +1348,9 @@ impl RenderConsoleOutput {
 }
 
 #[derive(Component, Default)]
-struct AlertOutput;
+struct AlertOutput {
+    last_timestamp: Option<i64>,
+}
 
 #[derive(Resource)]
 pub struct ConsoleAlertSettings {
@@ -1387,9 +1396,7 @@ impl FromWorld for Gfx {
         const GLYPH_WIDTH: usize = 8;
         const GLYPH_HEIGHT: usize = 8;
         const GLYPH_COLS: usize = 16;
-        const GLYPH_ROWS: usize = 8;
-        const GLYPH_COUNT: usize = GLYPH_ROWS * GLYPH_COLS;
-        const GLYPH_TEXTURE_WIDTH: usize = GLYPH_WIDTH * GLYPH_COLS;
+        const GLYPH_ROWS: usize = 16;
         const SCALE: f32 = 2.;
 
         let vfs = world.resource::<Vfs>();
@@ -1411,7 +1418,7 @@ impl FromWorld for Gfx {
         let layout = assets.add(TextureAtlasLayout::from_grid(
             Vec2::new(GLYPH_WIDTH as _, GLYPH_HEIGHT as _),
             GLYPH_COLS,
-            GLYPH_COLS,
+            GLYPH_ROWS,
             None,
             None,
         ));
@@ -1471,7 +1478,6 @@ mod console_text {
         pub fn update_atlas_text(
             mut commands: Commands,
             text: Query<(Entity, &AtlasText), Changed<AtlasText>>,
-            asset_server: Res<AssetServer>,
         ) {
             for (entity, text) in text.iter() {
                 commands.add(DespawnChildrenRecursive { entity });
@@ -1540,7 +1546,7 @@ mod systems {
 
         use super::*;
 
-        pub fn init_alert_output(mut commands: Commands, gfx: Res<Gfx>, assets: Res<AssetServer>) {
+        pub fn init_alert_output(mut commands: Commands, gfx: Res<Gfx>) {
             let Conchars {
                 image,
                 layout,
@@ -1566,7 +1572,7 @@ mod systems {
                     },
                     glyph_size: (glyph_size.0, glyph_size.1),
                 },
-                AlertOutput,
+                AlertOutput::default(),
             ));
         }
 
@@ -1731,23 +1737,12 @@ mod systems {
         mut out_ui: Query<&mut AtlasText, With<ConsoleTextOutputUi>>,
     ) {
         for mut text in out_ui.iter_mut() {
-            let mut lines = console_out.text_chunks.iter();
-
-            let first = lines.next();
-            let last_timestamp = first.map(|(ts, _)| ts);
-
             // TODO: Write only extra lines
             if !text.text.is_empty() {
                 text.text.clear();
             }
 
-            let Some((_, first)) = first else {
-                continue;
-            };
-
-            text.text.push_str(first.text.as_ref());
-
-            for (_, line) in lines {
+            for (_, line) in console_out.text_chunks.iter() {
                 text.text.push_str(&*line.text);
             }
         }
@@ -1781,9 +1776,9 @@ mod systems {
         settings: Res<ConsoleAlertSettings>,
         time: Res<Time<Virtual>>,
         console_out: Res<RenderConsoleOutput>,
-        mut alert: Query<&mut AtlasText, With<AlertOutput>>,
+        mut alert: Query<(&mut AtlasText, &mut AlertOutput)>,
     ) {
-        for mut text in alert.iter_mut() {
+        for (mut text, mut alert) in alert.iter_mut() {
             let since = TimeDelta::from_std(time.elapsed()).unwrap() - settings.timeout;
             let mut lines = console_out
                 .recent(since)
@@ -1793,6 +1788,12 @@ mod systems {
 
             let first = lines.next();
             let last_timestamp = first.map(|(ts, _)| ts);
+
+            if last_timestamp == alert.last_timestamp {
+                continue;
+            }
+
+            alert.last_timestamp = last_timestamp;
 
             text.text.clear();
 
@@ -1821,7 +1822,7 @@ mod systems {
             loop {
                 let (output, output_ty) = match world.resource_mut::<Registry>().get_mut(&*name) {
                     // TODO: Implement helptext
-                    Some(CommandImpl { kind, help }) => {
+                    Some(CommandImpl { kind, .. }) => {
                         match (trigger, kind) {
                             (None, CmdKind::Cvar(cvar)) => match args.split_first() {
                                 None => (
@@ -1870,7 +1871,7 @@ mod systems {
                                     }
                                 }
                             }
-                            (Some(_), CmdKind::Builtin(cmd)) => (
+                            (Some(_), CmdKind::Builtin(_)) => (
                                 Cow::from(format!(
                                     "{} is a command, and cannot be invoked with +/-",
                                     name

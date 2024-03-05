@@ -25,14 +25,6 @@ use cgmath::{Angle, Deg, InnerSpace, Matrix3, Matrix4, Vector2, Vector3, Zero};
 use lazy_static::lazy_static;
 use num_derive::FromPrimitive;
 
-trait CoordSys {}
-
-struct Quake;
-impl CoordSys for Quake {}
-
-struct Wgpu;
-impl CoordSys for Wgpu {}
-
 pub const VERTEX_NORMAL_COUNT: usize = 162;
 lazy_static! {
     /// Precomputed vertex normals used for alias models and particle effects

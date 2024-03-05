@@ -279,7 +279,7 @@ pub struct Lights {
 
 impl Lights {
     /// Create an empty set of lights with the given capacity.
-    pub fn with_capacity(capacity: usize) -> Lights {
+    pub fn new() -> Lights {
         Lights {
             lights: Default::default(),
         }

@@ -43,7 +43,6 @@ where
 
     init_time: DateTime<Utc>,
     prev_frame_time: DateTime<Utc>,
-    prev_frame_duration: Duration,
 }
 
 pub enum Control {

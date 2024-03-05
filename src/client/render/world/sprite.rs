@@ -216,13 +216,11 @@ pub const VERTICES: [SpriteVertex; 6] = [
 
 enum Frame {
     Static {
-        diffuse: Texture,
-        diffuse_view: TextureView,
+        _diffuse: Texture,
         bind_group: BindGroup,
     },
     Animated {
-        diffuses: Vec<Texture>,
-        diffuse_views: Vec<TextureView>,
+        _diffuses: Vec<Texture>,
         bind_groups: Vec<BindGroup>,
         total_duration: Duration,
         durations: im::Vector<Duration>,
@@ -266,12 +264,10 @@ impl Frame {
 
         match sframe {
             SpriteFrame::Static { frame } => {
-                let (diffuse, diffuse_view, bind_group) =
-                    convert_subframe(state, device, queue, frame);
+                let (diffuse, _, bind_group) = convert_subframe(state, device, queue, frame);
 
                 Frame::Static {
-                    diffuse,
-                    diffuse_view,
+                    _diffuse: diffuse,
                     bind_group,
                 }
             }
@@ -281,25 +277,20 @@ impl Frame {
                 durations,
             } => {
                 let mut diffuses = Vec::new();
-                let mut diffuse_views = Vec::new();
                 let mut bind_groups = Vec::new();
 
-                let _ = subframes
+                for (diffuse, _, bind_group) in subframes
                     .iter()
-                    .map(|subframe| {
-                        let (diffuse, diffuse_view, bind_group) =
-                            convert_subframe(state, device, queue, subframe);
-                        diffuses.push(diffuse);
-                        diffuse_views.push(diffuse_view);
-                        bind_groups.push(bind_group);
-                    })
-                    .count(); // count to consume the iterator
+                    .map(|subframe| convert_subframe(state, device, queue, subframe))
+                {
+                    diffuses.push(diffuse);
+                    bind_groups.push(bind_group);
+                }
 
                 let total_duration = durations.iter().fold(Duration::zero(), |init, d| init + *d);
 
                 Frame::Animated {
-                    diffuses,
-                    diffuse_views,
+                    _diffuses: diffuses,
                     bind_groups,
                     total_duration,
                     durations: durations.clone(),

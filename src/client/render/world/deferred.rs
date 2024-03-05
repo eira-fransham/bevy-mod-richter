@@ -1,7 +1,7 @@
-use std::{cell::RefCell, mem::size_of, num::NonZeroU64};
+use std::{mem::size_of, num::NonZeroU64, slice};
 
 use bevy::{
-    core_pipeline::{core_3d::Camera3d, prepass::ViewPrepassTextures},
+    core_pipeline::prepass::ViewPrepassTextures,
     ecs::system::Resource,
     prelude::default,
     render::{
@@ -14,34 +14,25 @@ use bevy::{
         view::{PostProcessWrite, ViewTarget},
     },
 };
-use bumpalo::Bump;
-use cgmath::{Deg, Matrix4, SquareMatrix as _, Vector3, Zero as _};
+use cgmath::{Deg, Matrix4, SquareMatrix as _, Vector3};
 
-use crate::{
-    client::{
-        entity::MAX_LIGHTS,
-        input::InputFocus,
-        menu::Menu,
-        render::{
-            pipeline::Pipeline, ui::quad::QuadPipeline, world::WorldRenderer, GraphicsState,
-            RenderConnectionKind, RenderResolution, RenderState, RenderVars,
-        },
-    },
-    common::{
-        console::{ConsoleInput, ConsoleOutput},
-        util::any_as_bytes,
+use crate::client::{
+    entity::MAX_LIGHTS,
+    render::{
+        pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, RenderConnectionKind,
+        RenderResolution, RenderState, RenderVars,
     },
 };
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
 pub struct PointLight {
-    pub origin: Vector3<f32>,
+    pub origin: [f32; 3],
     pub radius: f32,
 }
 
-#[repr(C, align(256))]
-#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
 pub struct DeferredUniforms {
     pub inv_projection: [[f32; 4]; 4],
     pub light_count: u32,
@@ -67,17 +58,15 @@ impl DeferredPipeline {
 
         let uniform_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: unsafe {
-                any_as_bytes(&DeferredUniforms {
-                    inv_projection: Matrix4::identity().into(),
-                    light_count: 0,
-                    _pad: [0; 3],
-                    lights: [PointLight {
-                        origin: Vector3::zero(),
-                        radius: 0.0,
-                    }; MAX_LIGHTS],
-                })
-            },
+            contents: bytemuck::cast_slice(&[DeferredUniforms {
+                inv_projection: Matrix4::identity().into(),
+                light_count: 0,
+                _pad: [0; 3],
+                lights: [PointLight {
+                    origin: [0.; 3],
+                    radius: 0.0,
+                }; MAX_LIGHTS],
+            }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -208,7 +197,7 @@ impl Pipeline for DeferredPipeline {
 
     fn color_target_states_with_args(format: Self::Args) -> Vec<Option<wgpu::ColorTargetState>> {
         vec![Some(wgpu::ColorTargetState {
-            format: format,
+            format,
             blend: Some(wgpu::BlendState::REPLACE),
             write_mask: wgpu::ColorWrites::ALL,
         })]
@@ -310,9 +299,11 @@ impl DeferredRenderer {
         uniforms: DeferredUniforms,
     ) {
         // update color shift
-        queue.write_buffer(state.deferred_pipeline().uniform_buffer(), 0, unsafe {
-            any_as_bytes(&uniforms)
-        });
+        queue.write_buffer(
+            state.deferred_pipeline().uniform_buffer(),
+            0,
+            bytemuck::cast_slice(slice::from_ref(&uniforms)),
+        );
     }
 
     pub fn record_draw<'this, 'a>(
@@ -337,36 +328,23 @@ pub struct DeferredPassLabel;
 pub struct DeferredPass;
 
 impl ViewNode for DeferredPass {
-    type ViewQuery = (
-        &'static ViewTarget,
-        &'static ViewPrepassTextures,
-        &'static Camera3d,
-    );
+    type ViewQuery = (&'static ViewTarget, &'static ViewPrepassTextures);
 
     fn run<'w>(
         &self,
-        graph: &mut bevy::render::render_graph::RenderGraphContext,
+        _graph: &mut bevy::render::render_graph::RenderGraphContext,
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
-        (target, prepass, _): (&ViewTarget, &ViewPrepassTextures, &Camera3d),
+        (target, prepass): (&ViewTarget, &ViewPrepassTextures),
         world: &'w bevy::prelude::World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
-        thread_local! {
-            static BUMP: RefCell<Bump> =Bump::new().into();
-        }
-
         let gfx_state = world.resource::<GraphicsState>();
-        let renderer = world.get_resource::<WorldRenderer>();
         let conn = world.get_resource::<RenderState>();
         let queue = world.resource::<RenderQueue>();
         let device = world.resource::<RenderDevice>();
-        let console_out = world.get_resource::<ConsoleOutput>();
-        let console_in = world.get_resource::<ConsoleInput>();
         let Some(&RenderResolution(width, height)) = world.get_resource::<RenderResolution>()
         else {
             return Ok(());
         };
-        let menu = world.get_resource::<Menu>();
-        let focus = world.resource::<InputFocus>();
         let render_vars = world.resource::<RenderVars>();
 
         let PostProcessWrite {
@@ -404,66 +382,61 @@ impl ViewNode for DeferredPass {
 
         let encoder = render_context.command_encoder();
 
-        BUMP.with_borrow_mut(|bump| bump.reset());
-        BUMP.with_borrow(|bump| {
-            if let (
-                Some(RenderState {
-                    state: cl_state,
-                    kind,
-                }),
-                Some(world),
-            ) = (conn, renderer)
-            {
-                // if client is fully connected, draw world
-                let camera = match kind {
-                    RenderConnectionKind::Demo => {
-                        cl_state.demo_camera(width as f32 / height as f32, Deg(render_vars.fov))
-                    }
-                    RenderConnectionKind::Server => {
-                        cl_state.camera(width as f32 / height as f32, Deg(render_vars.fov))
-                    }
-                };
-
-                let mut deferred_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Deferred pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: diffuse_target,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    ..default()
-                });
-
-                let mut lights = [PointLight {
-                    origin: Vector3::zero(),
-                    radius: 0.0,
-                }; MAX_LIGHTS];
-
-                let mut light_count = 0;
-                for (light_id, light) in cl_state.iter_lights().enumerate() {
-                    light_count += 1;
-                    let light_origin = light.origin();
-                    let converted_origin =
-                        Vector3::new(-light_origin.y, light_origin.z, -light_origin.x);
-                    lights[light_id].origin =
-                        (camera.view() * converted_origin.extend(1.0)).truncate();
-                    lights[light_id].radius = light.radius(cl_state.time());
+        if let Some(RenderState {
+            state: cl_state,
+            kind,
+        }) = conn
+        {
+            // if client is fully connected, draw world
+            let camera = match kind {
+                RenderConnectionKind::Demo => {
+                    cl_state.demo_camera(width as f32 / height as f32, Deg(render_vars.fov))
                 }
+                RenderConnectionKind::Server => {
+                    cl_state.camera(width as f32 / height as f32, Deg(render_vars.fov))
+                }
+            };
 
-                let uniforms = DeferredUniforms {
-                    inv_projection: camera.inverse_projection().into(),
-                    light_count,
-                    _pad: [0; 3],
-                    lights,
-                };
+            let mut deferred_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Deferred pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: diffuse_target,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                ..default()
+            });
 
-                deferred_renderer.record_draw(gfx_state, queue, &mut deferred_pass, uniforms);
+            let mut lights = [PointLight {
+                origin: [0.; 3],
+                radius: 0.0,
+            }; MAX_LIGHTS];
+
+            let mut light_count = 0;
+            for (light_id, light) in cl_state.iter_lights().enumerate() {
+                light_count += 1;
+                let light_origin = light.origin();
+                let converted_origin =
+                    Vector3::new(-light_origin.y, light_origin.z, -light_origin.x);
+                lights[light_id].origin = (camera.view() * converted_origin.extend(1.0))
+                    .truncate()
+                    .into();
+                lights[light_id].radius = light.radius(cl_state.time());
             }
-        });
+
+            let uniforms = DeferredUniforms {
+                inv_projection: camera.inverse_projection().into(),
+                light_count,
+                _pad: [0; 3],
+                lights,
+            };
+
+            deferred_renderer.record_draw(gfx_state, queue, &mut deferred_pass, uniforms);
+        }
 
         Ok(())
     }

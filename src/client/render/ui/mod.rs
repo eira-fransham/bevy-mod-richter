@@ -1,4 +1,3 @@
-pub mod console;
 pub mod glyph;
 pub mod hud;
 pub mod layout;
@@ -11,7 +10,6 @@ use crate::{
         menu::Menu,
         render::{
             ui::{
-                console::ConsoleRenderer,
                 glyph::{GlyphRenderer, GlyphRendererCommand},
                 hud::{HudRenderer, HudState},
                 menu::MenuRenderer,
@@ -20,10 +18,7 @@ use crate::{
             Extent2d, GraphicsState,
         },
     },
-    common::{
-        console::{RenderConsoleInput, RenderConsoleOutput},
-        vfs::Vfs,
-    },
+    common::vfs::Vfs,
 };
 
 use bevy::{
@@ -37,7 +32,7 @@ use bevy::{
 use cgmath::{Matrix4, Vector2};
 use chrono::Duration;
 
-use super::{world::WorldRenderer, RenderResolution, RenderState};
+use super::{RenderResolution, RenderState};
 
 pub fn screen_space_vertex_translate(
     display_w: u32,
@@ -84,24 +79,18 @@ pub fn screen_space_vertex_transform(
         * Matrix4::from_nonuniform_scale(scale_x, scale_y, 1.0)
 }
 
-pub enum UiOverlay<'a> {
-    Menu(&'a Menu),
-    Console(&'a RenderConsoleInput, &'a RenderConsoleOutput),
-}
-
 pub enum UiState<'a> {
     Title {
-        overlay: UiOverlay<'a>,
+        overlay: Option<&'a Menu>,
     },
     InGame {
         hud: HudState<'a>,
-        overlay: Option<UiOverlay<'a>>,
+        overlay: Option<&'a Menu>,
     },
 }
 
 #[derive(Resource)]
 pub struct UiRenderer {
-    console_renderer: ConsoleRenderer,
     menu_renderer: MenuRenderer,
     hud_renderer: HudRenderer,
     glyph_renderer: GlyphRenderer,
@@ -117,7 +106,6 @@ impl UiRenderer {
         menu: &Menu,
     ) -> UiRenderer {
         UiRenderer {
-            console_renderer: ConsoleRenderer::new(state, vfs, device, queue),
             menu_renderer: MenuRenderer::new(state, vfs, device, queue, menu),
             hud_renderer: HudRenderer::new(state, vfs, device, queue),
             glyph_renderer: GlyphRenderer::new(state, device, queue),
@@ -137,7 +125,7 @@ impl UiRenderer {
         glyph_commands: &'a mut Vec<GlyphRendererCommand>,
     ) {
         let (hud_state, overlay) = match ui_state {
-            UiState::Title { overlay } => (None, Some(overlay)),
+            UiState::Title { overlay } => (None, overlay.as_ref()),
             UiState::InGame { hud, overlay } => (Some(hud), overlay.as_ref()),
         };
 
@@ -146,35 +134,14 @@ impl UiRenderer {
                 .generate_commands(hstate, time, quad_commands, glyph_commands);
         }
 
-        if let Some(o) = overlay {
-            match o {
-                UiOverlay::Menu(menu) => {
-                    self.menu_renderer
-                        .generate_commands(menu, time, quad_commands, glyph_commands);
-                }
-                UiOverlay::Console(input, output) => {
-                    // TODO: take in-game console proportion as cvar
-                    let proportion = match hud_state {
-                        Some(_) => 0.33,
-                        None => 1.0,
-                    };
-
-                    self.console_renderer.generate_commands(
-                        output,
-                        input,
-                        time,
-                        quad_commands,
-                        glyph_commands,
-                        proportion,
-                    );
-                }
-            }
+        if let Some(menu) = overlay {
+            self.menu_renderer
+                .generate_commands(menu, time, quad_commands, glyph_commands);
         }
 
         self.quad_renderer
             .update_uniforms(state, queue, target_size, quad_commands);
-        self.quad_renderer
-            .record_draw(state, queue, pass, quad_commands);
+        self.quad_renderer.record_draw(state, pass, quad_commands);
         self.glyph_renderer
             .record_draw(state, queue, pass, target_size, glyph_commands);
     }
@@ -191,23 +158,19 @@ impl ViewNode for UiPass {
 
     fn run<'w>(
         &self,
-        graph: &mut bevy::render::render_graph::RenderGraphContext,
+        _graph: &mut bevy::render::render_graph::RenderGraphContext,
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
         (view_target, _): (&ViewTarget, &Camera3d),
         world: &'w World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let gfx_state = world.resource::<GraphicsState>();
         let ui_renderer = world.resource::<UiRenderer>();
-        let renderer = world.get_resource::<WorldRenderer>();
         let conn = world.get_resource::<RenderState>();
         let queue = world.resource::<RenderQueue>();
-        let device = world.resource::<RenderDevice>();
         let Some(&RenderResolution(width, height)) = world.get_resource::<RenderResolution>()
         else {
             return Ok(());
         };
-        let console_out = world.get_resource::<RenderConsoleOutput>();
-        let console_in = world.get_resource::<RenderConsoleInput>();
         let menu = world.get_resource::<Menu>();
         let focus = world.resource::<InputFocus>();
 
@@ -227,10 +190,7 @@ impl ViewNode for UiPass {
                 ..default()
             });
 
-            if let Some(RenderState {
-                state: cl_state, ..
-            }) = conn
-            {
+            if let Some(RenderState { .. }) = conn {
                 let ui_state = match conn {
                     Some(RenderState {
                         state: cl_state, ..
@@ -241,7 +201,6 @@ impl ViewNode for UiPass {
                                 completion_duration: cl_state.completion_time().unwrap()
                                     - cl_state.start_time(),
                                 stats: cl_state.stats(),
-                                console: console_out,
                             },
 
                             None => HudState::InGame {
@@ -249,27 +208,20 @@ impl ViewNode for UiPass {
                                 item_pickup_time: cl_state.item_pickup_times(),
                                 stats: cl_state.stats(),
                                 face_anim_time: cl_state.face_anim_time(),
-                                console: console_out,
                             },
                         },
 
-                        overlay: match (focus, console_in, console_out, menu) {
-                            (InputFocus::Game, _, _, _) => None,
-                            (InputFocus::Console, Some(input), Some(output), _) => {
-                                Some(UiOverlay::Console(input, output))
-                            }
-                            (InputFocus::Menu, _, _, Some(menu)) => Some(UiOverlay::Menu(menu)),
+                        overlay: match (focus, menu) {
+                            (InputFocus::Game, _) => None,
+                            (InputFocus::Menu, menu) => menu,
                             _ => None,
                         },
                     },
 
                     None => UiState::Title {
-                        overlay: match (focus, console_in, console_out, menu) {
-                            (InputFocus::Console, Some(input), Some(output), _) => {
-                                UiOverlay::Console(input, output)
-                            }
-                            (InputFocus::Menu, _, _, Some(menu)) => UiOverlay::Menu(menu),
-                            (InputFocus::Game, _, _, _) => unreachable!(),
+                        overlay: match (focus, menu) {
+                            (InputFocus::Menu, menu) => menu,
+                            (InputFocus::Game, _) => unreachable!(),
                             _ => return Ok(()),
                         },
                     },

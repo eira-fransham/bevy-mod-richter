@@ -375,9 +375,9 @@ impl QuadRenderer {
         }
     }
 
-    fn generate_uniforms<'cmds>(
+    fn generate_uniforms(
         &self,
-        commands: &[QuadRendererCommand<'cmds>],
+        commands: &[QuadRendererCommand<'_>],
         target_size: Extent2d,
     ) -> Vec<QuadUniforms> {
         let mut uniforms = Vec::new();
@@ -447,7 +447,6 @@ impl QuadRenderer {
     pub fn record_draw<'this, 'a>(
         &'this self,
         state: &'this GraphicsState,
-        queue: &'a RenderQueue,
         pass: &'a mut wgpu::RenderPass<'this>,
         commands: &'a [QuadRendererCommand<'this>],
     ) {
@@ -463,6 +462,4 @@ impl QuadRenderer {
             pass.draw(0..6, 0..1);
         }
     }
-
-    pub fn clear_uniforms(&mut self) {}
 }

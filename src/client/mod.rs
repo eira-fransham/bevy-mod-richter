@@ -37,7 +37,7 @@ use self::{
     sound::{MixerEvent, RichterSoundPlugin},
 };
 
-use std::{collections::VecDeque, io::BufReader, net::ToSocketAddrs, path::PathBuf, sync::Arc};
+use std::{collections::VecDeque, io::BufReader, net::ToSocketAddrs, path::PathBuf};
 
 use crate::{
     client::{
@@ -92,7 +92,7 @@ const MAX_STATS: usize = 32;
 const DEFAULT_SOUND_PACKET_VOLUME: u8 = 255;
 const DEFAULT_SOUND_PACKET_ATTENUATION: f32 = 1.0;
 
-const CONSOLE_DIVIDER: &'static str = "\
+const CONSOLE_DIVIDER: &str = "\
 \n\n\
 \x1D\x1E\x1E\x1E\x1E\x1E\x1E\x1E\
 \x1E\x1E\x1E\x1E\x1E\x1E\x1E\x1E\
@@ -609,11 +609,13 @@ impl Connection {
                 } => {
                     match count {
                         // if count is 255, this is an explosion
-                        255 => Arc::make_mut(&mut self.state.particles)
+                        255 => self
+                            .state
+                            .particles
                             .create_explosion(self.state.time, origin),
 
                         // otherwise it's an impact
-                        _ => Arc::make_mut(&mut self.state.particles).create_projectile_impact(
+                        _ => self.state.particles.create_projectile_impact(
                             self.state.time,
                             origin,
                             direction,
@@ -793,7 +795,7 @@ impl Connection {
                     self.state.spawn_temp_entity(mixer_events, &temp_entity)
                 }
 
-                ServerCmd::StuffText { text } => {} // todo!("Reimplement console"), // console.append_text(text),
+                ServerCmd::StuffText { text: _text } => {} // todo!("Reimplement console"), // console.append_text(text),
 
                 ServerCmd::Time { time } => {
                     self.state.msg_times[1] = self.state.msg_times[0];
@@ -956,10 +958,12 @@ impl Connection {
         self.state.update_temp_entities()?;
 
         // remove expired lights
-        Arc::make_mut(&mut self.state.lights).update(self.state.time);
+        self.state.lights.update(self.state.time);
 
         // apply particle physics and remove expired particles
-        Arc::make_mut(&mut self.state.particles).update(self.state.time, frame_time, sv_gravity);
+        self.state
+            .particles
+            .update(self.state.time, frame_time, sv_gravity);
 
         if let ConnectionKind::Server {
             ref mut qsock,
@@ -1084,14 +1088,13 @@ where
     ))
 }
 
-// TODO: when an audio device goes down, every command with an
-// OutputStreamHandle needs to be reconstructed so it doesn't pass out
-// references to a dead output stream
+#[derive(Event)]
+pub struct Impulse(pub u8);
 
 mod systems {
     use serde::Deserialize;
 
-    use self::{common::console::Registry, input::game::GameInput};
+    use self::common::console::Registry;
 
     use super::*;
 
@@ -1099,12 +1102,16 @@ mod systems {
         // mut console: ResMut<Console>,
         registry: ResMut<Registry>,
         mut conn: Option<ResMut<Connection>>,
-        mut input: ResMut<GameInput>,
         frame_time: Res<Time<Virtual>>,
+        mut impulses: EventReader<Impulse>,
     ) -> Result<(), ClientError> {
         // TODO: Error handling
         let move_vars: MoveVars = registry.read_cvars().unwrap();
         let mouse_vars: MouseVars = registry.read_cvars().unwrap();
+
+        // TODO: Unclear fromm the bevy documentation if this drops all other events for the frame,
+        //       but in this case it's almost certainly fine
+        let impulse = impulses.read().next().map(|i| i.0);
 
         match conn.as_deref_mut() {
             Some(Connection {
@@ -1117,14 +1124,13 @@ mod systems {
                     Duration::from_std(frame_time.delta()).unwrap(),
                     move_vars,
                     mouse_vars,
+                    impulse,
                 );
-                // TODO: arrayvec here
                 let mut msg = Vec::new();
                 move_cmd.serialize(&mut msg)?;
-                // qsock.send_msg_unreliable(&msg)?;
+                qsock.send_msg_unreliable(&msg)?;
 
-                // clear mouse and impulse
-                input.refresh(todo!());
+                // TODO: Refresh input (e.g. mouse movement)
             }
 
             _ => (),
@@ -1143,7 +1149,6 @@ mod systems {
 
     pub fn frame(
         mut commands: Commands,
-        frame_time: Res<Time<Virtual>>,
         cvars: Res<Registry>,
         vfs: Res<Vfs>,
         time: Res<Time<Virtual>>,

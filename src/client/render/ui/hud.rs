@@ -11,7 +11,6 @@ use crate::{
         IntermissionKind,
     },
     common::{
-        console::RenderConsoleOutput,
         net::{ClientStat, ItemFlags},
         vfs::Vfs,
         wad::QPic,
@@ -44,13 +43,11 @@ pub enum HudState<'a> {
         item_pickup_time: &'a [Duration],
         stats: &'a [i32],
         face_anim_time: Duration,
-        console: Option<&'a RenderConsoleOutput>,
     },
     Intermission {
         kind: &'a IntermissionKind,
         completion_duration: Duration,
         stats: &'a [i32],
-        console: Option<&'a RenderConsoleOutput>,
     },
 }
 
@@ -100,7 +97,7 @@ impl std::fmt::Display for HudTextureId {
     }
 }
 
-const WEAPON_ID_NAMES: [&'static str; 7] = [
+const WEAPON_ID_NAMES: [&str; 7] = [
     "SHOTGUN", "SSHOTGUN", "NAILGUN", "SNAILGUN", "RLAUNCH", "SRLAUNCH", "LIGHTNG",
 ];
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive, EnumIter)]
@@ -137,7 +134,7 @@ impl std::fmt::Display for WeaponFrame {
     }
 }
 
-const AMMO_ID_NAMES: [&'static str; 4] = ["SHELLS", "NAILS", "ROCKET", "CELLS"];
+const AMMO_ID_NAMES: [&str; 4] = ["SHELLS", "NAILS", "ROCKET", "CELLS"];
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive, EnumIter)]
 enum AmmoId {
     Shells = 0,
@@ -152,7 +149,7 @@ impl std::fmt::Display for AmmoId {
     }
 }
 
-const ITEM_ID_NAMES: [&'static str; 6] = ["KEY1", "KEY2", "INVIS", "INVULN", "SUIT", "QUAD"];
+const ITEM_ID_NAMES: [&str; 6] = ["KEY1", "KEY2", "INVIS", "INVULN", "SUIT", "QUAD"];
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, FromPrimitive, EnumIter)]
 enum ItemId {
     Key1 = 0,
@@ -657,15 +654,13 @@ impl HudRenderer {
     ) {
         // TODO: get from cvar
         let scale = 2.0;
-        let console_timeout = Duration::seconds(3);
 
-        let console = match hud_state {
+        match hud_state {
             HudState::InGame {
                 items,
                 item_pickup_time,
                 stats,
                 face_anim_time,
-                console,
             } => {
                 self.cmd_sbar(
                     time,
@@ -677,57 +672,14 @@ impl HudRenderer {
                     quad_cmds,
                     glyph_cmds,
                 );
-
-                console
             }
             HudState::Intermission {
                 kind,
                 completion_duration,
                 stats,
-                console,
             } => {
                 self.cmd_intermission_overlay(kind, *completion_duration, stats, scale, quad_cmds);
-                console
             }
         };
-
-        // if let Some(console) = console {
-        //     for (id, line) in console.recent_lines(console_timeout, 100, 10).enumerate() {
-        //         glyph_cmds.push(GlyphRendererCommand::Text {
-        //             text: line.to_owned(),
-        //             position: ScreenPosition::Relative {
-        //                 anchor: Anchor::TOP_LEFT,
-        //                 x_ofs: 0,
-        //                 y_ofs: -8 * id as i32,
-        //             },
-        //             anchor: Anchor::TOP_LEFT,
-        //             scale,
-        //         });
-        //     }
-
-        //     if let HudState::InGame { .. } = hud_state {
-        //         let Ok(scr_centertime) = Duration::from_std(std::time::Duration::from_secs_f32(
-        //             cvars.get_value("scr_centertime").unwrap() as _,
-        //         )) else {
-        //             return;
-        //         };
-        //         let Some(center_text) = console.center_print(scr_centertime) else {
-        //             return;
-        //         };
-        //         for (id, line) in center_text.lines().enumerate() {
-        //             glyph_cmds.push(GlyphRendererCommand::Text {
-        //                 text: line.to_owned(),
-        //                 position: ScreenPosition::Relative {
-        //                     anchor: Anchor::CENTER,
-        //                     x_ofs: 0,
-        //                     // TODO: Magic number
-        //                     y_ofs: 64 - 8 * id as i32,
-        //                 },
-        //                 anchor: Anchor::CENTER,
-        //                 scale,
-        //             });
-        //         }
-        //     }
-        // }
     }
 }

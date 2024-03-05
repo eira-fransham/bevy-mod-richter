@@ -1,11 +1,11 @@
-use std::{io::Read, iter, sync::Arc};
+use std::{io::Read, iter};
 
 use super::{sound::MixerEvent, view::BobVars};
 use crate::{
     client::{
         entity::{
-            particle::{Particle, Particles, TrailKind, MAX_PARTICLES},
-            Beam, ClientEntity, Light, LightDesc, Lights, MAX_BEAMS, MAX_LIGHTS, MAX_TEMP_ENTITIES,
+            particle::{Particle, Particles, TrailKind},
+            Beam, ClientEntity, Light, LightDesc, Lights, MAX_BEAMS, MAX_TEMP_ENTITIES,
         },
         render::Camera,
         sound::{Listener, StartSound},
@@ -38,7 +38,7 @@ use rand::{
     SeedableRng,
 };
 
-const CACHED_SOUND_NAMES: &[&'static str] = &[
+const CACHED_SOUND_NAMES: &[&str] = &[
     "hknight/hit.wav",
     "weapons/r_exp3.wav",
     "weapons/ric1.wav",
@@ -83,11 +83,11 @@ pub struct ClientState {
     pub temp_entities: im::Vector<ClientEntity>,
     pub temp_entity_map: im::HashMap<usize, Entity>,
     // dynamic point lights
-    pub lights: Arc<Lights>,
+    pub lights: Lights,
     // lightning bolts and grappling hook cable
     pub beams: [Option<Beam>; MAX_BEAMS],
     // particle effects
-    pub particles: Arc<Particles>,
+    pub particles: Particles,
 
     // visible entities, rebuilt per-frame
     pub visible_entity_ids: im::Vector<usize>,
@@ -137,9 +137,9 @@ impl ClientState {
             static_entity_map: default(),
             temp_entities: default(),
             temp_entity_map: default(),
-            lights: Lights::with_capacity(MAX_LIGHTS).into(),
+            lights: Lights::new(),
             beams: [None; MAX_BEAMS],
-            particles: Particles::with_capacity(MAX_PARTICLES).into(),
+            particles: Particles::new(),
             visible_entity_ids: default(),
             light_styles: default(),
             stats: [0; MAX_STATS],
@@ -381,13 +381,13 @@ impl ClientState {
             }
 
             if ent.effects.contains(EntityEffects::BRIGHT_FIELD) {
-                Arc::make_mut(&mut self.particles).create_entity_field(self.time, ent);
+                self.particles.create_entity_field(self.time, ent);
             }
 
             // TODO: factor out EntityEffects->LightDesc mapping
             if ent.effects.contains(EntityEffects::MUZZLE_FLASH) {
                 // TODO: angle and move origin to muzzle
-                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
+                ent.light_id = Some(self.lights.insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin + Vector3::new(0.0, 0.0, 16.0),
@@ -401,7 +401,7 @@ impl ClientState {
             }
 
             if ent.effects.contains(EntityEffects::BRIGHT_LIGHT) {
-                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
+                ent.light_id = Some(self.lights.insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
@@ -415,7 +415,7 @@ impl ClientState {
             }
 
             if ent.effects.contains(EntityEffects::DIM_LIGHT) {
-                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
+                ent.light_id = Some(self.lights.insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
@@ -438,7 +438,7 @@ impl ClientState {
             } else if model.has_flag(ModelFlags::TRACER2) {
                 Some(TrailKind::TracerRed)
             } else if model.has_flag(ModelFlags::ROCKET) {
-                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
+                ent.light_id = Some(self.lights.insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
@@ -460,13 +460,8 @@ impl ClientState {
 
             // if the entity leaves a trail, generate it
             if let Some(kind) = trail_kind {
-                Arc::make_mut(&mut self.particles).create_trail(
-                    self.time,
-                    prev_origin,
-                    ent.origin,
-                    kind,
-                    false,
-                );
+                self.particles
+                    .create_trail(self.time, prev_origin, ent.origin, kind, false);
             }
 
             // don't render the player model
@@ -483,7 +478,7 @@ impl ClientState {
         for ent in self.static_entities.iter_mut() {
             if ent.effects.contains(EntityEffects::BRIGHT_LIGHT) {
                 debug!("spawn bright light on static entity");
-                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
+                ent.light_id = Some(self.lights.insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
@@ -498,7 +493,7 @@ impl ClientState {
 
             if ent.effects.contains(EntityEffects::DIM_LIGHT) {
                 debug!("spawn dim light on static entity");
-                ent.light_id = Some(Arc::make_mut(&mut self.lights).insert(
+                ent.light_id = Some(self.lights.insert(
                     self.time,
                     LightDesc {
                         origin: ent.origin,
@@ -615,6 +610,7 @@ impl ClientState {
         frame_time: Duration,
         move_vars: MoveVars,
         mouse_vars: MouseVars,
+        impulse: Option<u8>,
     ) -> ClientCmd {
         let mlook = registry.is_pressed("mlook");
         self.view.handle_input(
@@ -678,7 +674,8 @@ impl ClientState {
             side_move: sidemove as i16,
             up_move: upmove as i16,
             button_flags,
-            impulse: todo!("Reimplement `impulse`"), // registry.impulse(),
+            // TODO: Is `impulse 0` correct?
+            impulse: impulse.unwrap_or_default(),
         }
     }
 
@@ -863,7 +860,7 @@ impl ClientState {
                             _ => unreachable!(),
                         };
 
-                        Arc::make_mut(&mut self.particles).create_projectile_impact(
+                        self.particles.create_projectile_impact(
                             self.time,
                             *origin,
                             Vector3::zero(),
@@ -884,8 +881,8 @@ impl ClientState {
                     }
 
                     Explosion => {
-                        Arc::make_mut(&mut self.particles).create_explosion(self.time, *origin);
-                        Arc::make_mut(&mut self.lights).insert(
+                        self.particles.create_explosion(self.time, *origin);
+                        self.lights.insert(
                             self.time,
                             LightDesc {
                                 origin: *origin,
@@ -915,12 +912,12 @@ impl ClientState {
                         color_start,
                         color_len,
                     } => {
-                        Arc::make_mut(&mut self.particles).create_color_explosion(
+                        self.particles.create_color_explosion(
                             self.time,
                             *origin,
                             (*color_start)..=(*color_start + *color_len - 1),
                         );
-                        Arc::make_mut(&mut self.lights).insert(
+                        self.lights.insert(
                             self.time,
                             LightDesc {
                                 origin: *origin,
@@ -947,8 +944,7 @@ impl ClientState {
                     }
 
                     TarExplosion => {
-                        Arc::make_mut(&mut self.particles)
-                            .create_spawn_explosion(self.time, *origin);
+                        self.particles.create_spawn_explosion(self.time, *origin);
 
                         events.send(MixerEvent::StartSound(StartSound {
                             src: self
@@ -964,11 +960,8 @@ impl ClientState {
                         }));
                     }
 
-                    LavaSplash => {
-                        Arc::make_mut(&mut self.particles).create_lava_splash(self.time, *origin)
-                    }
-                    Teleport => Arc::make_mut(&mut self.particles)
-                        .create_teleporter_warp(self.time, *origin),
+                    LavaSplash => self.particles.create_lava_splash(self.time, *origin),
+                    Teleport => self.particles.create_teleporter_warp(self.time, *origin),
                 }
             }
 

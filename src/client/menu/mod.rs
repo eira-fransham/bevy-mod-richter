@@ -113,14 +113,6 @@ impl Menu {
         Ok(m)
     }
 
-    /// Return a reference to the parent of the active submenu of this menu.
-    ///
-    /// If this is the root menu, returns None.
-    fn active_submenu_parent(&self) -> Result<Option<&Menu>, Error> {
-        let (_, m_parent) = self.active_submenu_and_parent()?;
-        Ok(m_parent)
-    }
-
     /// Return a reference to the active submenu of this menu
     pub fn active_submenu_mut(&mut self) -> Result<&mut Menu, Error> {
         let mut m = self;
@@ -332,7 +324,6 @@ impl Menu {
 
 pub struct MenuBuilder<'a> {
     world: &'a mut World,
-    gfx_name: Option<String>,
     items: im::Vector<NamedMenuItem>,
 }
 
@@ -340,7 +331,6 @@ impl<'a> MenuBuilder<'a> {
     pub fn new(world: &'a mut World) -> Self {
         MenuBuilder {
             world,
-            gfx_name: None,
             items: Default::default(),
         }
     }

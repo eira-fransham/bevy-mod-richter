@@ -18,18 +18,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// TODO: These should be removed, but we're still in the refactoring process
-#![cfg_attr(debug_assertions, allow(dead_code))]
-#![cfg_attr(debug_assertions, allow(unreachable_code))]
-#![cfg_attr(debug_assertions, allow(dead_code))]
-#![cfg_attr(debug_assertions, allow(unused_variables))]
-#![cfg_attr(debug_assertions, allow(unused_assignments))]
 #![recursion_limit = "256"]
 
-mod capture;
-mod game;
 mod menu;
-mod trace;
 
 use std::{fs, net::SocketAddr, path::PathBuf, process::ExitCode};
 
@@ -40,23 +31,21 @@ use bevy::{
     },
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
-    render::camera::Exposure,
-    window::{PresentMode, WindowTheme},
+    render::{camera::Exposure, view::screenshot::ScreenshotManager},
+    window::{PresentMode, PrimaryWindow, WindowTheme},
 };
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
-use richter::{client::RichterPlugin, common::console::RunCmd};
+use chrono::Utc;
+use richter::{
+    client::RichterPlugin,
+    common::console::{ExecResult, RegisterCmdExt as _, RunCmd},
+};
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
 struct Opt {
     #[structopt(long)]
-    trace: bool,
-
-    #[structopt(long)]
     connect: Option<SocketAddr>,
-
-    #[structopt(long)]
-    dump_demo: Option<String>,
 
     #[structopt(long)]
     demo: Option<String>,
@@ -64,14 +53,42 @@ struct Opt {
     #[structopt(long)]
     demos: Vec<String>,
 
-    #[structopt(short, long, default_value)]
-    commands: String,
+    #[structopt(short, long)]
+    commands: Option<String>,
 
     #[structopt(long)]
     base_dir: Option<PathBuf>,
 
     #[structopt(long)]
     game: Option<String>,
+}
+
+/// Implements the "screenshot" command.
+///
+/// This function returns a boxed closure which sets the `screenshot_path`
+/// argument to `Some` when called.
+pub fn cmd_screenshot(
+    In(args): In<Box<[String]>>,
+    window: Query<Entity, With<PrimaryWindow>>,
+    mut screenshot_manager: ResMut<ScreenshotManager>,
+) -> ExecResult {
+    let Ok(window) = window.get_single() else {
+        return "Can't find primary window".to_owned().into();
+    };
+
+    let path = match &*args {
+        // TODO: make default path configurable
+        [] => PathBuf::from(format!("richter-{}.png", Utc::now().format("%FT%H-%M-%S"))),
+        [path] => PathBuf::from(path),
+        _ => {
+            return "Usage: screenshot [PATH]".to_owned().into();
+        }
+    };
+
+    match screenshot_manager.save_screenshot_to_disk(window, path) {
+        Ok(()) => default(),
+        Err(e) => format!("Couldn't take screenshot: {}", e).into(),
+    }
 }
 
 fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
@@ -101,15 +118,24 @@ fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
 
         console_cmds.send(RunCmd::parse("exec quake.rc").unwrap());
 
-        if let Some(ref server) = opt.connect {
+        if let Some(server) = opt.connect {
             console_cmds.send(format!("connect {}", server).parse().unwrap());
-        } else if let Some(ref demo) = opt.demo {
+        } else if let Some(demo) = &opt.demo {
             console_cmds.send(format!("playdemo {}", demo).parse().unwrap());
         } else if !opt.demos.is_empty() {
             console_cmds.send(
                 format!("startdemos {}", opt.demos.join(" "))
                     .parse()
                     .unwrap(),
+            );
+        }
+
+        if let Some(extra_commands) = &opt.commands {
+            console_cmds.send_batch(
+                RunCmd::parse_many(extra_commands)
+                    .unwrap()
+                    .into_iter()
+                    .map(RunCmd::into_owned),
             );
         }
     }
@@ -151,6 +177,11 @@ fn main() -> ExitCode {
         game: opt.game.clone(),
         main_menu: menu::build_main_menu,
     })
+    .command(
+        "screenshot",
+        cmd_screenshot,
+        "Take a screenshot of the primary window",
+    )
     .insert_resource(DefaultOpaqueRendererMethod::deferred())
     .add_systems(Startup, startup(opt));
 

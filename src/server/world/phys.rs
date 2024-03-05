@@ -130,7 +130,7 @@ pub fn velocity_after_multi_collision(
 ) -> Option<Vector3<f32>> {
     // Try to find a plane which produces a post-collision velocity that will
     // not cause a subsequent collision with any of the other planes.
-    for (a, plane_a) in planes.iter().enumerate() {
+    'outer: for (a, plane_a) in planes.iter().enumerate() {
         let (velocity_a, _flags) = velocity_after_collision(initial, plane_a.normal(), overbounce);
 
         for (b, plane_b) in planes.iter().enumerate() {
@@ -141,7 +141,7 @@ pub fn velocity_after_multi_collision(
 
             if velocity_a.dot(plane_b.normal()) < 0.0 {
                 // New velocity would be directed into another plane.
-                break;
+                continue 'outer;
             }
         }
 

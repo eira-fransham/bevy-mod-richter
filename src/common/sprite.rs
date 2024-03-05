@@ -92,10 +92,6 @@ pub enum SpriteFrame {
 pub struct SpriteSubframe {
     width: u32,
     height: u32,
-    up: f32,
-    down: f32,
-    left: f32,
-    right: f32,
     indexed: Box<[u8]>,
 }
 
@@ -173,8 +169,8 @@ where
 
             // TODO: substitute out this magic number
             if frame_kind_int == 0 {
-                let origin_x = reader.read_i32::<LittleEndian>().unwrap();
-                let origin_z = reader.read_i32::<LittleEndian>().unwrap();
+                let _origin_x = reader.read_i32::<LittleEndian>().unwrap();
+                let _origin_z = reader.read_i32::<LittleEndian>().unwrap();
 
                 let width = match reader.read_i32::<LittleEndian>().unwrap() {
                     w if w < 0 => panic!("Negative frame width ({})", w),
@@ -197,10 +193,6 @@ where
                     frame: SpriteSubframe {
                         width: width as u32,
                         height: height as u32,
-                        up: origin_z as f32,
-                        down: (origin_z - height) as f32,
-                        left: origin_x as f32,
-                        right: (width + origin_x) as f32,
                         indexed: indices,
                     },
                 }
@@ -216,8 +208,8 @@ where
 
                 let subframes = (0..subframe_count)
                     .map(|_| {
-                        let origin_x = reader.read_i32::<LittleEndian>().unwrap();
-                        let origin_z = reader.read_i32::<LittleEndian>().unwrap();
+                        let _origin_x = reader.read_i32::<LittleEndian>().unwrap();
+                        let _origin_z = reader.read_i32::<LittleEndian>().unwrap();
 
                         let width = match reader.read_i32::<LittleEndian>().unwrap() {
                             w if w < 0 => panic!("Negative subframe width ({}) in frame {}", w, i),
@@ -237,10 +229,6 @@ where
                         SpriteSubframe {
                             width: width as u32,
                             height: height as u32,
-                            up: origin_z as f32,
-                            down: (origin_z - height) as f32,
-                            left: origin_x as f32,
-                            right: (width + origin_x) as f32,
                             indexed: indices,
                         }
                     })

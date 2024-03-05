@@ -75,7 +75,7 @@ impl StringTable {
             return Some(Ref::map(self.data.borrow(), |this| &this[start..end]));
         }
 
-        match (&self.data.borrow()[start..])
+        match self.data.borrow()[start..]
             .chars()
             .take(1024 * 1024)
             .enumerate()

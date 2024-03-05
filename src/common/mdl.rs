@@ -484,7 +484,7 @@ where
 
                     let name = {
                         let mut bytes: [u8; 16] = [0; 16];
-                        reader.read(&mut bytes)?;
+                        reader.read_exact(&mut bytes)?;
                         let len = bytes
                             .iter()
                             .position(|b| *b == 0)
@@ -535,7 +535,7 @@ where
 
                         let name = {
                             let mut bytes: [u8; 16] = [0; 16];
-                            reader.read(&mut bytes)?;
+                            reader.read_exact(&mut bytes)?;
                             let len = bytes
                                 .iter()
                                 .position(|b| *b == 0)

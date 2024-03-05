@@ -475,19 +475,19 @@ impl Entity {
         {
             Some(d) => {
                 if type_ == d.type_ {
-                    return Ok(());
+                    Ok(())
                 } else if type_ == Type::QFloat && d.type_ == Type::QVector {
-                    return Ok(());
+                    Ok(())
                 } else if type_ == Type::QVector && d.type_ == Type::QFloat {
-                    return Ok(());
+                    Ok(())
                 } else {
-                    return Err(EntityError::with_msg(format!(
+                    Err(EntityError::with_msg(format!(
                         "type check failed: addr={} expected={:?} actual={:?}",
                         addr, type_, d.type_
-                    )));
+                    )))
                 }
             }
-            None => return Ok(()),
+            None => Ok(()),
         }
     }
 

@@ -148,12 +148,11 @@ impl AreaNode {
     ) {
         let size = maxs - mins;
 
-        let axis;
-        if size.x > size.y {
-            axis = AreaBranchAxis::X;
+        let axis = if size.x > size.y {
+            AreaBranchAxis::X
         } else {
-            axis = AreaBranchAxis::Y;
-        }
+            AreaBranchAxis::Y
+        };
 
         let dist = 0.5 * (maxs[axis as usize] + mins[axis as usize]);
 
@@ -385,7 +384,7 @@ impl World {
             debug!(".{} = {}", key, val);
             match *key {
                 // ignore keys starting with an underscore
-                k if k.starts_with("_") => (),
+                k if k.starts_with('_') => (),
 
                 "angle" => {
                     // this is referred to in the original source as "anglehack" -- essentially,
@@ -457,18 +456,18 @@ impl World {
     pub fn free(&mut self, entity_id: EntityId) -> Result<(), ProgsError> {
         // TODO: unlink entity from world
 
-        if entity_id.0 as usize > self.slots.len() {
+        if entity_id.0 > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({:?})",
                 entity_id
             )));
         }
 
-        if let AreaEntitySlot::Vacant = self.slots[entity_id.0 as usize] {
+        if let AreaEntitySlot::Vacant = self.slots[entity_id.0] {
             return Ok(());
         }
 
-        self.slots[entity_id.0 as usize] = AreaEntitySlot::Vacant;
+        self.slots[entity_id.0] = AreaEntitySlot::Vacant;
         Ok(())
     }
 
@@ -480,51 +479,48 @@ impl World {
     /// the slot is vacant.
     #[inline]
     pub fn entity(&self, entity_id: EntityId) -> &Entity {
-        match self.slots[entity_id.0 as usize] {
+        match self.slots[entity_id.0] {
             AreaEntitySlot::Vacant => panic!("no such entity: {:?}", entity_id),
             AreaEntitySlot::Occupied(ref e) => &e.entity,
         }
     }
 
     pub fn try_entity(&self, entity_id: EntityId) -> Result<&Entity, ProgsError> {
-        if entity_id.0 as usize > self.slots.len() {
+        if entity_id.0 > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({})",
-                entity_id.0 as usize
+                entity_id.0
             )));
         }
 
-        match self.slots[entity_id.0 as usize] {
+        match self.slots[entity_id.0] {
             AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
                 "No entity at list entry {}",
-                entity_id.0 as usize
+                entity_id.0
             ))),
             AreaEntitySlot::Occupied(ref e) => Ok(&e.entity),
         }
     }
 
     pub fn entity_mut(&mut self, entity_id: EntityId) -> Result<&mut Entity, ProgsError> {
-        if entity_id.0 as usize > self.slots.len() {
+        if entity_id.0 > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({})",
-                entity_id.0 as usize
+                entity_id.0
             )));
         }
 
-        match self.slots[entity_id.0 as usize] {
+        match self.slots[entity_id.0] {
             AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
                 "No entity at list entry {}",
-                entity_id.0 as usize
+                entity_id.0
             ))),
             AreaEntitySlot::Occupied(ref mut e) => Ok(&mut e.entity),
         }
     }
 
     pub fn entity_exists(&mut self, entity_id: EntityId) -> bool {
-        matches!(
-            self.slots[entity_id.0 as usize],
-            AreaEntitySlot::Occupied(_)
-        )
+        matches!(self.slots[entity_id.0], AreaEntitySlot::Occupied(_))
     }
 
     pub fn list_entities(&self, list: &mut Vec<EntityId>) {
@@ -536,34 +532,34 @@ impl World {
     }
 
     fn area_entity(&self, entity_id: EntityId) -> Result<&AreaEntity, ProgsError> {
-        if entity_id.0 as usize > self.slots.len() {
+        if entity_id.0 > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({})",
-                entity_id.0 as usize
+                entity_id.0
             )));
         }
 
-        match self.slots[entity_id.0 as usize] {
+        match self.slots[entity_id.0] {
             AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
                 "No entity at list entry {}",
-                entity_id.0 as usize
+                entity_id.0
             ))),
             AreaEntitySlot::Occupied(ref e) => Ok(e),
         }
     }
 
     fn area_entity_mut(&mut self, entity_id: EntityId) -> Result<&mut AreaEntity, ProgsError> {
-        if entity_id.0 as usize > self.slots.len() {
+        if entity_id.0 > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({})",
-                entity_id.0 as usize
+                entity_id.0
             )));
         }
 
-        match self.slots[entity_id.0 as usize] {
+        match self.slots[entity_id.0] {
             AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
                 "No entity at list entry {}",
-                entity_id.0 as usize
+                entity_id.0
             ))),
             AreaEntitySlot::Occupied(ref mut e) => Ok(e),
         }
@@ -616,7 +612,7 @@ impl World {
 
     pub fn unlink_entity(&mut self, e_id: EntityId) -> Result<(), ProgsError> {
         // if this entity has been removed or freed, do nothing
-        if let AreaEntitySlot::Vacant = self.slots[e_id.0 as usize] {
+        if let AreaEntitySlot::Vacant = self.slots[e_id.0] {
             return Ok(());
         }
 
@@ -645,7 +641,7 @@ impl World {
         }
 
         // if this entity has been removed or freed, do nothing
-        if let AreaEntitySlot::Vacant = self.slots[e_id.0 as usize] {
+        if let AreaEntitySlot::Vacant = self.slots[e_id.0] {
             return Ok(());
         }
 
@@ -700,24 +696,18 @@ impl World {
         }
 
         let mut node_id = 0;
-        loop {
-            match self.area_nodes[node_id].kind {
-                AreaNodeKind::Branch(ref b) => {
-                    debug!(
-                        "abs_min = {:?} | abs_max = {:?} | dist = {}",
-                        abs_min, abs_max, b.dist
-                    );
-                    if abs_min[b.axis as usize] > b.dist {
-                        node_id = b.front;
-                    } else if abs_max[b.axis as usize] < b.dist {
-                        node_id = b.back;
-                    } else {
-                        // entity spans both sides of the plane
-                        break;
-                    }
-                }
-
-                AreaNodeKind::Leaf => break,
+        while let AreaNodeKind::Branch(b) = &self.area_nodes[node_id].kind {
+            debug!(
+                "abs_min = {:?} | abs_max = {:?} | dist = {}",
+                abs_min, abs_max, b.dist
+            );
+            if abs_min[b.axis as usize] > b.dist {
+                node_id = b.front;
+            } else if abs_max[b.axis as usize] < b.dist {
+                node_id = b.back;
+            } else {
+                // entity spans both sides of the plane
+                break;
             }
         }
 
@@ -785,7 +775,7 @@ impl World {
 
                 let size = max - min;
                 match self.models[self.entity(e_id).model_index()?].kind() {
-                    &ModelKind::Brush(ref bmodel) => {
+                    ModelKind::Brush(bmodel) => {
                         let hull_index;
 
                         // TODO: replace these magic constants
@@ -806,9 +796,9 @@ impl World {
 
                         Ok((hull, offset))
                     }
-                    _ => Err(ProgsError::with_msg(format!(
-                        "Non-brush entities may not have MoveKind::Push"
-                    ))),
+                    _ => Err(ProgsError::with_msg(
+                        "Non-brush entities may not have MoveKind::Push",
+                    )),
                 }
             }
 
@@ -959,24 +949,23 @@ impl World {
             }
 
             // select bounding boxes based on whether or not candidate is a monster
-            let tmp_trace;
-            if self.entity(*touch).flags()?.contains(EntityFlags::MONSTER) {
-                tmp_trace = self.collide_move_with_entity(
+            let tmp_trace = if self.entity(*touch).flags()?.contains(EntityFlags::MONSTER) {
+                self.collide_move_with_entity(
                     *touch,
                     collide.start,
                     collide.monster_min,
                     collide.monster_max,
                     collide.end,
-                )?;
+                )?
             } else {
-                tmp_trace = self.collide_move_with_entity(
+                self.collide_move_with_entity(
                     *touch,
                     collide.start,
                     collide.min,
                     collide.max,
                     collide.end,
-                )?;
-            }
+                )?
+            };
 
             let old_dist = (trace.end_point() - collide.start).magnitude();
             let new_dist = (tmp_trace.end_point() - collide.start).magnitude();

@@ -1,6 +1,8 @@
+use crate::{
+    client::Impulse,
+    common::console::{ExecResult, RegisterCmdExt},
+};
 use std::str::FromStr as _;
-
-use crate::common::console::{ExecResult, RegisterCmdExt};
 
 use bevy::prelude::*;
 use fxhash::FxHashMap;
@@ -18,15 +20,11 @@ pub fn register_commands(app: &mut App) {
     // TODO: Add "extended help" for cases like this
     app.command(
         "impulse",
-        move |In(args): In<Box<[String]>>, world: &mut World| -> ExecResult {
-            todo!("Implement `impulse`");
-            println!("args: {}", args.len());
+        move |In(args): In<Box<[String]>>, mut impulse: EventWriter<Impulse>| -> ExecResult {
             match args.len() {
                 1 => match u8::from_str(&args[0]) {
                     Ok(i) => {
-                        let mut game_input = world.resource_mut::<GameInput>();
-                        // TODO: Reimplement impulse
-                        // game_input.impulse = i;
+                        impulse.send(Impulse(i));
                         default()
                     }
                     Err(_) => "Impulse must be a number between 0 and 255".into(),

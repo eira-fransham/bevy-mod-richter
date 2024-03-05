@@ -15,6 +15,8 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+#![allow(unused, unreachable_code)]
+
 pub mod precache;
 pub mod progs;
 pub mod world;
@@ -23,6 +25,7 @@ use std::rc::Rc;
 
 use crate::{
     common::{
+        console::Registry,
         engine::{duration_from_f32, duration_to_f32},
         math::Hyperplane,
         model::Model,
@@ -1581,7 +1584,7 @@ impl LevelState {
         let s_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
         let strs = &self.string_table;
         let s = strs.get(s_id).unwrap();
-        let f = todo!(); // cvars.get_value(&*s).unwrap();
+        let f = todo!(); // registry.read_cvar(&*s).unwrap();
         self.globals.put_float(f, GLOBAL_ADDR_RETURN as i16)?;
 
         Ok(())
@@ -1596,7 +1599,8 @@ impl LevelState {
         let val = strs.get(val_id).unwrap();
 
         // TODO: Re-implement server-side cvar functionality
-        // cvars.set(&*var, &*val).unwrap();
+        todo!();
+        // registry.(&*var, &*val).unwrap();
 
         Ok(())
     }

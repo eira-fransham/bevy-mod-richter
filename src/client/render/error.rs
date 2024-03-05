@@ -1,3 +1,6 @@
+// TODO: `derive(Fail)` currently triggers this, and at time of writing it is up-to-date
+#![allow(non_local_definitions)]
+
 use crate::common::{vfs::VfsError, wad::WadError};
 use failure::{Backtrace, Context, Fail};
 use std::fmt::{self, Display};

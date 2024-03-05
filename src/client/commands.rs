@@ -81,15 +81,8 @@ pub fn register_commands(app: &mut App) {
                     out.into()
                 }
 
-                [from, to, help] => {
-                    todo!();
-                }
-
                 [from, to, ..] => {
-                    let name = args[0].to_string();
-                    let script = args[1].to_string();
-
-                    registry.alias(name, script);
+                    registry.alias(from.clone(), to.clone());
 
                     default()
                 }
@@ -244,7 +237,7 @@ pub fn cmd_connect(
 }
 
 pub fn cmd_reconnect(
-    In(args): In<Box<[String]>>,
+    In(_): In<Box<[String]>>,
     conn: Option<Res<Connection>>,
     mut conn_state: ResMut<ConnectionState>,
     mut focus: ResMut<InputFocus>,

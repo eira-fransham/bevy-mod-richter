@@ -47,13 +47,13 @@ use crate::{
 
 use beef::Cow;
 use bevy::{
-    ecs::component::Component,
+    prelude::*,
     render::{
         render_resource::{
             BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
-            TextureView,
         },
         renderer::{RenderDevice, RenderQueue},
+        texture::CachedTexture,
     },
 };
 use bumpalo::Bump;
@@ -290,10 +290,8 @@ pub enum TextureKind {
 /// A single frame of a brush texture.
 pub struct BrushTextureFrame {
     bind_group_id: usize,
-    diffuse: Texture,
-    fullbright: Texture,
-    diffuse_view: TextureView,
-    fullbright_view: TextureView,
+    diffuse: CachedTexture,
+    fullbright: CachedTexture,
     kind: TextureKind,
 }
 
@@ -324,13 +322,13 @@ impl BrushTexture {
 #[derive(Debug)]
 struct BrushFace {
     vertices: Range<u32>,
-    min: Vector3<f32>,
-    max: Vector3<f32>,
+    _min: Vector3<f32>,
+    _max: Vector3<f32>,
 
     texture_id: usize,
 
     lightmap_ids: Vec<usize>,
-    light_styles: [u8; 4],
+    _light_styles: [u8; 4],
 
     /// Indicates whether the face should be drawn this frame.
     ///
@@ -511,11 +509,11 @@ impl BrushRendererBuilder {
 
         BrushFace {
             vertices: face_vert_id as u32..self.vertices.len() as u32,
-            min,
-            max,
+            _min: min,
+            _max: min,
             texture_id: texinfo.tex_id as usize,
             lightmap_ids,
-            light_styles: face.light_styles,
+            _light_styles: face.light_styles,
             draw_flag: true.into(),
         }
     }
@@ -535,11 +533,11 @@ impl BrushRendererBuilder {
             &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&tex.diffuse_view),
+                    resource: wgpu::BindingResource::TextureView(&tex.diffuse.default_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&tex.fullbright_view),
+                    resource: wgpu::BindingResource::TextureView(&tex.fullbright.default_view),
                 },
             ],
         )
@@ -608,9 +606,6 @@ impl BrushRendererBuilder {
             &TextureData::Fullbright(fullbright_data),
         );
 
-        let diffuse_view = diffuse.create_view(&Default::default());
-        let fullbright_view = fullbright.create_view(&Default::default());
-
         let kind = if name.starts_with("sky") {
             TextureKind::Sky
         } else if name.starts_with("*") {
@@ -619,12 +614,19 @@ impl BrushRendererBuilder {
             TextureKind::Normal
         };
 
+        let diffuse_view = diffuse.create_view(&default());
+        let fullbright_view = fullbright.create_view(&default());
+
         let mut frame = BrushTextureFrame {
             bind_group_id: 0,
-            diffuse,
-            fullbright,
-            diffuse_view,
-            fullbright_view,
+            diffuse: CachedTexture {
+                texture: diffuse,
+                default_view: diffuse_view,
+            },
+            fullbright: CachedTexture {
+                texture: fullbright,
+                default_view: fullbright_view,
+            },
             kind,
         };
 
@@ -748,8 +750,7 @@ impl BrushRendererBuilder {
             texture_chains: self.texture_chains,
             faces: self.faces,
             textures: self.textures,
-            lightmaps: self.lightmaps,
-            //lightmap_views: self.lightmap_views,
+            _lightmaps: self.lightmaps,
         })
     }
 }
@@ -769,8 +770,7 @@ pub struct BrushRenderer {
     texture_chains: FxHashMap<usize, Vec<usize>>,
     faces: Vec<BrushFace>,
     textures: Vec<BrushTexture>,
-    lightmaps: Vec<Texture>,
-    //lightmap_views: Vec<wgpu::TextureView>,
+    _lightmaps: Vec<Texture>,
 }
 
 impl BrushRenderer {

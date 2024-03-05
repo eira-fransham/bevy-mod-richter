@@ -30,8 +30,8 @@ impl AssetLoader for PaletteLoader {
     fn load<'a>(
         &'a self,
         reader: &'a mut bevy::asset::io::Reader,
-        settings: &'a Self::Settings,
-        load_context: &'a mut bevy::asset::LoadContext,
+        _settings: &'a Self::Settings,
+        _load_context: &'a mut bevy::asset::LoadContext,
     ) -> bevy::utils::BoxedFuture<'a, Result<Self::Asset, Self::Error>> {
         Box::pin(async move {
             const PALETTE_SIZE: usize = 3 * 256;

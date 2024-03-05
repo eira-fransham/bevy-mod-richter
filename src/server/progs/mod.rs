@@ -312,7 +312,7 @@ where
         count: 0,
     }; LUMP_COUNT];
 
-    for l in 0..lumps.len() as usize {
+    for l in 0..lumps.len() {
         lumps[l] = Lump {
             offset: src.read_i32::<LittleEndian>()? as usize,
             count: src.read_i32::<LittleEndian>()? as usize,
@@ -335,7 +335,7 @@ where
     let string_table = Rc::new(StringTable::new(strings));
 
     assert_eq!(
-        src.seek(SeekFrom::Current(0))?,
+        src.stream_position()?,
         src.seek(SeekFrom::Start(
             (string_lump.offset + string_lump.count) as u64,
         ))?
@@ -348,7 +348,7 @@ where
     let mut function_defs = Vec::with_capacity(function_lump.count);
     for i in 0..function_lump.count {
         assert_eq!(
-            src.seek(SeekFrom::Current(0))?,
+            src.stream_position()?,
             src.seek(SeekFrom::Start(
                 (function_lump.offset + i * FUNCTION_SIZE) as u64,
             ))?
@@ -378,7 +378,7 @@ where
 
         let argc = src.read_i32::<LittleEndian>()?;
         let mut argsz = [0; MAX_ARGS];
-        src.read(&mut argsz)?;
+        src.read_exact(&mut argsz)?;
 
         function_defs.push(FunctionDef {
             kind,
@@ -392,7 +392,7 @@ where
     }
 
     assert_eq!(
-        src.seek(SeekFrom::Current(0))?,
+        src.stream_position()?,
         src.seek(SeekFrom::Start(
             (function_lump.offset + function_lump.count * FUNCTION_SIZE) as u64,
         ))?
@@ -411,7 +411,7 @@ where
     }
 
     assert_eq!(
-        src.seek(SeekFrom::Current(0))?,
+        src.stream_position()?,
         src.seek(SeekFrom::Start(
             (statement_lump.offset + statement_lump.count * STATEMENT_SIZE) as u64,
         ))?
@@ -439,7 +439,7 @@ where
     }
 
     assert_eq!(
-        src.seek(SeekFrom::Current(0))?,
+        src.stream_position()?,
         src.seek(SeekFrom::Start(
             (globaldef_lump.offset + globaldef_lump.count * DEF_SIZE) as u64,
         ))?
@@ -466,7 +466,7 @@ where
     }
 
     assert_eq!(
-        src.seek(SeekFrom::Current(0))?,
+        src.stream_position()?,
         src.seek(SeekFrom::Start(
             (fielddef_lump.offset + fielddef_lump.count * DEF_SIZE) as u64,
         ))?
@@ -491,7 +491,7 @@ where
     }
 
     assert_eq!(
-        src.seek(SeekFrom::Current(0))?,
+        src.stream_position()?,
         src.seek(SeekFrom::Start(
             (globals_lump.offset + globals_lump.count * 4) as u64,
         ))?

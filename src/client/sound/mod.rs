@@ -354,10 +354,7 @@ mod systems {
                         Err(bundle) => commands.spawn(bundle),
                     };
                 }
-                MixerEvent::StopSound(StopSound {
-                    ent_id,
-                    ent_channel,
-                }) => {
+                MixerEvent::StopSound(StopSound { .. }) => {
                     // Handled by previous match
                 }
                 MixerEvent::StartStaticSound(ref static_sound) => {

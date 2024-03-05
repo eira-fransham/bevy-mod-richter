@@ -22,9 +22,6 @@ pub struct View {
     // TODO
     ideal_pitch: Deg<f32>,
 
-    // view angles from the server
-    msg_angles: [Angles; 2],
-
     // view angles from client input
     input_angles: Angles,
 
@@ -50,7 +47,6 @@ impl View {
             entity_id: 0,
             view_height: 0.0,
             ideal_pitch: Deg(0.0),
-            msg_angles: [Angles::zero(); 2],
             input_angles: Angles::zero(),
             damage_angles: Angles::zero(),
             damage_time: Duration::zero(),
@@ -110,7 +106,7 @@ impl View {
         cl_anglespeedkey: f32,
         cl_pitchspeed: f32,
         cl_yawspeed: f32,
-        mouse_vars: MouseVars,
+        _mouse_vars: MouseVars,
     ) {
         let frame_time_f32 = duration_to_f32(frame_time);
         let speed = if game_input.is_pressed("speed") {
@@ -136,9 +132,9 @@ impl View {
         self.input_angles.pitch += Deg(speed * cl_pitchspeed * (lookdown_factor - lookup_factor));
 
         if mlook {
-            let pitch_factor = mouse_vars.pitch_factor * mouse_vars.sensitivity;
-            let yaw_factor = mouse_vars.yaw_factor * mouse_vars.sensitivity;
             todo!("Reimplement mouse look");
+            // let pitch_factor = mouse_vars.pitch_factor * mouse_vars.sensitivity;
+            // let yaw_factor = mouse_vars.yaw_factor * mouse_vars.sensitivity;
             // self.input_angles.pitch += Deg(game_input.mouse_delta().1 as f32 * pitch_factor);
             // self.input_angles.yaw -= Deg(game_input.mouse_delta().0 as f32 * yaw_factor);
         }

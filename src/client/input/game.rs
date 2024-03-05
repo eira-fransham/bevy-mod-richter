@@ -17,10 +17,7 @@
 
 use std::{fmt::Display, hash::Hash, ops::Not, str::FromStr};
 
-use crate::common::{
-    console::{ConsoleInput, RunCmd},
-    parse,
-};
+use crate::common::{console::RunCmd, parse};
 
 use bevy::{
     input::{keyboard::Key, prelude::*},
@@ -32,8 +29,6 @@ use lazy_static::lazy_static;
 use smol_str::SmolStr;
 use strum_macros::EnumIter;
 use winit::event::MouseButton;
-
-const ACTION_COUNT: usize = 19;
 
 #[derive(Debug, Copy, Clone, Eq)]
 #[repr(transparent)]
@@ -584,19 +579,6 @@ impl GameInput {
                 .try_into()
                 .map_err(|e| format_err!("Failed to parse input: {}", e))?,
         ))
-    }
-
-    // must be called every frame!
-    pub fn refresh(&mut self, console: &mut ConsoleInput) {
-        // TODO: Re-implement input handling
-        // self.clear_mouse(console);
-        // self.clear_impulse();
-    }
-
-    fn clear_mouse(&mut self, console: &mut ConsoleInput) {
-        // self.handle_input(console, MouseWheel::Up, ElementState::Released);
-        // self.handle_input(console, MouseWheel::Down, ElementState::Released);
-        // self.mouse_delta = (0.0, 0.0);
     }
 }
 

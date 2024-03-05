@@ -54,26 +54,17 @@ const MAX_RENDER_NODES: usize = 32767;
 const MAX_COLLISION_NODES: usize = 32767;
 const MAX_VERTICES: usize = 65535;
 const MAX_FACES: usize = 65535;
-const _MAX_MARKTEXINFO: usize = 65535;
-const _MAX_TEXINFO: usize = 4096;
+// const MAX_MARKTEXINFO: usize = 65535;
+// const MAX_TEXINFO: usize = 4096;
 const MAX_EDGES: usize = 256000;
 const MAX_EDGELIST: usize = 512000;
 const MAX_TEXTURES: usize = 0x200000;
-const _MAX_LIGHTMAP: usize = 0x100000;
+// const MAX_LIGHTMAP: usize = 0x100000;
 const MAX_VISLIST: usize = 0x100000;
 
 const TEX_NAME_MAX: usize = 16;
 
 const NUM_AMBIENTS: usize = 4;
-const MAX_TEXTURE_FRAMES: usize = 10;
-const TEXTURE_FRAME_LEN_MS: i64 = 200;
-
-const ASCII_0: usize = '0' as usize;
-const ASCII_9: usize = '9' as usize;
-const ASCII_CAPITAL_A: usize = 'A' as usize;
-const ASCII_CAPITAL_J: usize = 'J' as usize;
-const ASCII_SMALL_A: usize = 'a' as usize;
-const ASCII_SMALL_J: usize = 'j' as usize;
 
 #[derive(Error, Debug)]
 pub enum BspFileError {
@@ -818,7 +809,6 @@ where
         planes: planes_rc.clone(),
         nodes: collision_nodes_rc.clone(),
         node_id: 0,
-        node_count: collision_node_count,
         mins: Vector3::new(-16.0, -16.0, -24.0),
         maxs: Vector3::new(16.0, 16.0, 32.0),
     };
@@ -827,7 +817,6 @@ where
         planes: planes_rc.clone(),
         nodes: collision_nodes_rc.clone(),
         node_id: 0,
-        node_count: collision_node_count,
         mins: Vector3::new(-32.0, -32.0, -24.0),
         maxs: Vector3::new(32.0, 32.0, 64.0),
     };
@@ -1009,7 +998,6 @@ where
         planes: planes_rc.clone(),
         nodes: render_as_collision_nodes_rc.clone(),
         node_id: 0,
-        node_count: render_as_collision_nodes_rc.len(),
         mins: Vector3::new(0.0, 0.0, 0.0),
         maxs: Vector3::new(0.0, 0.0, 0.0),
     };

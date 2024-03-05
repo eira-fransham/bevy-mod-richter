@@ -18,6 +18,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// TODO: `derive(Fail)` currently triggers this, and at time of writing it is up-to-date
+#![allow(non_local_definitions)]
+
 use std::{
     fmt::{self, Display},
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
@@ -32,7 +35,6 @@ use fxhash::FxHashMap;
 
 // see definition of lumpinfo_t:
 // https://github.com/id-Software/Quake/blob/master/WinQuake/wad.h#L54-L63
-const LUMPINFO_SIZE: usize = 32;
 const MAGIC: u32 = 'W' as u32 | ('A' as u32) << 8 | ('D' as u32) << 16 | ('2' as u32) << 24;
 
 #[derive(Debug)]

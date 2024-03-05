@@ -139,7 +139,6 @@ pub const MAX_LIGHTMAPS: usize = 64;
 pub const MAX_LIGHTSTYLES: usize = 4;
 pub const MAX_SOUNDS: usize = 4;
 pub const MIPLEVELS: usize = 4;
-const DIST_EPSILON: f32 = 0.03125;
 
 pub fn frame_duration() -> Duration {
     Duration::milliseconds(200)
@@ -363,7 +362,6 @@ pub struct BspCollisionHull {
     planes: Arc<Box<[Hyperplane]>>,
     nodes: Arc<Box<[BspCollisionNode]>>,
     node_id: usize,
-    node_count: usize,
     mins: Vector3<f32>,
     maxs: Vector3<f32>,
 }
@@ -454,7 +452,6 @@ impl BspCollisionHull {
             planes: Arc::new(planes.into_boxed_slice()),
             nodes: Arc::new(nodes.into_boxed_slice()),
             node_id: 0,
-            node_count: 6,
             mins,
             maxs,
         })
@@ -1005,7 +1002,6 @@ impl BspModel {
             planes: main_hull.planes.clone(),
             nodes: main_hull.nodes.clone(),
             node_id: self.collision_node_ids[index],
-            node_count: self.collision_node_counts[index],
             mins: main_hull.mins,
             maxs: main_hull.maxs,
         })
