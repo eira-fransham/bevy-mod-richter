@@ -7,17 +7,17 @@ of extensible modules for the [Bevy](https://bevyengine.org/) ecosystem. Should 
 refactoring work is ongoing some things may be broken temporarily. Started as a quick project to make Richter run on
 macOS, but ended up with over 8500 lines added and 7000 lines removed.
 
-As a part of the port, I heavily refactored the code to work closer to how Bevy expects things to work. Nice features that
-in my [previous Quake-related project](https://github.com/eira-fransham/goeld) I had to implement manually - specifically,
-tonemapping/HDR and pipelined rendering. The audio system has also been completely overhauled, and I even implemented a rewrite
-of Bevy's default audio framework to allow adding custom DSP effects using [`fundsp`](https://github.com/SamiPerttu/fundsp).
-The way that it is currently written is very different from [`bevy_fundsp`](https://github.com/harudagondi/bevy_fundsp),
-which is essentially just a helper for writing DSP output to a buffer and then sending that buffer to Bevy's normal audio
-systems. All audio can now be retargeted on a per-sound basis, meaning game audio could have reverb applied while the menu
-audio could be left unchanged. The project for that is at [`bevy-mod-dynamicaudio`](https://github.com/eira-fransham/bevy-mod-dynamicaudio).
-The audio effects in the build of the game at time of writing are a subtle reverb and filter delay, but most importantly I
-have added a limiter so that the game audio doesn't completly blow the speakers out when there are more than a couple of
-sounds playing at once.
+As a part of the port, I heavily refactored the code to work closer to how Bevy expects things to work. This means that I
+can get features for free that in my [previous Quake-related project](https://github.com/eira-fransham/goeld) I had to
+implement manually - specifically, tonemapping/HDR and pipelined rendering. The audio system has also been completely
+overhauled, and I even implemented a rewrite of Bevy's default audio framework to allow adding custom DSP effects using
+[`fundsp`](https://github.com/SamiPerttu/fundsp). The way that it is currently written is very different from
+[`bevy_fundsp`](https://github.com/harudagondi/bevy_fundsp), which is essentially just a helper for writing DSP output
+to a buffer and then sending that buffer to Bevy's normal audio systems. All audio can now be retargeted on a per-sound
+basis, meaning game audio could have reverb applied while the menu audio could be left unchanged. The project for that
+is at [`bevy-mod-dynamicaudio`](https://github.com/eira-fransham/bevy-mod-dynamicaudio). The audio effects in the build
+of the game at time of writing are a subtle reverb and filter delay, but most importantly I have added a limiter so that
+the game audio doesn't completly blow the speakers out when there are more than a couple of sounds playing at once.
 
 ![alt tag](content/bevy-mod-richter.gif)
 
@@ -120,25 +120,6 @@ cargo +nightly run --release --manifest-path /path/to/bevy-mod-quake --bin quake
   - [x] SPR loader
   - [x] PAK archive extraction
   - [x] WAD archive extraction
-
-### Server
-
-The Richter server is still in its early stages, so there's no checklist here yet.
-However, you can still check out the QuakeC bytecode VM in the [`progs` module](https://github.com/cormac-obrien/richter/blob/devel/src/server/progs/mod.rs).
-
-## Building
-
-Richter makes use of feature gates and compiler plugins, which means you'll need a nightly build of
-`rustc`. The simplest way to do this is to download [rustup](https://www.rustup.rs/) and follow the
-directions.
-
-Because a Quake distribution contains multiple binaries, this software is packaged as a Cargo
-library project. The source files for binaries are located in the `src/bin` directory and can be run
-with
-
-    $ cargo run --bin <name>
-
-where `<name>` is the name of the source file without the `.rs` extension.
 
 ## Legal
 
