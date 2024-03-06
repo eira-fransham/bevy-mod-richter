@@ -4,14 +4,14 @@ use crate::{client::sound::SoundError, common::vfs::Vfs};
 
 use bevy::{
     asset::AssetServer,
-    audio::{
-        AudioBundle, AudioSink, AudioSinkPlayback as _, AudioSource, PlaybackMode, PlaybackSettings,
-    },
+    audio::{AudioBundle, AudioSinkPlayback as _, AudioSource, PlaybackMode, PlaybackSettings},
     ecs::{
         entity::Entity,
         system::{Commands, Query, Resource},
     },
 };
+
+use bevy_mod_dynamicaudio::audio::{AudioSink, AudioTarget};
 
 /// Plays music tracks.
 #[derive(Resource, Default)]
@@ -37,6 +37,7 @@ impl MusicPlayer {
         asset_server: &AssetServer,
         commands: &mut Commands,
         vfs: &Vfs,
+        mixer: Option<AudioTarget>,
         name: S,
     ) -> Result<(), SoundError>
     where
@@ -77,16 +78,26 @@ impl MusicPlayer {
 
         self.stop(commands);
 
-        let entity = commands
-            .spawn(AudioBundle {
+        let entity = match mixer {
+            Some(target) => commands.spawn((
+                AudioBundle {
+                    source,
+                    settings: PlaybackSettings {
+                        mode: PlaybackMode::Loop,
+                        ..Default::default()
+                    },
+                },
+                target,
+            )),
+            None => commands.spawn(AudioBundle {
                 source,
                 settings: PlaybackSettings {
                     mode: PlaybackMode::Loop,
                     ..Default::default()
                 },
-            })
-            .id();
-
+            }),
+        }
+        .id();
         self.playing = Some((name.to_string(), entity));
 
         Ok(())
@@ -101,9 +112,16 @@ impl MusicPlayer {
         asset_server: &AssetServer,
         commands: &mut Commands,
         vfs: &Vfs,
+        mixer: Option<AudioTarget>,
         track_id: usize,
     ) -> Result<(), SoundError> {
-        self.play_named(asset_server, commands, vfs, format!("track{:02}", track_id))
+        self.play_named(
+            asset_server,
+            commands,
+            vfs,
+            mixer,
+            format!("track{:02}", track_id),
+        )
     }
 
     /// Stop the current music track.

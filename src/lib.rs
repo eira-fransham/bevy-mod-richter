@@ -16,7 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #![deny(unused_must_use)]
-#![feature(extract_if, iter_repeat_n)]
+#![feature(extract_if, iter_repeat_n, type_alias_impl_trait)]
 // TODO: Is this necessary?
 #![recursion_limit = "256"]
 

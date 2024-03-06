@@ -1865,7 +1865,9 @@ mod systems {
                                         output,
                                         output_ty,
                                     }) => {
-                                        commands.extend(extra_commands);
+                                        for command in extra_commands {
+                                            commands.push_front(command);
+                                        }
 
                                         (output, output_ty)
                                     }

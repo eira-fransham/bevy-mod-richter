@@ -62,7 +62,7 @@ bitflags! {
 
 #[derive(Debug, Clone)]
 pub struct Model {
-    pub name: imstr::ImString,
+    pub name: String,
     pub kind: ModelKind,
     pub flags: ModelFlags,
 }

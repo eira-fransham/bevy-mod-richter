@@ -23,8 +23,7 @@ use bevy::{
     app::{Main, Plugin},
     asset::{AssetServer, Handle},
     audio::{
-        AudioBundle, AudioSink, AudioSinkPlayback as _, AudioSource, PlaybackMode,
-        PlaybackSettings, Volume,
+        AudioBundle, AudioSinkPlayback as _, AudioSource, PlaybackMode, PlaybackSettings, Volume,
     },
     ecs::{
         bundle::Bundle,
@@ -34,6 +33,12 @@ use bevy::{
         system::{Commands, Query, Res, ResMut, Resource},
     },
 };
+
+use bevy_mod_dynamicaudio::{
+    audio::{AudioSink, Mixer},
+    AddAudioMixer,
+};
+
 pub use music::MusicPlayer;
 
 use std::io::{self, Read as _};
@@ -125,10 +130,35 @@ where
     Ok(AudioSource { bytes: data.into() })
 }
 
+type ReverbNode = impl fundsp::audionode::AudioNode<Sample = f32> + Send + Sync + 'static;
+
+fn create_mixer() -> ReverbNode {
+    use fundsp::hacker32::*;
+
+    let delay_time = 0.15;
+    let delay = feedback(
+        0.7 * ((delay(delay_time) | delay(delay_time))
+            >> (moog_hz(1500., 0.) | moog_hz(1500., 0.))),
+    );
+
+    ((multipass() & 0.3 * reverb_stereo(20.0, 2.0) & 0.2 * delay) >> limiter_stereo(0.05)).0
+}
+
 pub struct RichterSoundPlugin;
 
 impl Plugin for RichterSoundPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
+        let mixer = create_mixer();
+
+        app.add_audio_mixer::<ReverbNode>();
+        let mixer_id = app
+            .world
+            .spawn(Mixer {
+                processor: Some(mixer),
+            })
+            .id();
+        app.insert_resource(GlobalMixer { mixer: mixer_id });
+
         app.init_resource::<MusicPlayer>()
             .init_resource::<Listener>()
             .add_event::<MixerEvent>()
@@ -204,6 +234,11 @@ impl StaticSound {
         // TODO: Use Bevy's built-in spacialiser
         audio_sink.set_volume(listener.attenuate(self.origin, self.volume, self.attenuation));
     }
+}
+
+#[derive(Clone, Debug, Resource)]
+pub struct GlobalMixer {
+    pub mixer: Entity,
 }
 
 /// Represents a single audio channel, capable of playing one sound at a time.
@@ -311,6 +346,8 @@ pub enum MixerEvent {
 }
 
 mod systems {
+    use bevy_mod_dynamicaudio::audio::AudioTarget;
+
     use crate::client::Connection;
 
     use super::*;
@@ -321,6 +358,7 @@ mod systems {
         listener: Res<Listener>,
         mut music_player: ResMut<MusicPlayer>,
         asset_server: Res<AssetServer>,
+        mixer: Res<GlobalMixer>,
         mut events: EventReader<MixerEvent>,
         mut commands: Commands,
         all_sounds: Query<&AudioSink>,
@@ -348,12 +386,24 @@ mod systems {
             }
 
             match *event {
-                MixerEvent::StartSound(ref start) => {
-                    match make_bundle(start, &*listener) {
-                        Ok(bundle) => commands.spawn(bundle),
-                        Err(bundle) => commands.spawn(bundle),
-                    };
-                }
+                MixerEvent::StartSound(ref start) => match make_bundle(start, &*listener) {
+                    Ok(bundle) => {
+                        commands.spawn((
+                            bundle,
+                            AudioTarget {
+                                target: mixer.mixer,
+                            },
+                        ));
+                    }
+                    Err(bundle) => {
+                        commands.spawn((
+                            bundle,
+                            AudioTarget {
+                                target: mixer.mixer,
+                            },
+                        ));
+                    }
+                },
                 MixerEvent::StopSound(StopSound { .. }) => {
                     // Handled by previous match
                 }
@@ -363,13 +413,29 @@ mod systems {
                 MixerEvent::StartMusic(Some(MusicSource::Named(ref named))) => {
                     // TODO: Error handling
                     music_player
-                        .play_named(&*asset_server, &mut commands, &*vfs, named)
+                        .play_named(
+                            &*asset_server,
+                            &mut commands,
+                            &*vfs,
+                            Some(AudioTarget {
+                                target: mixer.mixer,
+                            }),
+                            named,
+                        )
                         .unwrap();
                 }
                 MixerEvent::StartMusic(Some(MusicSource::TrackId(id))) => {
                     // TODO: Error handling
                     music_player
-                        .play_track(&*asset_server, &mut commands, &*vfs, id)
+                        .play_track(
+                            &*asset_server,
+                            &mut commands,
+                            &*vfs,
+                            Some(AudioTarget {
+                                target: mixer.mixer,
+                            }),
+                            id,
+                        )
                         .unwrap();
                 }
                 MixerEvent::StartMusic(None) => music_player.resume(&all_sounds),
