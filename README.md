@@ -29,6 +29,9 @@ once the client is its own separate system that only communicates with the serve
 should be possible to write game logic in Rust (and therefore any scripting layer that integrates with Bevy, such as Lua)
 and still have regular Quake clients connect to it, instead of being restricted to QuakeC.
 
+These goals are partially completed, as the audio, rendering and input handling are already separate plugins, although
+there are still some remaining interdependence issues.
+
 ### Status
 
 The console and post-processing are done using regular Bevy primitives, with the console being rendered using `bevy-ui`.
