@@ -13,9 +13,10 @@ implement manually - specifically, tonemapping/HDR and pipelined rendering. The 
 overhauled, and I even implemented a rewrite of Bevy's default audio framework to allow adding custom DSP effects using
 [`fundsp`](https://github.com/SamiPerttu/fundsp). The way that it is currently written is very different from
 [`bevy_fundsp`](https://github.com/harudagondi/bevy_fundsp), which is essentially just a helper for writing DSP output
-to a buffer and then sending that buffer to Bevy's normal audio systems. All audio can now be retargeted on a per-sound
-basis, meaning game audio could have reverb applied while the menu audio could be left unchanged. The project for that
-is at [`bevy-mod-dynamicaudio`](https://github.com/eira-fransham/bevy-mod-dynamicaudio). The audio effects in the build
+to a buffer and then sending that buffer to Bevy's normal audio systems. All audio is now heirarchically organised into
+mixers, with each mixer having control over the internal audio processing. The use-case for this could be that game audio
+could have reverb applied while the menu audio could be left unchanged. Mixers are just normal components and can be
+accessed as such. The project for the fork of `bevy_audio` is at [`bevy-mod-dynamicaudio`](https://github.com/eira-fransham/bevy-mod-dynamicaudio). The audio effects in the build
 of the game at time of writing are a subtle reverb and filter delay, but most importantly I have added a limiter so that
 the game audio doesn't completly blow the speakers out when there are more than a couple of sounds playing at once.
 
