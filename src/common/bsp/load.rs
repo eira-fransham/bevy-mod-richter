@@ -48,7 +48,7 @@ const VERSION: i32 = 29;
 pub const MAX_MODELS: usize = 256;
 const MAX_LEAVES: usize = 32767;
 
-const MAX_ENTSTRING: usize = 65536;
+const MAX_ENTSTRING: usize = 1 << 17;
 const MAX_PLANES: usize = 8192;
 const MAX_RENDER_NODES: usize = 32767;
 const MAX_COLLISION_NODES: usize = 32767;
