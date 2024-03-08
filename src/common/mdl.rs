@@ -256,10 +256,10 @@ pub struct AliasModel {
     radius: f32,
     texture_width: u32,
     texture_height: u32,
-    textures: im::Vector<Texture>,
-    texcoords: im::Vector<Texcoord>,
-    polygons: im::Vector<IndexedPolygon>,
-    keyframes: im::Vector<Keyframe>,
+    textures: Vec<Texture>,
+    texcoords: Vec<Texcoord>,
+    polygons: Vec<IndexedPolygon>,
+    keyframes: Vec<Keyframe>,
     flags: ModelFlags,
 }
 

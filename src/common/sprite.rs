@@ -44,7 +44,7 @@ pub struct SpriteModel {
     max_width: usize,
     max_height: usize,
     radius: f32,
-    frames: im::Vector<SpriteFrame>,
+    frames: Vec<SpriteFrame>,
 }
 
 impl SpriteModel {
