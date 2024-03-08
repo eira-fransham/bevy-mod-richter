@@ -66,6 +66,7 @@ pub struct ClientState {
 
     // model precache
     pub models: im::Vector<Model>,
+
     // name-to-id map
     pub model_names: im::HashMap<String, usize>,
 

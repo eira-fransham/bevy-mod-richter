@@ -223,7 +223,7 @@ enum Frame {
         _diffuses: Vec<Texture>,
         bind_groups: Vec<BindGroup>,
         total_duration: Duration,
-        durations: im::Vector<Duration>,
+        durations: Vec<Duration>,
     },
 }
 
