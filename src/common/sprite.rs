@@ -83,8 +83,8 @@ pub enum SpriteFrame {
         frame: SpriteSubframe,
     },
     Animated {
-        subframes: im::Vector<SpriteSubframe>,
-        durations: im::Vector<Duration>,
+        subframes: Vec<SpriteSubframe>,
+        durations: Vec<Duration>,
     },
 }
 
