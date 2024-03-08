@@ -88,8 +88,12 @@ impl Plugin for RichterConsolePlugin {
                 Update,
                 (
                     systems::update_render_console,
-                    systems::write_alert.run_if(resource_changed::<RenderConsoleOutput>),
-                    systems::write_console_out.run_if(resource_changed::<RenderConsoleOutput>),
+                    (
+                        systems::write_alert,
+                        systems::write_console_out,
+                        systems::write_center_print,
+                    )
+                        .run_if(resource_changed::<RenderConsoleOutput>),
                     systems::write_console_in.run_if(resource_changed::<RenderConsoleInput>),
                     systems::update_console_visibility.run_if(resource_changed::<InputFocus>),
                     console_text::systems::update_atlas_text,
@@ -1484,7 +1488,7 @@ pub struct ConsoleAlertSettings {
 impl Default for ConsoleAlertSettings {
     fn default() -> Self {
         Self {
-            timeout: Duration::seconds(3),
+            timeout: Duration::try_seconds(3).unwrap(),
             max_lines: 10,
         }
     }
@@ -1495,6 +1499,9 @@ struct ConsoleUi;
 
 #[derive(Component)]
 struct ConsoleTextOutputUi;
+
+#[derive(Component)]
+struct ConsoleTextCenterPrintUi;
 
 #[derive(Component)]
 struct ConsoleTextInputUi;
@@ -1678,6 +1685,30 @@ mod systems {
             commands.spawn((
                 NodeBundle {
                     style: Style {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(100.),
+                        top: Val::Percent(30.),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    z_index: ZIndex::Global(1),
+                    ..default()
+                },
+                AtlasText {
+                    text: "Hello, world!".into(),
+                    image: image.clone(),
+                    layout: layout.clone(),
+                    glyph_size: (glyph_size.0 * 1.5, glyph_size.1 * 1.5),
+                    line_padding: UiRect {
+                        top: Val::Px(4.),
+                        ..default()
+                    },
+                },
+                ConsoleTextCenterPrintUi,
+            ));
+            commands.spawn((
+                NodeBundle {
+                    style: Style {
                         left: glyph_size.0 / 2.,
                         top: glyph_size.1 / 2.,
                         flex_direction: FlexDirection::Column,
@@ -1745,7 +1776,7 @@ mod systems {
                             ..default()
                         },
                         visibility: Visibility::Hidden,
-                        z_index: ZIndex::Global(1),
+                        z_index: ZIndex::Global(2),
                         ..default()
                     },
                     ConsoleUi,
@@ -1803,8 +1834,8 @@ mod systems {
                                 },
                                 AtlasText {
                                     text: "] ".into(),
-                                    image: conchars_img,
-                                    layout,
+                                    image: conchars_img.clone(),
+                                    layout: layout.clone(),
                                     glyph_size,
                                     line_padding: UiRect {
                                         top: Val::Px(4.),
@@ -1839,9 +1870,18 @@ mod systems {
         mut render_out: ResMut<RenderConsoleOutput>,
         console_in: Res<ConsoleInput>,
         mut render_in: ResMut<RenderConsoleInput>,
+        time: Res<Time<Virtual>>,
+        registry: Res<Registry>,
     ) {
         if let Some(center) = console_out.drain_center_print() {
             render_out.center_print = center;
+        }
+        let center_time = registry.read_cvar::<f32>("scr_centertime").unwrap_or(2.);
+        if !render_out.center_print.1.is_empty()
+            && (time.elapsed().as_millis() as i64)
+                > (render_out.center_print.0.timestamp + (center_time * 1000.) as i64)
+        {
+            render_out.center_print.1.clear();
         }
 
         let new_text = console_out.drain_unwritten();
@@ -1867,6 +1907,22 @@ mod systems {
 
             for (_, line) in console_out.text_chunks.iter() {
                 text.text.push_str(&*line.text);
+            }
+        }
+    }
+
+    pub fn write_center_print(
+        console_out: Res<RenderConsoleOutput>,
+        mut center_ui: Query<&mut AtlasText, With<ConsoleTextCenterPrintUi>>,
+    ) {
+        for mut text in center_ui.iter_mut() {
+            // TODO: Write only extra lines
+            if !text.text.is_empty() {
+                text.text.clear();
+            }
+
+            if !console_out.center_print.1.is_empty() {
+                text.text.push_str(&console_out.center_print.1);
             }
         }
     }

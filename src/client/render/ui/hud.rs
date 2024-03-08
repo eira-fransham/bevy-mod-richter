@@ -404,7 +404,7 @@ impl HudRenderer {
                 let id = WeaponId::from_usize(i).unwrap();
                 let pickup_time = item_pickup_time[i];
                 let delta = time - pickup_time;
-                let frame = if delta >= Duration::milliseconds(100) {
+                let frame = if delta >= Duration::try_milliseconds(100).unwrap() {
                     if stats[ClientStat::ActiveWeapon as usize] as u32
                         == ItemFlags::SHOTGUN.bits() << i
                     {

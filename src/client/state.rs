@@ -263,9 +263,9 @@ impl ClientState {
                 return;
             }
 
-            d if d > Duration::milliseconds(100) => {
-                self.msg_times[1] = self.msg_times[0] - Duration::milliseconds(100);
-                Duration::milliseconds(100)
+            d if d > Duration::try_milliseconds(100).unwrap() => {
+                self.msg_times[1] = self.msg_times[0] - Duration::try_milliseconds(100).unwrap();
+                Duration::try_milliseconds(100).unwrap()
             }
 
             d if d < Duration::zero() => {
@@ -395,7 +395,7 @@ impl ClientState {
                         init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: Some(32.0),
-                        ttl: Duration::milliseconds(100),
+                        ttl: Duration::try_milliseconds(100).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -409,7 +409,7 @@ impl ClientState {
                         init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
-                        ttl: Duration::milliseconds(1),
+                        ttl: Duration::try_milliseconds(1).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -423,7 +423,7 @@ impl ClientState {
                         init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
-                        ttl: Duration::milliseconds(1),
+                        ttl: Duration::try_milliseconds(1).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -446,7 +446,7 @@ impl ClientState {
                         init_radius: 200.0,
                         decay_rate: 0.0,
                         min_radius: None,
-                        ttl: Duration::milliseconds(10),
+                        ttl: Duration::try_milliseconds(10).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -486,7 +486,7 @@ impl ClientState {
                         init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
-                        ttl: Duration::milliseconds(1),
+                        ttl: Duration::try_milliseconds(1).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -501,7 +501,7 @@ impl ClientState {
                         init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
-                        ttl: Duration::milliseconds(1),
+                        ttl: Duration::try_milliseconds(1).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -687,7 +687,7 @@ impl ClientState {
         source: Vector3<f32>,
         kick_vars: KickVars,
     ) {
-        self.face_anim_time = self.time + Duration::milliseconds(200);
+        self.face_anim_time = self.time + Duration::try_milliseconds(200).unwrap();
 
         let dmg_factor = (armor + health).min(20) as f32 / 2.0;
         let mut cshift = self.color_shifts[ColorShiftCode::Damage as usize];
@@ -890,7 +890,7 @@ impl ClientState {
                                 init_radius: 350.0,
                                 decay_rate: 300.0,
                                 min_radius: None,
-                                ttl: Duration::milliseconds(500),
+                                ttl: Duration::try_milliseconds(500).unwrap(),
                             },
                             None,
                         );
@@ -925,7 +925,7 @@ impl ClientState {
                                 init_radius: 350.0,
                                 decay_rate: 300.0,
                                 min_radius: None,
-                                ttl: Duration::milliseconds(500),
+                                ttl: Duration::try_milliseconds(500).unwrap(),
                             },
                             None,
                         );
@@ -1012,7 +1012,7 @@ impl ClientState {
             if let Some(ref mut beam) = self.beams[i] {
                 if beam.entity_id == entity_id {
                     beam.model_id = model_id;
-                    beam.expire = time + Duration::milliseconds(200);
+                    beam.expire = time + Duration::try_milliseconds(200).unwrap();
                     beam.start = start;
                     beam.end = end;
                 }
@@ -1025,7 +1025,7 @@ impl ClientState {
             self.beams[i] = Some(Beam {
                 entity_id,
                 model_id,
-                expire: time + Duration::milliseconds(200),
+                expire: time + Duration::try_milliseconds(200).unwrap(),
                 start,
                 end,
             });

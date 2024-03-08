@@ -20,7 +20,7 @@ layout(set = 0, binding = 5) uniform DeferredUniforms {
 
 layout(location = 0) out vec4 color_attachment;
 
-const float MIN_LIGHT = 0.05;
+const float MIN_LIGHT = 0.01;
 
 vec3 dlight_origin(vec4 dlight) {
   return dlight.xyz;

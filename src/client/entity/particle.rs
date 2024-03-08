@@ -334,7 +334,7 @@ impl Particles {
             let cos_pitch = angles[1].cos();
 
             let forward = Vector3::new(cos_pitch * cos_yaw, cos_pitch * sin_yaw, -sin_pitch);
-            let ttl = Duration::milliseconds(10);
+            let ttl = Duration::try_milliseconds(10).unwrap();
 
             let origin = entity.origin + dist * math::VERTEX_NORMALS[i] + beam_length * forward;
 
@@ -406,7 +406,7 @@ impl Particles {
                 ramp.ramp[frame_skip]..=ramp.ramp[frame_skip],
                 ParticleKind::Explosion { ramp, frame_skip },
                 time,
-                Duration::seconds(5),
+                Duration::try_seconds(5).unwrap(),
                 origin,
                 &EXPLOSION_SCATTER_DISTRIBUTION,
                 &EXPLOSION_VELOCITY_DISTRIBUTION,
@@ -428,7 +428,7 @@ impl Particles {
                 has_z_velocity: true,
             },
             time,
-            Duration::milliseconds(300),
+            Duration::try_milliseconds(300).unwrap(),
             origin,
             &EXPLOSION_SCATTER_DISTRIBUTION,
             &EXPLOSION_VELOCITY_DISTRIBUTION,
@@ -441,7 +441,10 @@ impl Particles {
         // which gives a value of either 1 or 1.4 seconds.
         // (it's possible it was supposed to be 1 + (rand() & 7) * 0.05, which
         // would yield between 1 and 1.35 seconds in increments of 50ms.)
-        let ttls = [Duration::seconds(1), Duration::milliseconds(1400)];
+        let ttls = [
+            Duration::try_seconds(1).unwrap(),
+            Duration::try_milliseconds(1400).unwrap(),
+        ];
 
         for ttl in ttls.iter().cloned() {
             self.create_random_cloud(
@@ -498,7 +501,7 @@ impl Particles {
             // e.g., if the color argument is 17, picks randomly in [16, 23]
             let color = (color & !7) + COLOR_DISTRIBUTION.sample(&mut self.rng);
 
-            let ttl = Duration::milliseconds(TTL_DISTRIBUTION.sample(&mut self.rng));
+            let ttl = Duration::try_milliseconds(TTL_DISTRIBUTION.sample(&mut self.rng)).unwrap();
 
             self.insert(Particle {
                 kind: ParticleKind::Grav,
@@ -542,7 +545,8 @@ impl Particles {
                 let velocity = VELOCITY_DISTRIBUTION.sample(&mut self.rng);
 
                 let color = COLOR_DISTRIBUTION.sample(&mut self.rng);
-                let ttl = Duration::milliseconds(TTL_DISTRIBUTION.sample(&mut self.rng));
+                let ttl =
+                    Duration::try_milliseconds(TTL_DISTRIBUTION.sample(&mut self.rng)).unwrap();
 
                 self.insert(Particle {
                     kind: ParticleKind::Grav,
@@ -577,7 +581,8 @@ impl Particles {
                         + self.random_vector3(&SCATTER_DISTRIBUTION);
                     let velocity = VELOCITY_DISTRIBUTION.sample(&mut self.rng);
                     let color = COLOR_DISTRIBUTION.sample(&mut self.rng);
-                    let ttl = Duration::milliseconds(TTL_DISTRIBUTION.sample(&mut self.rng));
+                    let ttl =
+                        Duration::try_milliseconds(TTL_DISTRIBUTION.sample(&mut self.rng)).unwrap();
 
                     self.insert(Particle {
                         kind: ParticleKind::Grav,
@@ -623,7 +628,7 @@ impl Particles {
                 _ => 0.0,
             };
 
-        let ttl = Duration::seconds(2);
+        let ttl = Duration::try_seconds(2).unwrap();
 
         for step in 0..(distance / interval) as i32 {
             let frame_skip = FRAME_SKIP_DISTRIBUTION.sample(&mut self.rng);
@@ -700,7 +705,7 @@ mod tests {
                 velocity: Vector3::zero(),
                 color: 0,
                 spawned: Duration::zero(),
-                expire: Duration::seconds(*exp),
+                expire: Duration::try_seconds(*exp).unwrap(),
             });
         }
 
@@ -713,11 +718,15 @@ mod tests {
                 velocity: Vector3::zero(),
                 color: 0,
                 spawned: Duration::zero(),
-                expire: Duration::seconds(*t),
+                expire: Duration::try_seconds(*t).unwrap(),
             })
             .collect();
         let mut after_update: Vec<Particle> = Vec::new();
-        list.update(Duration::seconds(5), Duration::milliseconds(17), 10.0);
+        list.update(
+            Duration::try_seconds(5).unwrap(),
+            Duration::try_milliseconds(17).unwrap(),
+            10.0,
+        );
         after_update
             .iter()
             .zip(expected.iter())

@@ -141,7 +141,7 @@ pub const MAX_SOUNDS: usize = 4;
 pub const MIPLEVELS: usize = 4;
 
 pub fn frame_duration() -> Duration {
-    Duration::milliseconds(200)
+    Duration::try_milliseconds(200).unwrap()
 }
 
 #[derive(Debug)]

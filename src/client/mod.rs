@@ -483,7 +483,9 @@ impl Connection {
 
                     // otherwise, give the server some time to respond
                     // TODO: might make sense to make this a future or something
-                    ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::seconds(5)),
+                    ConnectionState::SignOn(_) => {
+                        BlockingMode::Timeout(Duration::try_seconds(5).unwrap())
+                    }
                 })?;
 
                 (msg, None, None)
@@ -545,7 +547,7 @@ impl Connection {
                 }
 
                 ServerCmd::CenterPrint { text } => {
-                    console_output.set_center_print(text, self.state.time);
+                    console_output.set_center_print(text, time);
                 }
 
                 ServerCmd::PlayerData(player_data) => self.state.update_player(player_data),
@@ -662,12 +664,10 @@ impl Connection {
                 ServerCmd::SetAngle { angles } => self.state.set_view_angles(angles),
 
                 ServerCmd::SetView { ent_id } => {
-                    if ent_id == 0 {
-                        // TODO: Why do we occasionally see this in demos?
-                    } else if ent_id <= 0 {
-                        Err(ClientError::InvalidViewEntity(ent_id as usize))?;
-                    } else {
+                    if ent_id > 0 {
                         self.state.set_view_entity(ent_id as usize)?;
+                    } else if ent_id < 0 {
+                        Err(ClientError::InvalidViewEntity(ent_id as usize))?;
                     }
                 }
 
@@ -1014,7 +1014,7 @@ where
         )?;
 
         // TODO: get rid of magic constant (2.5 seconds wait time for response)
-        match con_sock.recv_response(Some(Duration::milliseconds(2500))) {
+        match con_sock.recv_response(Some(Duration::try_milliseconds(2500).unwrap())) {
             Err(err) => {
                 match err {
                     // if the message is invalid, log it but don't quit

@@ -137,11 +137,11 @@ fn create_mixer() -> ReverbNode {
 
     let delay_time = 0.15;
     let delay = feedback(
-        0.7 * ((delay(delay_time) | delay(delay_time))
+        0.4 * ((delay(delay_time) | delay(delay_time))
             >> (moog_hz(1500., 0.) | moog_hz(1500., 0.))),
     );
 
-    ((multipass() & 0.3 * reverb_stereo(20.0, 2.0) & 0.2 * delay) >> limiter_stereo(0.05)).0
+    ((multipass() & 0.3 * reverb_stereo(20.0, 0.8) & 0.2 * delay) >> limiter_stereo(0.05)).0
 }
 
 pub struct RichterSoundPlugin;
