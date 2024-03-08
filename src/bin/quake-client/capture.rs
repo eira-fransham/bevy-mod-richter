@@ -90,30 +90,36 @@ fn cmd_startvideo(
         return "Already recording video".into();
     }
 
+    let (path, longest_side) = match &*args {
+        // TODO: make default path configurable
+        [] => (PathBuf::from(format!("richter-{}.mp4", Utc::now().format("%FT%H-%M-%S"))), LONGEST_SIDE),
+        [path] => (PathBuf::from(path), LONGEST_SIDE),
+        [path, resolution] => {
+         (
+             PathBuf::from(path),
+             resolution.parse::<usize>().unwrap_or(LONGEST_SIDE)
+         )
+        },
+        _ => {
+            return "Usage: startvideo [PATH] [RESOLUTION]".to_owned().into();
+        }
+    };
+
     let aspect_ratio = window
         .get_single()
         .map(|w| w.width() / w.height())
         .unwrap_or(4. / 3.);
     let (w, h) = if aspect_ratio > 1. {
-        (LONGEST_SIDE as f32, LONGEST_SIDE as f32 / aspect_ratio)
+        (longest_side as f32, longest_side as f32 / aspect_ratio)
     } else {
-        (LONGEST_SIDE as f32 * aspect_ratio, LONGEST_SIDE as f32)
+        (longest_side as f32 * aspect_ratio, longest_side as f32)
     };
     let (w, h) = (
         round_to_nearest(w as u32, 10),
         round_to_nearest(h as u32, 10),
     );
 
-    let path = match &*args {
-        // TODO: make default path configurable
-        [] => PathBuf::from(format!("richter-{}.mp4", Utc::now().format("%FT%H-%M-%S"))),
-        [path] => PathBuf::from(path),
-        _ => {
-            return "Usage: startvideo [PATH]".to_owned().into();
-        }
-    };
-
-    let out = format!("Recording a video to {}", path.display());
+    let out = format!("Recording a video ({}x{}) to {}", w, h, path.display());
 
     let (sender, receiver) = crossbeam_channel::unbounded::<VideoFrame>();
     let frame_time = Duration::from_secs_f64(FPS.recip());
