@@ -90,20 +90,22 @@ fn cmd_startvideo(
         return "Already recording video".into();
     }
 
-    let (path, longest_side) = match &*args {
+    let (mut path, longest_side) = match &*args {
         // TODO: make default path configurable
-        [] => (PathBuf::from(format!("richter-{}.mp4", Utc::now().format("%FT%H-%M-%S"))), LONGEST_SIDE),
+        [] => (
+            PathBuf::from(format!("richter-{}.mp4", Utc::now().format("%FT%H-%M-%S"))),
+            LONGEST_SIDE,
+        ),
         [path] => (PathBuf::from(path), LONGEST_SIDE),
-        [path, resolution] => {
-         (
-             PathBuf::from(path),
-             resolution.parse::<usize>().unwrap_or(LONGEST_SIDE)
-         )
-        },
+        [path, resolution] => (
+            PathBuf::from(path),
+            resolution.parse::<usize>().unwrap_or(LONGEST_SIDE),
+        ),
         _ => {
             return "Usage: startvideo [PATH] [RESOLUTION]".to_owned().into();
         }
     };
+    path.set_extension("mp4");
 
     let aspect_ratio = window
         .get_single()

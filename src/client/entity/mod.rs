@@ -27,6 +27,7 @@ use crate::common::{
     net::{EntityEffects, EntityState, EntityUpdate},
 };
 
+use bevy::ecs::component::Component;
 use cgmath::{Deg, Vector3};
 use chrono::Duration;
 
@@ -36,7 +37,16 @@ pub const MAX_BEAMS: usize = 24;
 pub const MAX_TEMP_ENTITIES: usize = 1 << 7;
 pub const MAX_STATIC_ENTITIES: usize = 128;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Component)]
+pub struct RegularEntity;
+
+#[derive(Debug, Clone, Component)]
+pub struct TempEntity;
+
+#[derive(Debug, Clone, Component)]
+pub struct StaticEntity;
+
+#[derive(Debug, Clone, Component)]
 pub struct ClientEntity {
     pub id: usize,
     pub force_link: bool,
