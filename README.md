@@ -47,9 +47,9 @@ working again once the client update code is ported to use the ECS. I haven't to
 theory it should still work or only require minor changes.
 
 I've implemented mod support outside of the original `id1` directory, although it is unlikely to work with Quake mods that
-are not primarily based on Quake 1. The only non-Quake games that are confirmed to function are the versions of Rogue and
-Hipnotic from the Quake re-release, although they don't function as well as the original game. I have run the entirety
-of the "Quake Done Quickest" demos (`qdqst`) and fixed all the outstanding bugs the prevented some levels from loading.
+are not primarily based on Quake 1. The only non-Quake games that are confirmed to function are Rogue and Hipnotic.
+I have run the entirety of the "Quake Done Quickest" demos (`qdqst`) so can confirm that the whole game can be loaded and
+rendered.
 
 A host of bugs and limitations from the original Richter were fixed. Inputs are no longer handled by an enum and you can
 define your own `+action`/`-action` commands which can be bound.

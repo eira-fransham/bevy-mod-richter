@@ -657,20 +657,6 @@ impl Connection {
                         model_precache,
                         sound_precache,
                     )?;
-
-                    // TODO: Reimplement `bf`
-                    // cmds.insert_or_replace("bf", move |_, world: &mut World| {
-                    //     if let Some(Connection { ref mut state, .. }) =
-                    //         world.get_resource_mut::<Connection>().as_deref_mut()
-                    //     {
-                    //         state.color_shifts[ColorShiftCode::Bonus as usize] = ColorShift {
-                    //             dest_color: [215, 186, 69],
-                    //             percent: 50,
-                    //         };
-                    //     }
-                    //     String::new()
-                    // })
-                    // .unwrap();
                 }
 
                 ServerCmd::SetAngle { angles } => self.state.set_view_angles(angles),

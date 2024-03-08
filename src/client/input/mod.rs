@@ -20,12 +20,11 @@ pub mod console;
 pub mod game;
 
 use bevy::{
-    app::{Plugin, Update},
-    ecs::system::Resource,
+    ecs::system::Resource, input::keyboard::KeyboardInput, prelude::*,
     render::extract_resource::ExtractResource,
 };
 
-use self::game::GameInput;
+use self::{game::GameInput, systems::InputEventReader};
 
 pub struct RichterInputPlugin;
 
@@ -33,7 +32,20 @@ impl Plugin for RichterInputPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         app.init_resource::<InputFocus>()
             .init_resource::<GameInput>()
-            .add_systems(Update, (systems::handle_input,));
+            .init_resource::<InputEventReader<KeyboardInput>>()
+            .add_systems(
+                Update,
+                (
+                    systems::game_input
+                        .run_if(resource_exists_and_equals::<InputFocus>(InputFocus::Game)),
+                    systems::console_input.run_if(resource_exists_and_equals::<InputFocus>(
+                        InputFocus::Console,
+                    )),
+                    systems::menu_input
+                        .run_if(resource_exists_and_equals::<InputFocus>(InputFocus::Menu)),
+                )
+                    .run_if(systems::window_is_focused),
+            );
 
         commands::register_commands(app);
     }
@@ -49,51 +61,48 @@ pub enum InputFocus {
 
 pub mod systems {
     use bevy::{
+        ecs::event::ManualEventReader,
         input::{keyboard::KeyboardInput, ButtonState},
         prelude::*,
         window::PrimaryWindow,
     };
 
-    use crate::{client::menu::Menu, common::console::RunCmd};
-
-    use super::{
-        game::{AnyInput, Binding, BindingValidState, GameInput, Trigger},
-        InputFocus,
+    use crate::{
+        client::menu::Menu,
+        common::console::{to_terminal_key, ConsoleInput, Registry, RunCmd},
     };
 
-    pub fn handle_input(
-        keyboard_events: EventReader<KeyboardInput>,
-        focus: Res<InputFocus>,
-        commands: Commands,
-        windows: Query<&Window, With<PrimaryWindow>>,
-        run_cmds: EventWriter<RunCmd<'static>>,
-        input: Res<GameInput>,
-        menu: Option<ResMut<Menu>>,
-    ) {
+    use super::game::{AnyInput, Binding, BindingValidState, GameInput, Trigger};
+
+    pub fn window_is_focused(windows: Query<&Window, With<PrimaryWindow>>) -> bool {
         let Ok(window) = windows.get_single() else {
-            return;
+            return false;
         };
         if !window.focused {
-            return;
+            return false;
         }
 
-        match *focus {
-            InputFocus::Game => game_input(keyboard_events, run_cmds, input),
-            InputFocus::Menu => {
-                if let Some(menu) = menu {
-                    menu_input(commands, keyboard_events, run_cmds, menu, input);
-                }
-            }
-            InputFocus::Console => console_input(keyboard_events, run_cmds, input),
+        true
+    }
+
+    #[derive(Resource)]
+    pub struct InputEventReader<E: Event> {
+        reader: ManualEventReader<E>,
+    }
+
+    impl<E: Event> Default for InputEventReader<E> {
+        fn default() -> Self {
+            Self { reader: default() }
         }
     }
 
-    fn game_input(
-        mut keyboard_events: EventReader<KeyboardInput>,
+    pub fn game_input(
+        mut reader: ResMut<InputEventReader<KeyboardInput>>,
+        keyboard_events: Res<Events<KeyboardInput>>,
         mut run_cmds: EventWriter<RunCmd<'static>>,
         input: Res<GameInput>,
     ) {
-        for key in keyboard_events.read() {
+        for key in reader.reader.read(&keyboard_events) {
             // TODO: Make this work better if we have arguments - currently we clone the arguments every time
             // TODO: Error handling
             if let Ok(Some(binding)) = input.binding(key.logical_key.clone()) {
@@ -112,19 +121,27 @@ pub mod systems {
         }
     }
 
-    fn console_input(
-        mut keyboard_events: EventReader<KeyboardInput>,
+    pub fn console_input(
+        mut reader: ResMut<InputEventReader<KeyboardInput>>,
+        keyboard_events: Res<Events<KeyboardInput>>,
+        button_state: Res<ButtonInput<KeyCode>>,
         mut run_cmds: EventWriter<RunCmd<'static>>,
         input: Res<GameInput>,
+        mut console_in: ResMut<ConsoleInput>,
+        registry: Res<Registry>,
     ) {
-        for key in keyboard_events.read() {
+        // TODO: Use a thread_local vector instead of reallocating
+        let mut keys = Vec::new();
+        for key in reader.reader.read(&keyboard_events) {
             let KeyboardInput {
-                logical_key: key,
-                state,
-                ..
+                logical_key, state, ..
             } = key;
 
-            if let Ok(Some(Binding { commands, .. })) = input.binding(key.clone()) {
+            if let Ok(Some(Binding {
+                commands,
+                valid: BindingValidState::Any,
+            })) = input.binding(logical_key.clone())
+            {
                 run_cmds.send_batch(commands.iter().filter_map(|cmd| {
                     match (cmd.0.trigger, state) {
                         (Some(Trigger::Positive) | None, ButtonState::Pressed) => Some(cmd.clone()),
@@ -136,18 +153,55 @@ pub mod systems {
                         ),
                     }
                 }));
+            } else {
+                keys.push(key);
+            }
+        }
+
+        for exec in console_in.update(
+            keys.iter()
+                .filter_map(
+                    |KeyboardInput {
+                         logical_key: key,
+                         state,
+                         ..
+                     }| {
+                        if *state == ButtonState::Pressed {
+                            Some(to_terminal_key(key, &*button_state))
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .flatten(),
+            registry.all_names(),
+        ) {
+            match exec {
+                Ok(cmd) => {
+                    let cmd = RunCmd::parse(&cmd);
+
+                    match cmd {
+                        Ok(cmd) => {
+                            run_cmds.send(cmd.into_owned());
+                        }
+                        Err(e) => warn!("Console error: {}", e),
+                    }
+                }
+                // TODO: Print these to console
+                Err(e) => warn!("Console error: {}", e),
             }
         }
     }
 
-    fn menu_input(
+    pub fn menu_input(
+        mut reader: ResMut<InputEventReader<KeyboardInput>>,
+        keyboard_events: Res<Events<KeyboardInput>>,
         mut commands: Commands,
-        mut keyboard_events: EventReader<KeyboardInput>,
         mut run_cmds: EventWriter<RunCmd<'static>>,
         mut menu: ResMut<Menu>,
         input: Res<GameInput>,
     ) {
-        for key in keyboard_events.read() {
+        for key in reader.reader.read(&keyboard_events) {
             if let Ok(Some(Binding {
                 valid: BindingValidState::Any,
                 commands,

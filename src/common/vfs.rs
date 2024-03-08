@@ -16,8 +16,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 use bevy::{prelude::*, render::extract_resource::ExtractResource};
 use std::{
-    fs::File,
-    io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
+    fs::{File, OpenOptions},
+    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom},
     iter,
     path::{Path, PathBuf},
     sync::Arc,
@@ -124,8 +124,8 @@ impl Vfs {
                 pak_path.pop();
             }
 
-            // Allow files in id1 dir to overwrite files in paks (unsure if this is correct for quake
-            // but for e.g. Source it's a nice feature)
+            // Allow files in id1 dir to overwrite files in paks (unsure if this is correct for Quake
+            // but it's a nice feature)
             vfs.add_directory(&pak_path).unwrap();
         }
 
@@ -177,6 +177,54 @@ impl Vfs {
                     if let Ok(f) = File::open(full_path) {
                         return Ok(VirtualFile::FileBacked(BufReader::new(f)));
                     }
+                }
+            }
+        }
+
+        Err(VfsError::NoSuchFile(vp.to_owned()))
+    }
+
+    pub fn write<S>(&self, virtual_path: S) -> Result<BufWriter<File>, VfsError>
+    where
+        S: AsRef<str>,
+    {
+        let vp = virtual_path.as_ref();
+
+        // iterate in reverse so later PAKs overwrite earlier ones
+        for c in self.components.iter().rev() {
+            match &**c {
+                VfsComponent::Pak(_) => {}
+                VfsComponent::Directory(path) => {
+                    let mut full_path = path.to_owned();
+                    full_path.push(vp);
+
+                    if let Ok(f) = OpenOptions::new().write(true).create(true).open(full_path) {
+                        return Ok(BufWriter::new(f));
+                    }
+                }
+            }
+        }
+
+        Err(VfsError::NoSuchFile(vp.to_owned()))
+    }
+
+    /// This is somewhat of a hack - `liner::History` doesn't (currently) have a way of saving/loading
+    /// from arbitrary `Read`/`Write` types, it needs a specific file path
+    pub fn find_writable_filename<S>(&self, virtual_path: S) -> Result<PathBuf, VfsError>
+    where
+        S: AsRef<str>,
+    {
+        let vp = virtual_path.as_ref();
+
+        // iterate in reverse so later PAKs overwrite earlier ones
+        for c in self.components.iter().rev() {
+            match &**c {
+                VfsComponent::Pak(_) => {}
+                VfsComponent::Directory(path) => {
+                    let mut full_path = path.to_owned();
+                    full_path.push(vp);
+
+                    return Ok(full_path);
                 }
             }
         }

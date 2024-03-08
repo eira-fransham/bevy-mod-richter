@@ -92,7 +92,7 @@ impl DemoServer {
                 Err(_) => {
                     warn!("{}", DemoServerError::InvalidCdTrack);
                     None
-                },
+                }
             };
 
             match track_str {
@@ -105,13 +105,13 @@ impl DemoServer {
                         t if t < -1 => {
                             warn!("{}", DemoServerError::InvalidCdTrack);
                             None
-                        },
+                        }
                         _ => Some(track as u32),
                     },
                     Err(_) => {
-                            warn!("{}", DemoServerError::InvalidCdTrack);
-                            None
-                        },
+                        warn!("{}", DemoServerError::InvalidCdTrack);
+                        None
+                    }
                 },
                 None => None,
             }

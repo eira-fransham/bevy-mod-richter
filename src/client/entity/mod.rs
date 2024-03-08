@@ -33,7 +33,7 @@ use chrono::Duration;
 // if this is changed, it must also be changed in deferred.frag
 pub const MAX_LIGHTS: usize = 32;
 pub const MAX_BEAMS: usize = 24;
-pub const MAX_TEMP_ENTITIES: usize = 64;
+pub const MAX_TEMP_ENTITIES: usize = 1 << 7;
 pub const MAX_STATIC_ENTITIES: usize = 128;
 
 #[derive(Debug, Clone)]

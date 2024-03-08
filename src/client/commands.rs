@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use crate::common::{
     console::{AliasInfo, ExecResult, RegisterCmdExt as _, Registry, RunCmd},
-    net::SignOnStage,
+    net::{ColorShift, SignOnStage},
     vfs::Vfs,
 };
 
@@ -15,7 +15,7 @@ use super::{
     input::InputFocus,
     sound::{MixerEvent, MusicSource},
     state::ClientState,
-    Connection, ConnectionKind, ConnectionState, DemoQueue,
+    ColorShiftCode, Connection, ConnectionKind, ConnectionState, DemoQueue,
 };
 
 pub fn register_commands(app: &mut App) {
@@ -166,6 +166,20 @@ pub fn register_commands(app: &mut App) {
             }
         },
         "Execute commands from a script file",
+    );
+
+    app.command(
+        "bf",
+        move |In(_): In<Box<[String]>>, conn: Option<ResMut<Connection>>| -> ExecResult {
+            if let Some(mut conn) = conn {
+                conn.state.color_shifts[ColorShiftCode::Bonus as usize] = ColorShift {
+                    dest_color: [215, 186, 69],
+                    percent: 50,
+                };
+            }
+            default()
+        },
+        "Set extra color shifts",
     );
 }
 

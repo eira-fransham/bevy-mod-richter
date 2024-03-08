@@ -35,9 +35,7 @@ use bevy::{
 };
 use chrono::Duration;
 use fxhash::FxHashMap;
-use liner::{
-    BasicCompleter, Editor, EditorContext, Emacs, Key, KeyBindings, KeyMap as _, Prompt, Tty,
-};
+use liner::{Editor, EditorContext, Emacs, Key, KeyBindings, KeyMap as _, Prompt, Tty};
 use serde::{
     de::{value::StrDeserializer, MapAccess},
     Deserializer,
@@ -57,8 +55,22 @@ pub struct RichterConsolePlugin;
 
 impl Plugin for RichterConsolePlugin {
     fn build(&self, app: &mut App) {
+        let vfs = app.world.resource::<Vfs>();
+
+        let mut history = liner::History::default();
+
+        if let Ok(history_path) = vfs.find_writable_filename("history.cfg") {
+            match history.set_file_name_and_load_history(history_path) {
+                Ok(_) => history.inc_append = true,
+                Err(e) => {
+                    warn!("Error loading history: {}", e);
+                    history = liner::History::default();
+                }
+            }
+        }
+
         app.init_resource::<ConsoleOutput>()
-            .init_resource::<ConsoleInput>()
+            .insert_resource(ConsoleInput::new(history).unwrap())
             .init_resource::<RenderConsoleOutput>()
             .init_resource::<RenderConsoleInput>()
             .init_resource::<Registry>()
@@ -76,7 +88,6 @@ impl Plugin for RichterConsolePlugin {
                 Update,
                 (
                     systems::update_render_console,
-                    systems::update_console_in,
                     systems::write_alert.run_if(resource_changed::<RenderConsoleOutput>),
                     systems::write_console_out.run_if(resource_changed::<RenderConsoleOutput>),
                     systems::write_console_in.run_if(resource_changed::<RenderConsoleInput>),
@@ -322,10 +333,7 @@ impl RegisterCmdExt for App {
         S: IntoSystem<Box<[String]>, ExecResult, M> + 'static,
         I: Into<CName>,
     {
-        let sys = self.world.register_system(run);
-        self.world
-            .resource_mut::<Registry>()
-            .command(name, sys, usage);
+        self.world.command(name, run, usage);
 
         self
     }
@@ -336,9 +344,32 @@ impl RegisterCmdExt for App {
         C: Into<Cvar>,
         I: Into<CName>,
     {
-        self.world
-            .resource_mut::<Registry>()
-            .cvar(name, value, usage);
+        self.world.cvar(name, value, usage);
+
+        self
+    }
+}
+
+impl RegisterCmdExt for World {
+    fn command<N, I, S, M>(&mut self, name: N, run: S, usage: I) -> &mut Self
+    where
+        N: Into<CName>,
+        S: IntoSystem<Box<[String]>, ExecResult, M> + 'static,
+        I: Into<CName>,
+    {
+        let sys = self.register_system(run);
+        self.resource_mut::<Registry>().command(name, sys, usage);
+
+        self
+    }
+
+    fn cvar<N, I, C>(&mut self, name: N, value: C, usage: I) -> &mut Self
+    where
+        N: Into<CName>,
+        C: Into<Cvar>,
+        I: Into<CName>,
+    {
+        self.resource_mut::<Registry>().cvar(name, value, usage);
 
         self
     }
@@ -357,7 +388,7 @@ pub enum OutputType {
 }
 
 pub struct ExecResult {
-    pub extra_commands: Box<dyn Iterator<Item = RunCmd<'static>>>,
+    pub extra_commands: Box<dyn DoubleEndedIterator<Item = RunCmd<'static>>>,
     pub output: CName,
     pub output_ty: OutputType,
 }
@@ -461,12 +492,14 @@ impl Registry {
     fn insert<N: Into<CName>>(&mut self, name: N, value: CommandImpl) {
         let name = name.into();
 
-        match self.commands.entry(name) {
+        match self.commands.entry(name.clone()) {
             Entry::Occupied(mut commands) => commands.get_mut().1.push(value),
             Entry::Vacant(entry) => {
                 entry.insert((value, vec![]));
             }
         }
+
+        self.names.insert(name);
     }
 
     /// Registers a new command with the given name.
@@ -936,7 +969,7 @@ impl Registry {
         V::deserialize(CvarDeserializer { inner: self }).ok()
     }
 
-    pub fn cmd_names(&self) -> impl Iterator<Item = &str> + '_ {
+    pub fn cmd_names(&self) -> impl Iterator<Item = &str> + Clone + '_ {
         self.all_names().filter_map(move |name| {
             self.get(name)
                 .and_then(|CommandImpl { kind, .. }| match kind {
@@ -946,7 +979,7 @@ impl Registry {
         })
     }
 
-    pub fn alias_names(&self) -> impl Iterator<Item = &str> + '_ {
+    pub fn alias_names(&self) -> impl Iterator<Item = &str> + Clone + '_ {
         self.all_names().filter_map(move |name| {
             self.get(name)
                 .and_then(|CommandImpl { kind, .. }| match kind {
@@ -956,7 +989,7 @@ impl Registry {
         })
     }
 
-    pub fn cvar_names(&self) -> impl Iterator<Item = &str> + '_ {
+    pub fn cvar_names(&self) -> impl Iterator<Item = &str> + Clone + '_ {
         self.all_names().filter_map(move |name| {
             self.get(name)
                 .and_then(|CommandImpl { kind, .. }| match kind {
@@ -966,7 +999,7 @@ impl Registry {
         })
     }
 
-    pub fn all_names(&self) -> impl Iterator<Item = &str> + '_ {
+    pub fn all_names(&self) -> impl Iterator<Item = &str> + Clone + '_ {
         self.names.iter().map(AsRef::as_ref)
     }
 }
@@ -1119,9 +1152,74 @@ impl EditorContext for ConsoleInputContext {
     }
 }
 
+pub fn to_terminal_key<'a>(
+    key: &'a bevy::input::keyboard::Key,
+    button_state: &bevy::input::ButtonInput<KeyCode>,
+) -> impl Iterator<Item = Key> + 'a {
+    use bevy::input::keyboard::Key::*;
+    use itertools::Either;
+
+    let make_char =
+        if button_state.pressed(KeyCode::AltLeft) || button_state.pressed(KeyCode::AltRight) {
+            Key::Alt
+        } else if button_state.pressed(KeyCode::ControlLeft)
+            || button_state.pressed(KeyCode::ControlRight)
+        {
+            Key::Ctrl
+        } else {
+            Key::Char
+        };
+
+    match key {
+        Character(c) => Either::Left(c.chars().map(make_char)),
+        Backspace => Either::Right(Some(Key::Backspace).into_iter()),
+        Delete => Either::Right(Some(Key::Delete).into_iter()),
+        Enter => Either::Right(Some(Key::Char('\n')).into_iter()),
+        Tab => Either::Right(Some(Key::Char('\t')).into_iter()),
+        Space => Either::Right(Some(Key::Char(' ')).into_iter()),
+        ArrowUp => Either::Right(Some(Key::Up).into_iter()),
+        ArrowDown => Either::Right(Some(Key::Down).into_iter()),
+        ArrowLeft => Either::Right(Some(Key::Left).into_iter()),
+        ArrowRight => Either::Right(Some(Key::Right).into_iter()),
+        End => Either::Right(Some(Key::End).into_iter()),
+        Home => Either::Right(Some(Key::Home).into_iter()),
+        Fn | FnLock | ScrollLock | Symbol | SymbolLock | Meta | Hyper | Shift | Control | Alt
+        | Super | Escape | CapsLock | Dead(_) => Either::Right(None.into_iter()),
+
+        // TODO
+        _ => Either::Right(None.into_iter()),
+    }
+}
+
+// TODO: This can be a tree for much better completions but we don't have enough commands to make it necessary right now
+//       The `liner` interface allocates a lot anyway, so micro-optimisation isn't necessary here.
+struct IterCompleter<I> {
+    iter: I,
+}
+
+impl<I> liner::Completer for IterCompleter<I>
+where
+    I: Iterator + Clone,
+    I::Item: AsRef<str>,
+{
+    fn completions(&mut self, start: &str) -> Vec<String> {
+        self.iter
+            .clone()
+            .filter_map(|candidate| {
+                if candidate.as_ref().starts_with(start) {
+                    Some(candidate.as_ref().to_owned())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
 #[derive(Resource)]
 pub struct ConsoleInput {
     editor: Editor<ConsoleInputContext>,
+    keymap: Emacs,
 }
 
 #[derive(Resource, Default)]
@@ -1131,7 +1229,7 @@ pub struct RenderConsoleInput {
 
 impl Default for ConsoleInput {
     fn default() -> Self {
-        Self::new().unwrap()
+        Self::new(default()).unwrap()
     }
 }
 
@@ -1141,37 +1239,62 @@ impl ConsoleInput {
     /// Constructs a new `ConsoleInput`.
     ///
     /// Initializes the text content to be empty and places the cursor at position 0.
-    pub fn new() -> io::Result<ConsoleInput> {
+    pub fn new(history: liner::History) -> io::Result<ConsoleInput> {
         let mut keymap = Emacs::new();
 
         let mut editor = Editor::new(
             Prompt::from(Self::PROMPT.to_owned()),
             None,
-            ConsoleInputContext::default(),
+            ConsoleInputContext {
+                history,
+                ..default()
+            },
         )
         .unwrap();
         // TODO: Error handling
         keymap.init(&mut editor)?;
 
-        Ok(ConsoleInput { editor })
+        Ok(ConsoleInput {
+            editor,
+            keymap: Emacs::new(),
+        })
     }
 
     /// Send characters to the inner editor
-    pub fn update<I: Iterator<Item = Key>>(&mut self, keys: I) -> io::Result<Option<String>> {
-        let mut keymap = Emacs::new();
-
-        for key in keys {
+    #[must_use]
+    pub fn update<'a, I, C>(
+        &'a mut self,
+        keys: I,
+        candidates: C,
+    ) -> impl Iterator<Item = io::Result<String>> + 'a
+    where
+        I: IntoIterator<Item = Key>,
+        I::IntoIter: 'a,
+        C: Iterator + Clone + 'a,
+        C::Item: AsRef<str>,
+    {
+        let mut completer = IterCompleter { iter: candidates };
+        keys.into_iter().filter_map(move |key| {
             // TODO: Completion
-            if keymap.handle_key(
-                key,
-                &mut self.editor,
-                &mut BasicCompleter::new(Vec::<String>::new()),
-            )? {
-                return Ok(Some(self.editor.take_exec_buffer()));
+            match self
+                .keymap
+                .handle_key(key, &mut self.editor, &mut completer)
+            {
+                Ok(true) => {
+                    let out = self.editor.take_exec_buffer();
+                    Some(
+                        self.editor
+                            .context_mut()
+                            .history
+                            .push(out.clone().into())
+                            .and_then(|()| self.editor.move_cursor_to_start_of_line())
+                            .map(|()| out),
+                    )
+                }
+                Ok(false) => None,
+                Err(e) => Some(Err(e)),
             }
-        }
-
-        Ok(None)
+        })
     }
 
     /// Returns the text currently being edited
@@ -1533,7 +1656,7 @@ mod console_text {
 }
 
 mod systems {
-    use std::{collections::VecDeque, iter};
+    use std::collections::VecDeque;
 
     use chrono::TimeDelta;
 
@@ -1768,10 +1891,6 @@ mod systems {
         }
     }
 
-    pub fn update_console_in(mut console_in: ResMut<ConsoleInput>) {
-        console_in.update(iter::empty()).unwrap();
-    }
-
     pub fn write_alert(
         settings: Res<ConsoleAlertSettings>,
         time: Res<Time<Virtual>>,
@@ -1865,7 +1984,7 @@ mod systems {
                                         output,
                                         output_ty,
                                     }) => {
-                                        for command in extra_commands {
+                                        for command in extra_commands.rev() {
                                             commands.push_front(command);
                                         }
 

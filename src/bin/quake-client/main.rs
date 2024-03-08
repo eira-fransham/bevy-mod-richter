@@ -20,6 +20,7 @@
 
 #![recursion_limit = "256"]
 
+mod capture;
 mod menu;
 
 use std::{fs, net::SocketAddr, path::PathBuf, process::ExitCode};
@@ -33,11 +34,11 @@ use bevy::{
     },
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
-    render::{camera::Exposure, view::screenshot::ScreenshotManager},
-    window::{PresentMode, PrimaryWindow, WindowTheme},
+    render::camera::Exposure,
+    window::{PresentMode, WindowTheme},
 };
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
-use chrono::Utc;
+use capture::CapturePlugin;
 use richter::{
     client::RichterPlugin,
     common::console::{ExecResult, RegisterCmdExt as _, RunCmd},
@@ -66,34 +67,6 @@ struct Opt {
 
     #[structopt(long)]
     game: Option<String>,
-}
-
-/// Implements the "screenshot" command.
-///
-/// This function returns a boxed closure which sets the `screenshot_path`
-/// argument to `Some` when called.
-pub fn cmd_screenshot(
-    In(args): In<Box<[String]>>,
-    window: Query<Entity, With<PrimaryWindow>>,
-    mut screenshot_manager: ResMut<ScreenshotManager>,
-) -> ExecResult {
-    let Ok(window) = window.get_single() else {
-        return "Can't find primary window".to_owned().into();
-    };
-
-    let path = match &*args {
-        // TODO: make default path configurable
-        [] => PathBuf::from(format!("richter-{}.png", Utc::now().format("%FT%H-%M-%S"))),
-        [path] => PathBuf::from(path),
-        _ => {
-            return "Usage: screenshot [PATH]".to_owned().into();
-        }
-    };
-
-    match screenshot_manager.save_screenshot_to_disk(window, path) {
-        Ok(()) => default(),
-        Err(e) => format!("Couldn't take screenshot: {}", e).into(),
-    }
 }
 
 const EXPOSURE_CURVE: &[[f32; 2]] = &[[-16.; 2], [0.; 2]];
@@ -307,11 +280,7 @@ fn main() -> ExitCode {
         game: opt.game.clone(),
         main_menu: menu::build_main_menu,
     })
-    .command(
-        "screenshot",
-        cmd_screenshot,
-        "Take a screenshot of the primary window",
-    )
+    .add_plugins(CapturePlugin)
     .command(
         "r_exposure",
         cmd_exposure,

@@ -361,7 +361,15 @@ impl AnyInput {
 }
 
 impl From<Key> for AnyInput {
-    fn from(value: Key) -> Self {
+    fn from(mut value: Key) -> Self {
+        // TODO: This means we allocate for every single input, unless the compiler can elide the
+        //       allocation.
+        if let Key::Character(k) = &mut value {
+            if k.chars().any(|c| c.is_ascii_lowercase()) {
+                *k = k.to_ascii_uppercase().into();
+            }
+        }
+
         Self::Keyboard(value)
     }
 }
@@ -496,7 +504,7 @@ impl Display for Binding<'_> {
     }
 }
 
-#[derive(Clone, Resource)]
+#[derive(Debug, Clone, Resource)]
 pub struct GameInput {
     pub bindings: FxHashMap<AnyInput, Binding<'static>>,
     pub mouse_delta: (f64, f64),
