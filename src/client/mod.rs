@@ -42,7 +42,7 @@ use std::{collections::VecDeque, io::BufReader, net::ToSocketAddrs, path::PathBu
 use crate::{
     client::{
         demo::{DemoServer, DemoServerError},
-        entity::{ClientEntity, MAX_STATIC_ENTITIES},
+        entity::{particle::CreateParticle, ClientEntity, MAX_STATIC_ENTITIES},
         sound::{MusicPlayer, StartSound, StartStaticSound, StopSound},
         state::{ClientState, PlayerInfo},
         trace::{TraceEntity, TraceFrame},
@@ -174,6 +174,8 @@ where
                             error!("Error handling frame: {}", e);
                         }
                     }),
+                    systems::update_camera.run_if(resource_exists::<Connection>),
+                    state::systems::update_particles,
                 ),
             )
             .add_plugins(RichterConsolePlugin)
@@ -463,6 +465,7 @@ impl Connection {
 
     fn parse_server_msg(
         &mut self,
+        mut commands: Commands,
         mut state: Mut<ConnectionState>,
         time: Time,
         vfs: &Vfs,
@@ -483,7 +486,9 @@ impl Connection {
 
                     // otherwise, give the server some time to respond
                     // TODO: might make sense to make this a future or something
-                    ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::seconds(5)),
+                    ConnectionState::SignOn(_) => {
+                        BlockingMode::Timeout(Duration::try_seconds(5).unwrap())
+                    }
                 })?;
 
                 (msg, None, None)
@@ -610,20 +615,23 @@ impl Connection {
                 } => {
                     match count {
                         // if count is 255, this is an explosion
-                        255 => self
-                            .state
-                            .particles
-                            .create_explosion(self.state.time, origin),
+                        255 => commands
+                            .spawn(Transform::from_translation(
+                                [origin.x, origin.y, origin.z].into(),
+                            ))
+                            .add(CreateParticle::Explosion),
 
                         // otherwise it's an impact
-                        _ => self.state.particles.create_projectile_impact(
-                            self.state.time,
-                            origin,
-                            direction,
-                            color,
-                            count as usize,
-                        ),
-                    }
+                        _ => commands
+                            .spawn(Transform::from_translation(
+                                [origin.x, origin.y, origin.z].into(),
+                            ))
+                            .add(CreateParticle::ProjectileImpact {
+                                direction: [direction.x, direction.y, direction.z].into(),
+                                color,
+                                count: count.into(),
+                            }),
+                    };
                 }
 
                 ServerCmd::Print { text } => console_output.print_alert(text, time),
@@ -779,7 +787,8 @@ impl Connection {
                 }
 
                 ServerCmd::TempEntity { temp_entity } => {
-                    self.state.spawn_temp_entity(mixer_events, &temp_entity)
+                    self.state
+                        .spawn_temp_entity(commands.reborrow(), mixer_events, &temp_entity)
                 }
 
                 ServerCmd::StuffText { text: _text } => {} // todo!("Reimplement console"), // console.append_text(text),
@@ -904,6 +913,7 @@ impl Connection {
     fn frame(
         &mut self,
         mut state: Mut<ConnectionState>,
+        mut commands: Commands,
         time: Time,
         vfs: &Vfs,
         asset_server: &AssetServer,
@@ -914,7 +924,6 @@ impl Connection {
         roll_vars: RollVars,
         bob_vars: BobVars,
         cl_nolerp: bool,
-        sv_gravity: f32,
     ) -> Result<ConnectionStatus, ClientError> {
         let frame_time = Duration::from_std(time.delta()).unwrap();
         debug!("frame time: {}ms", frame_time.num_milliseconds());
@@ -923,6 +932,7 @@ impl Connection {
         // request the next message from the demo server.
         self.state.advance_time(frame_time);
         match self.parse_server_msg(
+            commands.reborrow(),
             state.reborrow(),
             time,
             vfs,
@@ -939,18 +949,13 @@ impl Connection {
         self.state.update_interp_ratio(cl_nolerp);
 
         // interpolate entity data and spawn particle effects, lights
-        self.state.update_entities()?;
+        self.state.update_entities(commands)?;
 
         // update temp entities (lightning, etc.)
         self.state.update_temp_entities()?;
 
         // remove expired lights
         self.state.lights.update(self.state.time);
-
-        // apply particle physics and remove expired particles
-        self.state
-            .particles
-            .update(self.state.time, frame_time, sv_gravity);
 
         if let ConnectionKind::Server {
             ref mut qsock,
@@ -1014,7 +1019,7 @@ where
         )?;
 
         // TODO: get rid of magic constant (2.5 seconds wait time for response)
-        match con_sock.recv_response(Some(Duration::milliseconds(2500))) {
+        match con_sock.recv_response(Some(Duration::try_milliseconds(2500).unwrap())) {
             Err(err) => {
                 match err {
                     // if the message is invalid, log it but don't quit
@@ -1081,7 +1086,10 @@ pub struct Impulse(pub u8);
 mod systems {
     use serde::Deserialize;
 
-    use self::common::console::Registry;
+    use self::{
+        common::{console::Registry, math::Angles},
+        entity::particle::Particle,
+    };
 
     use super::*;
 
@@ -1147,10 +1155,7 @@ mod systems {
         mut conn: Option<ResMut<Connection>>,
         mut conn_state: ResMut<ConnectionState>,
     ) -> Result<(), ClientError> {
-        let NetworkVars {
-            disable_lerp,
-            gravity,
-        } = cvars
+        let NetworkVars { disable_lerp, .. } = cvars
             .read_cvars()
             .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
         let idle_vars: IdleVars = cvars
@@ -1169,6 +1174,7 @@ mod systems {
         let status = match conn.as_deref_mut() {
             Some(ref mut conn) => conn.frame(
                 conn_state.reborrow(),
+                commands.reborrow(),
                 time.as_generic(),
                 &*vfs,
                 &*asset_server,
@@ -1179,7 +1185,6 @@ mod systems {
                 roll_vars,
                 bob_vars,
                 disable_lerp != 0.,
-                gravity,
             )?,
             None => ConnectionStatus::Disconnect,
         };
@@ -1269,12 +1274,66 @@ mod systems {
 
     pub fn set_resolution(
         window: Query<&Window, With<PrimaryWindow>>,
-        mut target_resource: ResMut<RenderResolution>,
+        mut target_res: ResMut<RenderResolution>,
     ) {
         let res = &window.single().resolution;
         let res = RenderResolution(res.width() as _, res.height() as _);
-        if *target_resource != res {
-            *target_resource = res;
+        if *target_res != res {
+            *target_res = res;
+        }
+    }
+
+    pub fn update_camera(
+        conn: Res<Connection>,
+        registry: Res<Registry>,
+        mut cameras: Query<(&mut Transform, &mut PerspectiveProjection), With<Camera3d>>,
+    ) {
+        let Ok(fov) = registry.read_cvar::<f32>("fov") else {
+            return;
+        };
+
+        let origin = conn.state.view.final_origin();
+        // if client is fully connected, draw world
+        let angles = match conn.kind {
+            ConnectionKind::Demo(..) => {
+                conn.state
+                    .entities
+                    .get(conn.state.view.entity_id())
+                    .map(|e| Angles {
+                        pitch: e.angles.x,
+                        roll: e.angles.z,
+                        yaw: e.angles.y,
+                    })
+            }
+            _ => None,
+        }
+        .unwrap_or(conn.state.view.final_angles());
+
+        let rotation = Quat::from_euler(EulerRot::XZY, angles.pitch.0, angles.roll.0, angles.yaw.0);
+
+        for (mut transform, mut perspective) in &mut cameras {
+            transform.rotation = rotation;
+            transform.translation = Vec3 {
+                x: origin.x,
+                y: origin.y,
+                z: origin.z,
+            };
+            perspective.fov = fov;
+        }
+    }
+
+    pub fn update_particles(
+        mut particles: Query<(&mut Transform, &mut Particle)>,
+        time: Res<Time<Virtual>>,
+        cvars: Res<Registry>,
+    ) {
+        for (transform, mut p) in &mut particles {
+            p.update(
+                transform,
+                Duration::from_std(time.elapsed()).unwrap(),
+                Duration::from_std(time.delta()).unwrap(),
+                cvars.read_cvar::<f32>("sv_gravity").unwrap_or(800.),
+            );
         }
     }
 }

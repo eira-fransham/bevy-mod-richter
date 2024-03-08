@@ -22,19 +22,25 @@ use std::cell::RefCell;
 
 use bevy::{
     core_pipeline::prepass::ViewPrepassTextures,
+    ecs::{query::QueryState, world::FromWorld},
     render::{
         render_graph::{RenderLabel, ViewNode},
         render_resource::{RenderPassColorAttachment, Texture, TextureView},
         renderer::RenderQueue,
         view::ViewTarget,
     },
+    transform::components::GlobalTransform,
 };
 use bumpalo::Bump;
 use cgmath::Deg;
+use wgpu::hal::metal::QuerySet;
 
-use crate::client::render::{
-    world::WorldRenderer, GraphicsState, RenderConnectionKind, RenderResolution, RenderState,
-    RenderVars,
+use crate::client::{
+    entity::particle::Particle,
+    render::{
+        world::WorldRenderer, GraphicsState, RenderConnectionKind, RenderResolution, RenderState,
+        RenderVars,
+    },
 };
 
 /// Intermediate object that can generate `RenderPassDescriptor`s.
@@ -88,11 +94,24 @@ pub trait RenderTargetResolve: RenderTarget {
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 pub struct InitPassLabel;
 
-#[derive(Default)]
-pub struct InitPass;
+pub struct InitPass {
+    particle_query: QueryState<(&'static GlobalTransform, &'static Particle)>,
+}
+
+impl FromWorld for InitPass {
+    fn from_world(world: &mut bevy::prelude::World) -> Self {
+        Self {
+            particle_query: QueryState::from_world(world),
+        }
+    }
+}
 
 impl ViewNode for InitPass {
     type ViewQuery = (&'static ViewTarget, &'static ViewPrepassTextures);
+
+    fn update(&mut self, world: &mut bevy::prelude::World) {
+        self.particle_query.update_archetypes(world);
+    }
 
     fn run<'w>(
         &self,
@@ -137,7 +156,7 @@ impl ViewNode for InitPass {
                     state: ref cl_state,
                     kind,
                 }),
-                Some(world),
+                Some(world_render),
             ) = (render_state, world_renderer)
             {
                 // if client is fully connected, draw world
@@ -153,7 +172,7 @@ impl ViewNode for InitPass {
                 // initial render pass
                 {
                     let lightstyle_values = cl_state.lightstyle_values();
-                    world.update_uniform_buffers(
+                    world_render.update_uniform_buffers(
                         gfx_state,
                         queue,
                         &camera,
@@ -188,14 +207,14 @@ impl ViewNode for InitPass {
                         occlusion_query_set: Default::default(),
                     });
 
-                    world.render_pass(
+                    world_render.render_pass(
                         gfx_state,
                         &mut init_pass,
                         bump,
                         &camera,
                         cl_state.time(),
                         cl_state.iter_visible_entities(),
-                        cl_state.iter_particles(),
+                        self.particle_query.iter_manual(world),
                         if cl_state.intermission().is_none() {
                             Some(cl_state.viewmodel_id())
                         } else {

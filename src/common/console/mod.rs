@@ -75,7 +75,6 @@ impl Plugin for RichterConsolePlugin {
             .init_resource::<RenderConsoleInput>()
             .init_resource::<Registry>()
             .init_resource::<ConsoleAlertSettings>()
-            .init_resource::<Gfx>()
             .add_event::<RunCmd<'static>>()
             .add_systems(
                 Startup,
@@ -1499,89 +1498,6 @@ struct ConsoleTextOutputUi;
 #[derive(Component)]
 struct ConsoleTextInputUi;
 
-#[derive(Debug, Clone)]
-pub struct Conchars {
-    pub image: UiImage,
-    pub layout: Handle<TextureAtlasLayout>,
-    pub glyph_size: (Val, Val),
-}
-
-#[derive(Resource)]
-pub struct Gfx {
-    pub palette: Palette,
-    pub conchars: Conchars,
-    pub wad: Wad,
-}
-
-impl FromWorld for Gfx {
-    fn from_world(world: &mut World) -> Self {
-        // TODO: Deduplicate with glyph.rs
-        const GLYPH_WIDTH: usize = 8;
-        const GLYPH_HEIGHT: usize = 8;
-        const GLYPH_COLS: usize = 16;
-        const GLYPH_ROWS: usize = 16;
-        const SCALE: f32 = 2.;
-
-        let vfs = world.resource::<Vfs>();
-        let assets = world.resource::<AssetServer>();
-
-        let palette = Palette::load(&vfs, "gfx/palette.lmp");
-        let wad = Wad::load(vfs.open("gfx.wad").unwrap()).unwrap();
-
-        let conchars = wad.open_conchars().unwrap();
-
-        // TODO: validate conchars dimensions
-
-        let indices = conchars
-            .indices()
-            .iter()
-            .map(|i| if *i == 0 { 0xFF } else { *i })
-            .collect::<Vec<_>>();
-
-        let layout = assets.add(TextureAtlasLayout::from_grid(
-            Vec2::new(GLYPH_WIDTH as _, GLYPH_HEIGHT as _),
-            GLYPH_COLS,
-            GLYPH_ROWS,
-            None,
-            None,
-        ));
-
-        let image = {
-            let (diffuse_data, _) = palette.translate(&indices);
-            let diffuse_data = TextureData::Diffuse(diffuse_data);
-
-            assets
-                .add(Image::new(
-                    Extent3d {
-                        width: conchars.width(),
-                        height: conchars.height(),
-                        depth_or_array_layers: 1,
-                    },
-                    TextureDimension::D2,
-                    diffuse_data.data().to_owned(),
-                    diffuse_data.format(),
-                    RenderAssetUsages::RENDER_WORLD,
-                ))
-                .into()
-        };
-
-        let conchars = Conchars {
-            image,
-            layout,
-            glyph_size: (
-                Val::Px(GLYPH_WIDTH as _) * SCALE,
-                Val::Px(GLYPH_HEIGHT as _) * SCALE,
-            ),
-        };
-
-        Self {
-            palette,
-            wad,
-            conchars,
-        }
-    }
-}
-
 // TODO: Extract this so that it can be used elsewhere in the UI
 mod console_text {
     use super::*;
@@ -1665,7 +1581,10 @@ mod systems {
     use super::*;
 
     pub mod startup {
-        use crate::common::wad::QPic;
+        use crate::{
+            client::render::{Conchars, Gfx},
+            common::wad::QPic,
+        };
 
         use super::*;
 

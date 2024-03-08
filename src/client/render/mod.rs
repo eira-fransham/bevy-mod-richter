@@ -65,7 +65,9 @@ use bevy::{
     },
     prelude::*,
     render::{
+        extract_component::ExtractComponentPlugin,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
+        render_asset::RenderAssetUsages,
         render_graph::{RenderGraphApp, ViewNodeRunner},
         render_resource::{BindGroup, BindGroupLayout, Buffer, Sampler, Texture, TextureView},
         renderer::{RenderDevice, RenderQueue},
@@ -83,6 +85,7 @@ pub use postprocess::PostProcessRenderer;
 use serde::{Deserialize, Serialize};
 pub use target::{PreferredFormat, RenderTarget, RenderTargetResolve};
 pub use ui::{hud::HudState, UiRenderer, UiState};
+use wgpu::{Extent3d, TextureDimension, TextureFormat};
 pub use world::{
     deferred::{DeferredRenderer, DeferredUniforms, PointLight},
     Camera,
@@ -97,9 +100,11 @@ use std::{
 
 use crate::{
     client::{
+        entity::particle::Particle,
         input::InputFocus,
         menu::Menu,
         render::{
+            systems::update_particle_materials,
             ui::{glyph::GlyphPipeline, quad::QuadPipeline},
             uniform::DynamicUniformBuffer,
             world::{
@@ -152,7 +157,11 @@ impl Plugin for RichterRenderPlugin {
             ExtractResourcePlugin::<ConnectionState>::default(),
             // TODO: Do all loading on the main thread (this is currently just for the palette and gfx wad)
             ExtractResourcePlugin::<Vfs>::default(),
-        ));
+            ExtractComponentPlugin::<Particle>::default(),
+        ))
+        .add_systems(Update, update_particle_materials)
+        .init_resource::<Gfx>()
+        .init_resource::<ParticleAssets>();
 
         register_cvars(app);
 
@@ -768,6 +777,155 @@ impl ExtractResource for RenderVars {
     }
 }
 
+#[derive(Resource, Clone)]
+pub struct ParticleAssets {
+    pub mesh: Handle<Mesh>,
+    pub texture: Handle<Image>,
+    pub materials: [Handle<StandardMaterial>; 256],
+}
+
+impl FromWorld for ParticleAssets {
+    fn from_world(world: &mut World) -> Self {
+        const X: u8 = 255;
+
+        #[rustfmt::skip]
+        const PARTICLE_TEXTURE_PIXELS: [u8; 64] = [
+            0, 0, X, X, X, X, 0, 0,
+            0, X, X, X, X, X, X, 0,
+            X, X, X, X, X, X, X, X,
+            X, X, X, X, X, X, X, X,
+            X, X, X, X, X, X, X, X,
+            X, X, X, X, X, X, X, X,
+            0, X, X, X, X, X, X, 0,
+            0, 0, X, X, X, X, 0, 0,
+        ];
+
+        let particle_tex = Image::new(
+            Extent3d {
+                width: 8,
+                height: 8,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            Vec::from(PARTICLE_TEXTURE_PIXELS),
+            TextureFormat::R8Unorm,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+
+        let texture = world.resource_mut::<Assets<Image>>().add(particle_tex);
+        let materials = {
+            let Gfx { palette, .. } = world.resource::<Gfx>();
+            let palette = palette.clone();
+
+            let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+            palette.rgb.map(|rgb| {
+                let [red, green, blue] = rgb.map(|x| x as f32 / 255.);
+
+                materials.add(StandardMaterial {
+                    emissive: Color::Rgba {
+                        red,
+                        green,
+                        blue,
+                        alpha: 1.,
+                    },
+                    emissive_texture: Some(texture.clone()),
+                    ..default()
+                })
+            })
+        };
+        let mesh = world.resource_mut::<Assets<Mesh>>().add(Circle::new(1.));
+
+        Self {
+            mesh,
+            texture,
+            materials,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Conchars {
+    pub image: UiImage,
+    pub layout: Handle<TextureAtlasLayout>,
+    pub glyph_size: (Val, Val),
+}
+
+#[derive(Resource)]
+pub struct Gfx {
+    pub palette: Palette,
+    pub conchars: Conchars,
+    pub wad: Wad,
+}
+
+impl FromWorld for Gfx {
+    fn from_world(world: &mut World) -> Self {
+        // TODO: Deduplicate with glyph.rs
+        const GLYPH_WIDTH: usize = 8;
+        const GLYPH_HEIGHT: usize = 8;
+        const GLYPH_COLS: usize = 16;
+        const GLYPH_ROWS: usize = 16;
+        const SCALE: f32 = 2.;
+
+        let vfs = world.resource::<Vfs>();
+        let assets = world.resource::<AssetServer>();
+
+        let palette = Palette::load(&vfs, "gfx/palette.lmp");
+        let wad = Wad::load(vfs.open("gfx.wad").unwrap()).unwrap();
+
+        let conchars = wad.open_conchars().unwrap();
+
+        // TODO: validate conchars dimensions
+
+        let indices = conchars
+            .indices()
+            .iter()
+            .map(|i| if *i == 0 { 0xFF } else { *i })
+            .collect::<Vec<_>>();
+
+        let layout = assets.add(TextureAtlasLayout::from_grid(
+            Vec2::new(GLYPH_WIDTH as _, GLYPH_HEIGHT as _),
+            GLYPH_COLS,
+            GLYPH_ROWS,
+            None,
+            None,
+        ));
+
+        let image = {
+            let (diffuse_data, _) = palette.translate(&indices);
+            let diffuse_data = TextureData::Diffuse(diffuse_data);
+
+            assets
+                .add(Image::new(
+                    Extent3d {
+                        width: conchars.width(),
+                        height: conchars.height(),
+                        depth_or_array_layers: 1,
+                    },
+                    TextureDimension::D2,
+                    diffuse_data.data().to_owned(),
+                    diffuse_data.format(),
+                    RenderAssetUsages::RENDER_WORLD,
+                ))
+                .into()
+        };
+
+        let conchars = Conchars {
+            image,
+            layout,
+            glyph_size: (
+                Val::Px(GLYPH_WIDTH as _) * SCALE,
+                Val::Px(GLYPH_HEIGHT as _) * SCALE,
+            ),
+        };
+
+        Self {
+            palette,
+            wad,
+            conchars,
+        }
+    }
+}
+
 mod systems {
     use super::*;
 
@@ -803,6 +961,15 @@ mod systems {
     ) {
         if let Some(state) = state.as_ref() {
             commands.insert_resource(UiRenderer::new(&*state, &*vfs, &*device, &*queue, &*menu));
+        }
+    }
+
+    pub fn update_particle_materials(
+        particle_assets: Res<ParticleAssets>,
+        mut particles: Query<(&mut Handle<StandardMaterial>, &Particle), Changed<Particle>>,
+    ) {
+        for (mut mat, particle) in &mut particles {
+            *mat = particle_assets.materials[particle.color as usize].clone();
         }
     }
 }

@@ -13,11 +13,14 @@ use crate::{
     common::{math::Angles, util::any_slice_as_bytes},
 };
 
-use bevy::render::{
-    render_resource::{
-        BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
+use bevy::{
+    render::{
+        render_resource::{
+            BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
+        },
+        renderer::{RenderDevice, RenderQueue},
     },
-    renderer::{RenderDevice, RenderQueue},
+    transform::components::GlobalTransform,
 };
 use bumpalo::Bump;
 use cgmath::Matrix4;
@@ -183,7 +186,7 @@ impl ParticlePipeline {
         camera: &Camera,
         particles: P,
     ) where
-        P: Iterator<Item = &'b Particle>,
+        P: Iterator<Item = (&'b GlobalTransform, &'b Particle)>,
     {
         use PushConstantUpdate::*;
 
@@ -200,8 +203,8 @@ impl ParticlePipeline {
         }
         .mat4_wgpu();
 
-        for particle in particles {
-            let q_origin = particle.origin();
+        for (transform, particle) in particles {
+            let q_origin = transform.translation();
             let translation =
                 Matrix4::from_translation([-q_origin.y, q_origin.z, -q_origin.x].into());
             Self::set_push_constants(

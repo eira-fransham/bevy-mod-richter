@@ -114,6 +114,7 @@ impl UiMaterial for PalettedMaterial {
     }
 }
 
+#[derive(Clone)]
 pub struct Palette {
     pub rgb: [[u8; 3]; 256],
 }

@@ -478,7 +478,7 @@ impl WorldRenderer {
         viewmodel_id: Option<usize>,
     ) where
         E: Iterator<Item = &'a ClientEntity>,
-        P: Iterator<Item = &'a Particle>,
+        P: Iterator<Item = (&'a GlobalTransform, &'a Particle)>,
     {
         use PushConstantUpdate::*;
         info!("Updating uniform buffers");

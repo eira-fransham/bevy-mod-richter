@@ -4,7 +4,7 @@ use super::{sound::MixerEvent, view::BobVars};
 use crate::{
     client::{
         entity::{
-            particle::{Particle, Particles, TrailKind},
+            particle::{CreateParticle, Particle, TrailKind},
             Beam, ClientEntity, Light, LightDesc, Lights, MAX_BEAMS, MAX_TEMP_ENTITIES,
         },
         render::Camera,
@@ -86,8 +86,6 @@ pub struct ClientState {
     pub lights: Lights,
     // lightning bolts and grappling hook cable
     pub beams: [Option<Beam>; MAX_BEAMS],
-    // particle effects
-    pub particles: Particles,
 
     // visible entities, rebuilt per-frame
     pub visible_entity_ids: im::Vector<usize>,
@@ -139,7 +137,6 @@ impl ClientState {
             temp_entity_map: default(),
             lights: Lights::new(),
             beams: [None; MAX_BEAMS],
-            particles: Particles::new(),
             visible_entity_ids: default(),
             light_styles: default(),
             stats: [0; MAX_STATS],
@@ -309,7 +306,7 @@ impl ClientState {
     ///   message
     /// - Spawning particles on entities with particle effects
     /// - Spawning dynamic lights on entities with lighting effects
-    pub fn update_entities(&mut self) -> Result<(), ClientError> {
+    pub fn update_entities(&mut self, mut commands: Commands) -> Result<(), ClientError> {
         lazy_static! {
             static ref MFLASH_DIMLIGHT_DISTRIBUTION: Uniform<f32> = Uniform::new(200.0, 232.0);
             static ref BRIGHTLIGHT_DISTRIBUTION: Uniform<f32> = Uniform::new(400.0, 432.0);
@@ -381,7 +378,10 @@ impl ClientState {
             }
 
             if ent.effects.contains(EntityEffects::BRIGHT_FIELD) {
-                self.particles.create_entity_field(self.time, ent);
+                let origin = [ent.origin.x, ent.origin.y, ent.origin.z].into();
+                commands
+                    .spawn(Transform::from_translation(origin))
+                    .add(CreateParticle::EntityField);
             }
 
             // TODO: factor out EntityEffects->LightDesc mapping
@@ -394,7 +394,7 @@ impl ClientState {
                         init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: Some(32.0),
-                        ttl: Duration::milliseconds(100),
+                        ttl: Duration::try_milliseconds(100).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -408,7 +408,7 @@ impl ClientState {
                         init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
-                        ttl: Duration::milliseconds(1),
+                        ttl: Duration::try_milliseconds(1).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -422,7 +422,7 @@ impl ClientState {
                         init_radius: MFLASH_DIMLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
-                        ttl: Duration::milliseconds(1),
+                        ttl: Duration::try_milliseconds(1).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -445,7 +445,7 @@ impl ClientState {
                         init_radius: 200.0,
                         decay_rate: 0.0,
                         min_radius: None,
-                        ttl: Duration::milliseconds(10),
+                        ttl: Duration::try_milliseconds(10).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -460,8 +460,15 @@ impl ClientState {
 
             // if the entity leaves a trail, generate it
             if let Some(kind) = trail_kind {
-                self.particles
-                    .create_trail(self.time, prev_origin, ent.origin, kind, false);
+                let origin = [prev_origin.x, prev_origin.y, prev_origin.z].into();
+                let end = Vec3::from([ent.origin.x, ent.origin.y, ent.origin.z]);
+                commands
+                    .spawn(Transform::from_translation(origin))
+                    .add(CreateParticle::Trail {
+                        end: end - origin,
+                        kind,
+                        sparse: false,
+                    });
             }
 
             // don't render the player model
@@ -485,7 +492,7 @@ impl ClientState {
                         init_radius: BRIGHTLIGHT_DISTRIBUTION.sample(&mut self.rng),
                         decay_rate: 0.0,
                         min_radius: None,
-                        ttl: Duration::milliseconds(1),
+                        ttl: Duration::try_milliseconds(1).unwrap(),
                     },
                     ent.light_id,
                 ));
@@ -821,6 +828,7 @@ impl ClientState {
 
     pub fn spawn_temp_entity(
         &mut self,
+        mut commands: Commands,
         events: &mut EventWriter<MixerEvent>,
         temp_entity: &TempEntity,
     ) {
@@ -860,13 +868,15 @@ impl ClientState {
                             _ => unreachable!(),
                         };
 
-                        self.particles.create_projectile_impact(
-                            self.time,
-                            *origin,
-                            Vector3::zero(),
-                            color,
-                            count,
-                        );
+                        commands
+                            .spawn(Transform::from_translation(
+                                [origin.x, origin.y, origin.z].into(),
+                            ))
+                            .add(CreateParticle::ProjectileImpact {
+                                direction: Vec3::ZERO,
+                                color,
+                                count: count as _,
+                            });
 
                         if let Some(snd) = sound {
                             events.send(MixerEvent::StartSound(StartSound {
@@ -881,7 +891,12 @@ impl ClientState {
                     }
 
                     Explosion => {
-                        self.particles.create_explosion(self.time, *origin);
+                        commands
+                            .spawn(Transform::from_translation(
+                                [origin.x, origin.y, origin.z].into(),
+                            ))
+                            .add(CreateParticle::Explosion);
+
                         self.lights.insert(
                             self.time,
                             LightDesc {
@@ -889,7 +904,7 @@ impl ClientState {
                                 init_radius: 350.0,
                                 decay_rate: 300.0,
                                 min_radius: None,
-                                ttl: Duration::milliseconds(500),
+                                ttl: Duration::try_milliseconds(500).unwrap(),
                             },
                             None,
                         );
@@ -912,11 +927,14 @@ impl ClientState {
                         color_start,
                         color_len,
                     } => {
-                        self.particles.create_color_explosion(
-                            self.time,
-                            *origin,
-                            (*color_start)..=(*color_start + *color_len - 1),
-                        );
+                        commands
+                            .spawn(Transform::from_translation(
+                                [origin.x, origin.y, origin.z].into(),
+                            ))
+                            .add(CreateParticle::ColorExplosion {
+                                colors: (*color_start)..=(*color_start + *color_len - 1),
+                            });
+
                         self.lights.insert(
                             self.time,
                             LightDesc {
@@ -924,7 +942,7 @@ impl ClientState {
                                 init_radius: 350.0,
                                 decay_rate: 300.0,
                                 min_radius: None,
-                                ttl: Duration::milliseconds(500),
+                                ttl: Duration::try_milliseconds(500).unwrap(),
                             },
                             None,
                         );
@@ -944,7 +962,11 @@ impl ClientState {
                     }
 
                     TarExplosion => {
-                        self.particles.create_spawn_explosion(self.time, *origin);
+                        commands
+                            .spawn(Transform::from_translation(
+                                [origin.x, origin.y, origin.z].into(),
+                            ))
+                            .add(CreateParticle::SpawnExplosion);
 
                         events.send(MixerEvent::StartSound(StartSound {
                             src: self
@@ -960,8 +982,21 @@ impl ClientState {
                         }));
                     }
 
-                    LavaSplash => self.particles.create_lava_splash(self.time, *origin),
-                    Teleport => self.particles.create_teleporter_warp(self.time, *origin),
+                    LavaSplash => {
+                        commands
+                            .spawn(Transform::from_translation(
+                                [origin.x, origin.y, origin.z].into(),
+                            ))
+                            .add(CreateParticle::LavaSplash);
+                    }
+
+                    Teleport => {
+                        commands
+                            .spawn(Transform::from_translation(
+                                [origin.x, origin.y, origin.z].into(),
+                            ))
+                            .add(CreateParticle::TeleporterWarp);
+                    }
                 }
             }
 
@@ -1011,7 +1046,7 @@ impl ClientState {
             if let Some(ref mut beam) = self.beams[i] {
                 if beam.entity_id == entity_id {
                     beam.model_id = model_id;
-                    beam.expire = time + Duration::milliseconds(200);
+                    beam.expire = time + Duration::try_milliseconds(200).unwrap();
                     beam.start = start;
                     beam.end = end;
                 }
@@ -1024,7 +1059,7 @@ impl ClientState {
             self.beams[i] = Some(Beam {
                 entity_id,
                 model_id,
-                expire: time + Duration::milliseconds(200),
+                expire: time + Duration::try_milliseconds(200).unwrap(),
                 start,
                 end,
             });
@@ -1202,10 +1237,6 @@ impl ClientState {
             .chain(self.static_entities.iter())
     }
 
-    pub fn iter_particles(&self) -> impl Iterator<Item = &Particle> {
-        self.particles.iter()
-    }
-
     pub fn iter_lights(&self) -> impl Iterator<Item = &Light> {
         self.lights.iter()
     }
@@ -1339,4 +1370,45 @@ impl ClientState {
     }
 }
 
-pub mod systems {}
+pub mod systems {
+    use chrono::TimeDelta;
+
+    use super::*;
+
+    struct Rng(SmallRng);
+
+    impl Default for Rng {
+        fn default() -> Self {
+            Self(SmallRng::from_entropy())
+        }
+    }
+
+    pub fn update_entities() {}
+
+    pub fn update_temp_entities() {}
+
+    /// Update all live particles, deleting any that are expired.
+    ///
+    /// Particles are updated with [Particle::update]. That
+    /// function's return value indicates whether the particle should be retained
+    /// or not.
+    pub fn update_particles(
+        mut commands: Commands,
+        registry: Res<Registry>,
+        time: Res<Time<Virtual>>,
+        mut particles: Query<(Entity, &mut Transform, &mut Particle)>,
+    ) {
+        let gravity = registry.read_cvar::<f32>("sv_gravity").unwrap_or(800.);
+
+        for (id, transform, mut particle) in &mut particles {
+            if !particle.update(
+                transform,
+                TimeDelta::from_std(time.elapsed()).unwrap(),
+                TimeDelta::from_std(time.delta()).unwrap(),
+                gravity,
+            ) {
+                commands.entity(id).despawn();
+            }
+        }
+    }
+}
