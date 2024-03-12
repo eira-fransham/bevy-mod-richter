@@ -1242,11 +1242,9 @@ mod systems {
                     Maintain => unreachable!(),
                 };
 
-                match new_conn {
-                    Some(_) => *focus = InputFocus::Game,
-
-                    // don't allow game focus when disconnected
-                    None => *focus = InputFocus::Console,
+                // don't allow game focus when disconnected
+                if new_conn.is_none() {
+                    *focus = InputFocus::Console;
                 }
 
                 match (conn, new_conn) {
@@ -1278,115 +1276,6 @@ mod systems {
         let res = RenderResolution(res.width() as _, res.height() as _);
         if *target_resource != res {
             *target_resource = res;
-        }
-    }
-
-    // TODO: Continue working on this, implement server as a sub-app
-    pub fn receive_message(
-        mut conn: ResMut<Connection>,
-        state: Res<ConnectionState>,
-        vfs: Res<Vfs>,
-        mut console: ResMut<ConsoleOutput>,
-        time: Res<Time<Virtual>>,
-        mut demo_queue: ResMut<DemoQueue>,
-        mut server_events: EventWriter<ServerCmd>,
-    ) {
-        let time = Duration::from_std(time.elapsed()).unwrap();
-        let (time, msg_time) = (conn.state.time, conn.state.msg_times[0]);
-        let opt = 'match_kind: {
-            match conn.kind {
-                ConnectionKind::Server { ref mut qsock, .. } => {
-                    // TODO: Error handling
-                    let msg = qsock
-                        .recv_msg(match &*state {
-                            // if we're in the game, don't block waiting for messages
-                            ConnectionState::Connected(_) => BlockingMode::NonBlocking,
-
-                            // otherwise, give the server some time to respond
-                            // TODO: might make sense to make this a future or something
-                            ConnectionState::SignOn(_) => {
-                                BlockingMode::Timeout(Duration::try_seconds(5).unwrap())
-                            }
-                        })
-                        .unwrap();
-
-                    Some((msg, None, None))
-                }
-
-                ConnectionKind::Demo(ref mut demo_srv) => {
-                    // only get the next update once we've made it all the way to
-                    // the previous one
-                    if time >= msg_time {
-                        let msg_view = match demo_srv.next() {
-                            Some(v) => v,
-                            None => break 'match_kind None,
-                        };
-
-                        let mut view_angles = msg_view.view_angles();
-                        // invert entity angles to get the camera direction right.
-                        // yaw is already inverted.
-                        view_angles.z = -view_angles.z;
-
-                        // TODO: we shouldn't have to copy the message here
-                        Some((
-                            msg_view.message().to_owned(),
-                            Some(view_angles),
-                            demo_srv.track_override(),
-                        ))
-                    } else {
-                        Some((Vec::new(), None, demo_srv.track_override()))
-                    }
-                }
-            }
-        };
-
-        match opt {
-            Some((msg, demo_view_angles, track_override)) => {
-                let mut reader = BufReader::new(msg.as_slice());
-
-                while let Ok(Some(cmd)) = ServerCmd::deserialize(&mut reader) {
-                    server_events.send(cmd);
-                }
-            }
-            None => {
-                // Prevent the demo queue borrow from lasting too long
-                let next = {
-                    let next = demo_queue.0.pop_front();
-
-                    next
-                };
-
-                if let Some(demo) = next {
-                    // TODO: Extract this to a separate function so we don't duplicate the logic to find the demos in different places
-                    let mut demo_file = match vfs
-                        .open(format!("{}.dem", demo))
-                        .or_else(|_| vfs.open(format!("demos/{}.dem", demo)))
-                    {
-                        Ok(f) => f,
-                        Err(e) => {
-                            // log the error, dump the demo queue and disconnect
-                            console.println(format!("{}", e), time);
-                            demo_queue.0.clear();
-                            return;
-                        }
-                    };
-
-                    match DemoServer::new(&mut demo_file) {
-                        Ok(d) => {
-                            *conn = Connection {
-                                kind: ConnectionKind::Demo(d),
-                                state: ClientState::new(),
-                            };
-                        }
-                        Err(e) => {
-                            console.println(format!("{}", e), time);
-                            demo_queue.0.clear();
-                        }
-                    }
-                }
-
-                return;
-            }
         }
     }
 }

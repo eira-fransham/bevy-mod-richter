@@ -20,7 +20,7 @@
 
 use std::{
     collections::{hash_map::Entry, BTreeMap, BTreeSet},
-    fmt, io, mem,
+    fmt::{self, Write}, io, mem,
     str::FromStr,
 };
 
@@ -119,7 +119,8 @@ impl Plugin for RichterConsolePlugin {
                     }
                 },
                 "Run the commands from the input arguments",
-            ).command(
+            )
+            .command(
                 "help",
                 |In(mut args): In<Box<[String]>>, registry: Res<Registry>| -> ExecResult {
                     if args.is_empty() {
@@ -144,7 +145,41 @@ impl Plugin for RichterConsolePlugin {
 
                     out.into()
                 },
-                "Run the commands from the input arguments",
+                "Show help text for a command or cvar",
+            )
+            .command(
+                "reset",
+                |In(args): In<Box<[String]>>, mut registry: ResMut<Registry>| -> ExecResult {
+                    if args.is_empty() {
+                        return  "usage: reset [CVAR...]".into();
+                    }
+
+                    let mut out = String::new();
+
+                    for arg in &*args {
+                        if let Err(e) = registry.reset_cvar(arg) {
+                            writeln!(&mut out, "{}", e).unwrap();
+                        }
+                    }
+
+                    out.into()
+                },
+                "Reset a cvar to its default value",
+            ).command(
+                "resetall",
+                |In(args): In<Box<[String]>>, mut registry: ResMut<Registry>| -> ExecResult {
+                    if !args.is_empty() {
+                        return  "usage: resetall".into();
+                    }
+
+                    let all_cvars = registry.cvar_names().map(ToString::to_string).collect::<Vec<_>>();
+                    for arg in all_cvars {
+                        registry.reset_cvar(arg).unwrap();
+                    }
+
+                    default()
+                },
+                "Reset a cvar to its default value",
             );
     }
 }

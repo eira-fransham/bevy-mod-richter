@@ -244,7 +244,6 @@ fn main() -> ExitCode {
                     maximize: false,
                     ..Default::default()
                 },
-                visible: false,
                 ..Default::default()
             }),
             ..Default::default()
