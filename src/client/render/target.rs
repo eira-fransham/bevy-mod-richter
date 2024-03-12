@@ -24,8 +24,9 @@ use bevy::{
     core_pipeline::{core_3d::Camera3d, prepass::ViewPrepassTextures},
     render::{
         render_graph::{RenderLabel, ViewNode},
+        render_phase::TrackedRenderPass,
         render_resource::{RenderPassColorAttachment, Texture, TextureView},
-        renderer::RenderQueue,
+        renderer::{RenderDevice, RenderQueue},
         view::ViewTarget,
     },
 };
@@ -107,6 +108,7 @@ impl ViewNode for InitPass {
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let gfx_state = world.resource::<GraphicsState>();
         let queue = world.resource::<RenderQueue>();
+        let device = world.resource::<RenderDevice>();
         let render_state = world.get_resource::<RenderState>();
         let world_renderer = world.get_resource::<WorldRenderer>();
         let &RenderResolution(width, height) = world.resource::<RenderResolution>();
@@ -167,30 +169,35 @@ impl ViewNode for InitPass {
                         render_vars,
                     );
 
-                    let mut init_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("Initial pass"),
-                        color_attachments: &[
-                            Some(wgpu::RenderPassColorAttachment {
-                                view: diffuse_target,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                    store: wgpu::StoreOp::Store,
+                    let mut init_pass = TrackedRenderPass::new(
+                        device,
+                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("Initial pass"),
+                            color_attachments: &[
+                                Some(wgpu::RenderPassColorAttachment {
+                                    view: diffuse_target,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                }),
+                                Some(normal_target),
+                            ],
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &depth_target,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
                                 },
-                            }),
-                            Some(normal_target),
-                        ],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &depth_target,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
+                            ),
+                            timestamp_writes: Default::default(),
+                            occlusion_query_set: Default::default(),
                         }),
-                        timestamp_writes: Default::default(),
-                        occlusion_query_set: Default::default(),
-                    });
+                    );
 
                     world.render_pass(
                         gfx_state,

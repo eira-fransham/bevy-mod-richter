@@ -23,6 +23,7 @@ use std::mem::size_of;
 use bevy::{
     prelude::*,
     render::{
+        render_phase::TrackedRenderPass,
         render_resource::{BindGroupLayout, RenderPipeline},
         renderer::RenderDevice,
     },
@@ -335,7 +336,7 @@ pub trait Pipeline {
     /// constant range is updated. If the value is `None`, the corresponding push
     /// constant range is cleared.
     fn set_push_constants<'a>(
-        pass: &mut wgpu::RenderPass<'a>,
+        pass: &mut TrackedRenderPass<'a>,
         vpc: PushConstantUpdate<&'a Self::VertexPushConstants>,
         spc: PushConstantUpdate<&'a Self::SharedPushConstants>,
         fpc: PushConstantUpdate<&'a Self::FragmentPushConstants>,

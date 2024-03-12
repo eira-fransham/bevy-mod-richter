@@ -14,6 +14,7 @@ use crate::{
 };
 
 use bevy::render::{
+    render_phase::TrackedRenderPass,
     render_resource::{
         BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
     },
@@ -178,7 +179,7 @@ impl ParticlePipeline {
 
     pub fn record_draw<'a, 'b, P>(
         &'a self,
-        pass: &mut wgpu::RenderPass<'a>,
+        pass: &mut TrackedRenderPass<'a>,
         bump: &'a Bump,
         camera: &Camera,
         particles: P,
@@ -187,8 +188,8 @@ impl ParticlePipeline {
     {
         use PushConstantUpdate::*;
 
-        pass.set_pipeline(self.pipeline());
-        pass.set_vertex_buffer(0, *self.vertex_buffer.slice(..));
+        pass.set_render_pipeline(self.pipeline());
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_bind_group(0, &self.bind_group, &[]);
 
         // face toward camera

@@ -49,6 +49,7 @@ use beef::Cow;
 use bevy::{
     prelude::*,
     render::{
+        render_phase::TrackedRenderPass,
         render_resource::{
             BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
         },
@@ -785,14 +786,14 @@ impl BrushRenderer {
     pub fn record_draw<'a>(
         &'a self,
         state: &'a GraphicsState,
-        pass: &mut wgpu::RenderPass<'a>,
+        pass: &mut TrackedRenderPass<'a>,
         bump: &'a Bump,
         time: Duration,
         camera: &Camera,
         frame_id: usize,
     ) {
-        pass.set_pipeline(state.brush_pipeline().pipeline());
-        pass.set_vertex_buffer(0, *self.vertex_buffer.slice(..));
+        pass.set_render_pipeline(state.brush_pipeline().pipeline());
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
         // if this is a worldmodel, mark faces to be drawn
         if let Some(ref leaves) = self.leaves {
@@ -806,7 +807,7 @@ impl BrushRenderer {
                     let face = &self.faces[self.bsp_data.facelist()[facelist_id]];
 
                     // TODO: frustum culling
-                    face.draw_flag.store(true, Ordering::Relaxed);
+                    face.draw_flag.store(true, Ordering::SeqCst);
                 }
             }
         }
@@ -844,7 +845,7 @@ impl BrushRenderer {
             };
 
             pass.set_bind_group(
-                BindGroupLayoutId::PerTexture as u32,
+                BindGroupLayoutId::PerTexture as usize,
                 &self.per_texture_bind_groups[bind_group_id],
                 &[],
             );
@@ -853,12 +854,12 @@ impl BrushRenderer {
                 let face = &self.faces[*face_id];
 
                 // only skip the face if we have visibility data but it's not marked
-                if self.leaves.is_some() && !face.draw_flag.swap(false, Ordering::Relaxed) {
+                if self.leaves.is_some() && !face.draw_flag.swap(false, Ordering::SeqCst) {
                     continue;
                 }
 
                 pass.set_bind_group(
-                    BindGroupLayoutId::PerFace as u32,
+                    BindGroupLayoutId::PerFace as usize,
                     &self.per_face_bind_groups[*face_id],
                     &[],
                 );

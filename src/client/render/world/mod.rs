@@ -35,6 +35,7 @@ use bevy::{
     core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT,
     prelude::*,
     render::{
+        render_phase::TrackedRenderPass,
         render_resource::BindGroupLayoutEntry,
         renderer::{RenderDevice, RenderQueue},
     },
@@ -469,7 +470,7 @@ impl WorldRenderer {
     pub fn render_pass<'a, E, P>(
         &'a self,
         state: &'a GraphicsState,
-        pass: &mut wgpu::RenderPass<'a>,
+        pass: &mut TrackedRenderPass<'a>,
         bump: &'a Bump,
         camera: &Camera,
         time: Duration,
@@ -484,14 +485,14 @@ impl WorldRenderer {
         info!("Updating uniform buffers");
 
         pass.set_bind_group(
-            BindGroupLayoutId::PerFrame as u32,
+            BindGroupLayoutId::PerFrame as usize,
             &state.world_bind_groups()[BindGroupLayoutId::PerFrame as usize],
             &[],
         );
 
         // draw world
         info!("Drawing world");
-        pass.set_pipeline(state.brush_pipeline().pipeline());
+        pass.set_render_pipeline(state.brush_pipeline().pipeline());
         BrushPipeline::set_push_constants(
             pass,
             Update(bump.alloc(brush::VertexPushConstants {
@@ -502,7 +503,7 @@ impl WorldRenderer {
             Clear,
         );
         pass.set_bind_group(
-            BindGroupLayoutId::PerEntity as u32,
+            BindGroupLayoutId::PerEntity as usize,
             &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
             &[self.world_uniform_block.offset()],
         );
@@ -514,14 +515,14 @@ impl WorldRenderer {
         for (ent_pos, ent) in entities.enumerate() {
             if let Some(uniforms) = self.entity_uniform_blocks.read().get(ent_pos) {
                 pass.set_bind_group(
-                    BindGroupLayoutId::PerEntity as u32,
+                    BindGroupLayoutId::PerEntity as usize,
                     &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
                     &[uniforms.offset()],
                 );
 
                 match self.renderer_for_entity(&ent) {
                     EntityRenderer::Brush(ref bmodel) => {
-                        pass.set_pipeline(state.brush_pipeline().pipeline());
+                        pass.set_render_pipeline(state.brush_pipeline().pipeline());
                         BrushPipeline::set_push_constants(
                             pass,
                             Update(bump.alloc(brush::VertexPushConstants {
@@ -534,7 +535,7 @@ impl WorldRenderer {
                         bmodel.record_draw(state, pass, &bump, time, camera, ent.frame_id);
                     }
                     EntityRenderer::Alias(ref alias) => {
-                        pass.set_pipeline(state.alias_pipeline().pipeline());
+                        pass.set_render_pipeline(state.alias_pipeline().pipeline());
                         AliasPipeline::set_push_constants(
                             pass,
                             Update(bump.alloc(alias::VertexPushConstants {
@@ -547,7 +548,7 @@ impl WorldRenderer {
                         alias.record_draw(state, pass, time, ent.frame_id(), ent.skin_id());
                     }
                     EntityRenderer::Sprite(ref sprite) => {
-                        pass.set_pipeline(state.sprite_pipeline().pipeline());
+                        pass.set_render_pipeline(state.sprite_pipeline().pipeline());
                         SpritePipeline::set_push_constants(pass, Clear, Clear, Clear);
                         sprite.record_draw(state, pass, ent.frame_id(), time);
                     }
@@ -567,7 +568,7 @@ impl WorldRenderer {
             * Matrix4::from_angle_z(cam_angles.roll);
         match viewmodel_id.and_then(|vid| self.entity_renderers.get(vid)) {
             Some(EntityRenderer::Alias(ref alias)) => {
-                pass.set_pipeline(state.alias_pipeline().pipeline());
+                pass.set_render_pipeline(state.alias_pipeline().pipeline());
                 AliasPipeline::set_push_constants(
                     pass,
                     Update(bump.alloc(alias::VertexPushConstants {

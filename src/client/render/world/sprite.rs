@@ -14,6 +14,7 @@ use crate::{
 use bevy::{
     ecs::component::Component,
     render::{
+        render_phase::TrackedRenderPass,
         render_resource::{
             BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
             TextureView,
@@ -299,7 +300,7 @@ impl Frame {
         }
     }
 
-    fn animate(&self, time: Duration) -> &wgpu::BindGroup {
+    fn animate(&self, time: Duration) -> &BindGroup {
         match self {
             Frame::Static { bind_group, .. } => &bind_group,
             Frame::Animated {
@@ -349,14 +350,14 @@ impl SpriteRenderer {
     pub fn record_draw<'a>(
         &'a self,
         state: &'a GraphicsState,
-        pass: &mut wgpu::RenderPass<'a>,
+        pass: &mut TrackedRenderPass<'a>,
         frame_id: usize,
         time: Duration,
     ) {
-        pass.set_pipeline(state.sprite_pipeline().pipeline());
-        pass.set_vertex_buffer(0, *state.sprite_pipeline().vertex_buffer().slice(..));
+        pass.set_render_pipeline(state.sprite_pipeline().pipeline());
+        pass.set_vertex_buffer(0, state.sprite_pipeline().vertex_buffer().slice(..));
         pass.set_bind_group(
-            BindGroupLayoutId::PerTexture as u32,
+            BindGroupLayoutId::PerTexture as usize,
             self.frames[frame_id].animate(time),
             &[],
         );

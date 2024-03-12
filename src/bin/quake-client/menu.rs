@@ -19,13 +19,15 @@
 // SOFTWARE.
 
 use bevy::{
-    app::AppExit,
-    ecs::{
-        event::Events,
-        system::{In, ResMut},
-    },
+    app::AppExit, ecs::{
+        event::{EventWriter, Events},
+        system::{In, Query, ResMut},
+    }, log::warn, render::view::ColorGrading
 };
-use richter::client::menu::{Menu, MenuBodyView, MenuBuilder, MenuView};
+use richter::{
+    client::menu::{Menu, MenuBodyView, MenuBuilder, MenuView},
+    common::console::{Registry, RunCmd},
+};
 
 use failure::Error;
 
@@ -101,7 +103,8 @@ fn build_menu_mp_join_tcp(builder: MenuBuilder) -> Result<Menu, Error> {
     //  [                        ] // text field
     Ok(builder
         // .add
-        .add_toggle("placeholder", false, |In(_): In<bool>| ())
+        // TODO
+        .add_toggle("placeholder", false, "scratch1")
         .build(MenuView {
             draw_plaque: true,
             title_path: "gfx/p_multi.lmp".into(),
@@ -112,18 +115,42 @@ fn build_menu_mp_join_tcp(builder: MenuBuilder) -> Result<Menu, Error> {
 fn build_menu_options(builder: MenuBuilder) -> Result<Menu, Error> {
     Ok(builder
         // .add_submenu("Customize controls", unimplemented!())
-        .add_action("Go to console", || ())
-        .add_action("Reset to defaults", || ())
-        .add_slider("Render scale", 0.25, 1.0, 2, 0, |In(_): In<f32>| ())?
-        .add_slider("Screen Size", 0.0, 1.0, 10, 9, |In(_): In<f32>| ())?
-        .add_slider("Brightness", 0.0, 1.0, 10, 9, |In(_): In<f32>| ())?
-        .add_slider("Mouse Speed", 0.0, 1.0, 10, 9, |In(_): In<f32>| ())?
-        .add_slider("CD music volume", 0.0, 1.0, 10, 9, |In(_): In<f32>| ())?
-        .add_slider("Sound volume", 0.0, 1.0, 10, 9, |In(_): In<f32>| ())?
-        .add_toggle("Always run", true, |In(_): In<bool>| ())
-        .add_toggle("Invert mouse", false, |In(_): In<bool>| ())
-        .add_toggle("Lookspring", false, |In(_): In<bool>| ())
-        .add_toggle("Lookstrafe", false, |In(_): In<bool>| ())
+        .add_action(
+            "Go to console",
+            |mut commands: EventWriter<RunCmd<'static>>| {
+                commands.send("toggleconsole".into());
+            },
+        )
+        // TODO
+        .add_action("Reset to defaults", |mut cvars: ResMut<Registry>| {
+            for cvar in [
+                "r_renderscale",
+                "r_screensize",
+                "r_gamma",
+                "cl_sensitivity",
+                "bgmvolume",
+                "volume",
+                "cl_alwaysrun",
+                "invertmouse",
+                "lookspring",
+                "lookstrafe",
+            ] {
+                if let Err(e) = cvars.reset_cvar(cvar) {
+                    warn!("{}", e);
+                }
+            }
+        })
+        .add_slider("Render scale", 0.25, 1.0, 2, 0, "r_renderscale")?
+        .add_slider("Screen Size", 0.0, 1.0, 10, 9, "r_screensize")?
+        .add_slider("Brightness", 3., 0.1, 10, 5, "r_gamma")?
+        .add_slider("Mouse Speed", 0.0, 1.0, 10, 9, "cl_sensitivity")?
+        .add_slider("CD music volume", 0.0, 1.0, 10, 9, "bgmvolume")?
+        .add_slider("Sound volume", 0.0, 1.0, 10, 9, "volume")?
+        // TODO
+        .add_toggle("Always run", true, "cl_alwaysrun")
+        .add_toggle("Invert mouse", false, "invertmouse")
+        .add_toggle("Lookspring", false, "lookspring")
+        .add_toggle("Lookstrafe", false, "lookstrafe")
         // .add_submenu("Video options", unimplemented!())
         .build(MenuView {
             draw_plaque: true,

@@ -66,10 +66,11 @@ pub mod systems {
         prelude::*,
         window::PrimaryWindow,
     };
+    use chrono::TimeDelta;
 
     use crate::{
         client::menu::Menu,
-        common::console::{to_terminal_key, ConsoleInput, Registry, RunCmd},
+        common::console::{to_terminal_key, ConsoleInput, ConsoleOutput, Registry, RunCmd},
     };
 
     use super::game::{AnyInput, Binding, BindingValidState, GameInput, Trigger};
@@ -128,6 +129,8 @@ pub mod systems {
         mut run_cmds: EventWriter<RunCmd<'static>>,
         input: Res<GameInput>,
         mut console_in: ResMut<ConsoleInput>,
+        mut console_out: ResMut<ConsoleOutput>,
+        time: Res<Time<Virtual>>,
         registry: Res<Registry>,
     ) {
         // TODO: Use a thread_local vector instead of reallocating
@@ -158,6 +161,8 @@ pub mod systems {
             }
         }
 
+        let elapsed = TimeDelta::from_std(time.elapsed()).unwrap();
+
         for exec in console_in.update(
             keys.iter()
                 .filter_map(
@@ -178,6 +183,9 @@ pub mod systems {
         ) {
             match exec {
                 Ok(cmd) => {
+                    console_out.print(ConsoleInput::PROMPT, elapsed);
+                    console_out.println(&cmd, elapsed);
+
                     let cmd = RunCmd::parse(&cmd);
 
                     match cmd {
@@ -239,21 +247,18 @@ pub mod systems {
                     menu.back().expect("TODO: Handle menu failures");
                 }
             } else if input == AnyInput::ENTER {
-                if let Some(func) = menu.activate().expect("TODO: Handle menu failures") {
-                    func(&mut commands);
-                }
+                let func = menu.activate().expect("TODO: Handle menu failures");
+                func(commands.reborrow());
             } else if input == AnyInput::UPARROW {
                 menu.prev().expect("TODO: Handle menu failures");
             } else if input == AnyInput::DOWNARROW {
                 menu.next().expect("TODO: Handle menu failures");
             } else if input == AnyInput::LEFTARROW {
-                if let Some(func) = menu.left().expect("TODO: Handle menu failures") {
-                    func(&mut commands);
-                }
+                let func = menu.left().expect("TODO: Handle menu failures");
+                func(commands.reborrow());
             } else if input == AnyInput::RIGHTARROW {
-                if let Some(func) = menu.right().expect("TODO: Handle menu failures") {
-                    func(&mut commands);
-                }
+                let func = menu.right().expect("TODO: Handle menu failures");
+                func(commands.reborrow());
             }
         }
     }

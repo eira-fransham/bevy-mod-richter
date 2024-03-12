@@ -38,7 +38,7 @@ pub const MAX_TEMP_ENTITIES: usize = 1 << 7;
 pub const MAX_STATIC_ENTITIES: usize = 128;
 
 #[derive(Debug, Clone, Component)]
-pub struct RegularEntity;
+pub struct DynamicEntity;
 
 #[derive(Debug, Clone, Component)]
 pub struct TempEntity;
@@ -47,6 +47,9 @@ pub struct TempEntity;
 pub struct StaticEntity;
 
 #[derive(Debug, Clone, Component)]
+pub struct ViewEntity;
+
+#[derive(Debug, Clone)]
 pub struct ClientEntity {
     pub id: usize,
     pub force_link: bool,
@@ -58,6 +61,23 @@ pub struct ClientEntity {
     pub angles: Vector3<Deg<f32>>,
     pub model_id: usize,
     model_changed: bool,
+    pub frame_id: usize,
+    pub skin_id: usize,
+    pub colormap: Option<u8>,
+    pub sync_base: Duration,
+    pub effects: EntityEffects,
+    pub light_id: Option<usize>,
+    // vis_frame: usize,
+}
+
+#[derive(Debug, Clone, Component)]
+pub struct QuakeEntity {
+    pub id: usize,
+    pub force_link: bool,
+    pub baseline: EntityState,
+    pub msg_time: Duration,
+    pub msg_origins: [Vector3<f32>; 2],
+    pub msg_angles: [Vector3<Deg<f32>>; 2],
     pub frame_id: usize,
     pub skin_id: usize,
     pub colormap: Option<u8>,

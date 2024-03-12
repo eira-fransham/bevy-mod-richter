@@ -14,6 +14,7 @@ use crate::{
 use bevy::{
     ecs::component::Component,
     render::{
+        render_phase::TrackedRenderPass,
         render_resource::{
             BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline,
         },
@@ -227,7 +228,7 @@ enum Texture {
 }
 
 impl Texture {
-    fn animate(&self, time: Duration) -> &wgpu::BindGroup {
+    fn animate(&self, time: Duration) -> &BindGroup {
         match self {
             Texture::Static { ref bind_group, .. } => bind_group,
             Texture::Animated {
@@ -452,7 +453,7 @@ impl AliasRenderer {
     pub fn record_draw<'a>(
         &'a self,
         state: &'a GraphicsState,
-        pass: &mut wgpu::RenderPass<'a>,
+        pass: &mut TrackedRenderPass<'a>,
         time: Duration,
         keyframe_id: usize,
         texture_id: usize,
@@ -464,12 +465,12 @@ impl AliasRenderer {
             return;
         };
 
-        pass.set_pipeline(state.alias_pipeline().pipeline());
-        pass.set_vertex_buffer(0, *self.vertex_buffer.slice(..));
+        pass.set_render_pipeline(state.alias_pipeline().pipeline());
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
         let tex = tex.animate(time);
 
-        pass.set_bind_group(BindGroupLayoutId::PerTexture as u32, tex, &[]);
+        pass.set_bind_group(BindGroupLayoutId::PerTexture as usize, tex, &[]);
         pass.draw(keyframe, 0..1)
     }
 }

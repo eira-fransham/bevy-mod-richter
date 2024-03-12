@@ -22,6 +22,7 @@ use crate::{
             self, BeamEntityKind, ButtonFlags, ColorShift, EntityEffects, ItemFlags, PlayerData,
             PointEntityKind, TempEntity,
         },
+        util::QString,
         vfs::Vfs,
     },
 };
@@ -50,7 +51,7 @@ const CACHED_SOUND_NAMES: &[&str] = &[
 
 #[derive(Clone)]
 pub struct PlayerInfo {
-    pub name: imstr::ImString,
+    pub name: QString,
     pub frags: i32,
     pub colors: PlayerColor,
     // translations: [u8; VID_GRADES],
@@ -78,11 +79,8 @@ pub struct ClientState {
 
     // entities and entity-like things
     pub entities: im::Vector<ClientEntity>,
-    pub entity_map: im::HashMap<usize, Entity>,
     pub static_entities: im::Vector<ClientEntity>,
-    pub static_entity_map: im::HashMap<usize, Entity>,
     pub temp_entities: im::Vector<ClientEntity>,
-    pub temp_entity_map: im::HashMap<usize, Entity>,
     // dynamic point lights
     pub lights: Lights,
     // lightning bolts and grappling hook cable
@@ -123,6 +121,11 @@ pub struct ClientState {
     pub completion_time: Option<Duration>,
 }
 
+#[derive(Resource)]
+pub struct ClientInfo {
+    pub entity_map: FxHashMap<usize, Entity>,
+}
+
 impl ClientState {
     // TODO: add parameter for number of player slots and reserve them in entity list
     pub fn new() -> ClientState {
@@ -133,11 +136,8 @@ impl ClientState {
             sounds: default(),
             cached_sounds: default(),
             entities: default(),
-            entity_map: default(),
             static_entities: default(),
-            static_entity_map: default(),
             temp_entities: default(),
-            temp_entity_map: default(),
             lights: Lights::new(),
             beams: [None; MAX_BEAMS],
             particles: Particles::new(),
@@ -329,7 +329,7 @@ impl ClientState {
         self.visible_entity_ids.clear();
 
         // NOTE that we start at entity 1 since we don't need to link the world entity
-        for (ent_id, ent) in self.entities.iter_mut().enumerate().skip(1) {
+        for ent in self.entities.iter_mut().skip(1) {
             if ent.model_id == 0 {
                 // nothing in this entity slot
                 continue;
@@ -344,7 +344,7 @@ impl ClientState {
             let prev_origin = ent.origin;
 
             if ent.force_link {
-                trace!("force link on entity {}", ent_id);
+                trace!("force link on entity {}", ent.id);
                 ent.origin = ent.msg_origins[0];
                 ent.angles = ent.msg_angles[0];
             } else {
@@ -466,9 +466,9 @@ impl ClientState {
             }
 
             // don't render the player model
-            if self.view.entity_id() != ent_id {
+            if self.view.entity_id() != ent.id {
                 // mark entity for rendering
-                self.visible_entity_ids.push_back(ent_id);
+                self.visible_entity_ids.push_back(ent.id);
             }
 
             // enable lerp for next frame

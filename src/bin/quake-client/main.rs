@@ -41,8 +41,9 @@ use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
 use capture::CapturePlugin;
 use richter::{
     client::RichterPlugin,
-    common::console::{ExecResult, RegisterCmdExt as _, RunCmd},
+    common::console::{Cvar, ExecResult, RegisterCmdExt as _, RunCmd},
 };
+use serde_lexpr::Value;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -71,117 +72,69 @@ struct Opt {
 
 const EXPOSURE_CURVE: &[[f32; 2]] = &[[-16., -8.], [0., 0.]];
 
-fn cmd_exposure(In(args): In<Box<[String]>>, mut exposures: Query<&mut Exposure>) -> ExecResult {
-    let exposure = match &*args {
-        [] => {
-            let exposures = exposures
-                .iter()
-                .map(|exposure| -> Cow<str> {
-                    match exposure.ev100 {
-                        Exposure::EV100_INDOOR => "indoor ".into(),
-                        Exposure::EV100_BLENDER => "blender ".into(),
-                        Exposure::EV100_SUNLIGHT => "sunlight ".into(),
-                        Exposure::EV100_OVERCAST => "overcast ".into(),
-                        _ => format!("{} ", exposure.ev100).into(),
-                    }
-                })
-                .collect::<String>();
-            return format!("exposure: {}", exposures).into();
-        }
-        [new_exposure] => new_exposure,
-        _ => return "usage: r_exposure [indoor|blender|sunlight|overcast|EV100]".into(),
-    };
-
-    let new_exposure = match &**exposure {
-        "indoor" => Exposure::INDOOR,
-        "blender" => Exposure::BLENDER,
-        "sunlight" => Exposure::SUNLIGHT,
-        "overcast" => Exposure::OVERCAST,
-        _ => match exposure.parse() {
+fn cmd_exposure(In(val): In<Value>, mut exposures: Query<&mut Exposure>) {
+    let new_exposure = match val.as_str() {
+        Some("indoor") => Exposure::INDOOR,
+        Some("blender") => Exposure::BLENDER,
+        Some("sunlight") => Exposure::SUNLIGHT,
+        Some("overcast") => Exposure::OVERCAST,
+        _ => match serde_lexpr::from_value(&val) {
             Ok(exposure) => Exposure { ev100: exposure },
-            Err(e) => return format!("couldn't parse exposure: {}", e).into(),
+            Err(_) => {
+                // TODO: Error handling
+                return;
+            }
         },
     };
 
     for mut exposure in &mut exposures {
         *exposure = new_exposure;
     }
-
-    default()
 }
 
-fn cmd_saturation(
-    In(args): In<Box<[String]>>,
-    mut gradings: Query<&mut ColorGrading>,
-) -> ExecResult {
-    let saturation = match &*args {
-        [] => {
-            let saturations = gradings
-                .iter()
-                .map(|g| format!("{} ", g.pre_saturation))
-                .collect::<String>();
-            return format!("saturation: {}", saturations).into();
-        }
-        [new_exposure] => new_exposure,
-        _ => return "usage: r_saturation [SATURATION]".into(),
-    };
-
-    let saturation: f32 = match saturation.parse() {
+fn cmd_saturation(In(saturation): In<Value>, mut gradings: Query<&mut ColorGrading>) {
+    let saturation: f32 = match serde_lexpr::from_value(&saturation) {
         Ok(saturation) => saturation,
-        Err(e) => return format!("couldn't parse saturation: {}", e).into(),
+        Err(_) => {
+            // TODO: Error handling
+            return;
+        }
     };
 
     for mut grading in &mut gradings {
         grading.pre_saturation = saturation;
     }
-
-    default()
 }
 
-fn cmd_gamma(In(args): In<Box<[String]>>, mut gradings: Query<&mut ColorGrading>) -> ExecResult {
-    let gamma = match &*args {
-        [] => {
-            let gammas = gradings
-                .iter()
-                .map(|g| format!("{} ", g.gamma))
-                .collect::<String>();
-            return format!("gamma: {}", gammas).into();
-        }
-        [new_exposure] => new_exposure,
-        _ => return "usage: r_gamma [SATURATION]".into(),
-    };
-
-    let gamma: f32 = match gamma.parse() {
+fn cmd_gamma(In(gamma): In<Value>, mut gradings: Query<&mut ColorGrading>) {
+    let gamma: f32 = match serde_lexpr::from_value(&gamma) {
         Ok(gamma) => gamma,
-        Err(e) => return format!("couldn't parse gamma: {}", e).into(),
+        Err(_) => {
+            // TODO: Error handling
+            return;
+        }
     };
 
     for mut grading in &mut gradings {
         grading.gamma = gamma;
     }
-
-    default()
 }
 
 fn cmd_autoexposure(
-    In(args): In<Box<[String]>>,
+    In(autoexposure): In<Value>,
     mut commands: Commands,
     mut cameras: Query<(Entity, Option<&AutoExposure>), With<Camera3d>>,
-) -> ExecResult {
-    let enabled = match &*args {
-        [] => {
-            let enabled = cameras
-                .iter()
-                .map(|(_, val)| format!("{} ", if val.is_some() { "on" } else { "off" }))
-                .collect::<String>();
-            return format!("autoexposure: {}", enabled).into();
-        }
-        [val] => match &**val {
-            "on" => true,
-            "off" => false,
-            _ => return "usage: r_autoexposure [on|off]".into(),
+) {
+    let enabled: bool = match autoexposure.as_str() {
+        Some("on") => true,
+        Some("off") => false,
+        _ => match serde_lexpr::from_value(&autoexposure) {
+            Ok(autoexposure) => autoexposure,
+            Err(_) => {
+                // TODO: Error handling
+                return;
+            }
         },
-        _ => return "usage: r_autoexposure [on|off]".into(),
     };
 
     for (e, autoexposure) in &mut cameras {
@@ -202,28 +155,24 @@ fn cmd_autoexposure(
             _ => {}
         }
     }
-
-    default()
 }
 
-fn cmd_tonemapping(
-    In(args): In<Box<[String]>>,
-    mut tonemapping: Query<&mut Tonemapping>,
-) -> ExecResult {
-    let new_tonemapping = match args.split_first().map(|(s, rest)| (&**s, rest)) {
-        Some(("tmmf", [])) => Tonemapping::TonyMcMapface,
-        Some(("aces", [])) => Tonemapping::AcesFitted,
-        Some(("blender", [])) => Tonemapping::BlenderFilmic,
-        Some(("sbdt", [])) => Tonemapping::SomewhatBoringDisplayTransform,
-        Some(("none", [])) => Tonemapping::None,
-        _ => return "usage: r_tonemapping [tmmf|aces|blender|sbdt|none]".into(),
+fn cmd_tonemapping(In(new_tonemapping): In<Value>, mut tonemapping: Query<&mut Tonemapping>) {
+    let new_tonemapping = match new_tonemapping.as_str() {
+        Some("tmmf") => Tonemapping::TonyMcMapface,
+        Some("aces") => Tonemapping::AcesFitted,
+        Some("blender") => Tonemapping::BlenderFilmic,
+        Some("sbdt") => Tonemapping::SomewhatBoringDisplayTransform,
+        Some("none") => Tonemapping::None,
+        _ => {
+            // TODO: Error handling
+            return;
+        }
     };
 
     for mut tonemapping in &mut tonemapping {
         *tonemapping = new_tonemapping;
     }
-
-    default()
 }
 
 fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
@@ -325,28 +274,33 @@ fn main() -> ExitCode {
     })
     .add_plugins(CapturePlugin)
     // TODO: Make these into cvars - should we allow cvars to access arbitrary parts of the world on get/set?
-    .command(
+    .cvar_on_set(
         "r_exposure",
+        "indoor",
         cmd_exposure,
         "Adjust the exposure of the screen by a factor and an optional offset",
     )
-    .command(
+    .cvar_on_set(
         "r_gamma",
+        "1",
         cmd_gamma,
         "Adjust the exposure of the screen by a factor and an optional offset",
     )
-    .command(
+    .cvar_on_set(
         "r_saturation",
+        "1",
         cmd_saturation,
         "Adjust the color saturation of the screen (applied before tonemapping)",
     )
-    .command(
+    .cvar_on_set(
         "r_tonemapping",
+        "blender",
         cmd_tonemapping,
         "Set the tonemapping type - Tony McMapFace (TMMF), ACES, Blender Filmic, Somewhat Boring Display Transform (SBBT), or none",
     )
-    .command(
+    .cvar_on_set(
         "r_autoexposure",
+        "off",
         cmd_autoexposure,
         "Enable/disable automatic exposure compensation",
     )

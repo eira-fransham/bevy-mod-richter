@@ -18,15 +18,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::fmt::Debug;
+use std::{fmt::Debug, str::FromStr};
 
-use crate::client::menu::Menu;
-
-use bevy::ecs::{
-    system::{Commands, IntoSystem, SystemId},
-    world::World,
+use crate::{
+    client::menu::Menu,
+    common::console::{CName, SetCvar},
 };
+
+use bevy::ecs::system::{Commands, SystemId};
 use failure::{ensure, Error};
+use serde_lexpr::Value;
 
 #[derive(Debug, Clone)]
 pub enum Item {
@@ -41,57 +42,54 @@ pub enum Item {
 #[derive(Debug, Clone)]
 pub struct Toggle {
     state: bool,
-    on_toggle: SystemId<bool>,
+    cvar: CName,
 }
 
 impl Toggle {
-    pub fn new<M, S>(world: &mut World, init: bool, on_toggle: S) -> Toggle
+    pub fn new<C>(init: bool, cvar: C) -> Toggle
     where
-        S: IntoSystem<bool, (), M> + 'static,
+        C: Into<CName>,
     {
-        let on_toggle = world.register_system(on_toggle);
-        let t = Toggle {
+        Toggle {
             state: init,
-            on_toggle,
+            cvar: cvar.into(),
+        }
+    }
+
+    pub fn set_false(&mut self) -> impl FnOnce(Commands) + '_ {
+        let val = if self.state {
+            self.state = false;
+            Some(self.state)
+        } else {
+            None
         };
 
-        // TODO: Initialize with default
-        // (t.on_toggle)(init);
-
-        t
-    }
-
-    pub fn set_false(&mut self) -> Option<impl FnOnce(&mut Commands)> {
-        if !self.state {
-            return None;
+        move |mut c| {
+            if let Some(val) = val {
+                c.add(SetCvar(self.cvar.clone(), val.into()))
+            }
         }
-        self.state = false;
-
-        let on_toggle = self.on_toggle;
-        let value = self.get();
-
-        Some(move |c: &mut Commands| c.run_system_with_input(on_toggle, value))
     }
 
-    pub fn set_true(&mut self) -> Option<impl FnOnce(&mut Commands)> {
-        if self.state {
-            return None;
+    pub fn set_true(&mut self) -> impl FnOnce(Commands) + '_ {
+        let val = if self.state {
+            self.state = true;
+            Some(self.state)
+        } else {
+            None
+        };
+
+        move |mut c| {
+            if let Some(val) = val {
+                c.add(SetCvar(self.cvar.clone(), val.into()))
+            }
         }
-        self.state = true;
-
-        let on_toggle = self.on_toggle;
-        let value = self.get();
-
-        Some(move |c: &mut Commands| c.run_system_with_input(on_toggle, value))
     }
 
-    pub fn toggle(&mut self) -> impl FnOnce(&mut Commands) {
+    pub fn toggle(&mut self) -> impl FnOnce(Commands) + '_ {
         self.state = !self.state;
 
-        let on_toggle = self.on_toggle;
-        let value = self.get();
-
-        move |c: &mut Commands| c.run_system_with_input(on_toggle, value)
+        move |mut c| c.add(SetCvar(self.cvar.clone(), self.state.into()))
     }
 
     pub fn get(&self) -> bool {
@@ -105,71 +103,76 @@ impl Toggle {
 pub struct Enum {
     selected: usize,
     items: Vec<EnumItem>,
+    cvar: CName,
 }
 
 impl Enum {
-    pub fn new(init: usize, items: Vec<EnumItem>) -> Result<Enum, Error> {
-        ensure!(items.len() > 0, "Enum element must have at least one item");
-        ensure!(init < items.len(), "Invalid initial item ID");
-
-        let e = Enum {
+    pub fn new<C: Into<CName>, E: IntoIterator<Item = EnumItem>>(
+        init: usize,
+        cvar: C,
+        items: E,
+    ) -> Enum {
+        Enum {
             selected: init,
-            items,
-        };
-
-        // TODO: initialize with the default choice
-        // (e.items[e.selected].on_select)();
-
-        Ok(e)
+            items: items.into_iter().collect(),
+            cvar: cvar.into(),
+        }
     }
 
     pub fn selected_name(&self) -> &str {
-        self.items[self.selected].name.as_str()
+        self.items[self.selected].name.as_ref()
     }
 
-    pub fn select_next(&mut self) -> Option<impl FnOnce(&mut Commands)> {
-        let selected = match self.selected + 1 {
-            s if s >= self.items.len() => 0,
-            s => s,
-        };
-
-        self.selected = selected;
-
-        let on_select = self.items[selected].on_select;
-
-        Some(move |c: &mut Commands| c.run_system(on_select))
+    pub fn selected_value(&self) -> Value {
+        self.items[self.selected].value.clone()
     }
 
-    pub fn select_prev(&mut self) -> Option<impl FnOnce(&mut Commands)> {
-        let selected = match self.selected {
-            0 => self.items.len() - 1,
-            s => s - 1,
+    pub fn select_next(&mut self) -> impl FnOnce(Commands) + '_ {
+        let val = if self.selected < self.items.len() - 1 {
+            self.selected += 1;
+            Some(self.selected_value())
+        } else {
+            None
         };
 
-        self.selected = selected;
+        move |mut c| {
+            if let Some(val) = val {
+                c.add(SetCvar(self.cvar.clone(), val))
+            }
+        }
+    }
 
-        let on_select = self.items[selected].on_select;
+    pub fn select_prev(&mut self) -> impl FnOnce(Commands) + '_ {
+        let val = if self.selected > 1 {
+            self.selected += 1;
+            Some(self.selected_value())
+        } else {
+            None
+        };
 
-        Some(move |c: &mut Commands| c.run_system(on_select))
+        move |mut c| {
+            if let Some(val) = val {
+                c.add(SetCvar(self.cvar.clone(), val))
+            }
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct EnumItem {
-    name: String,
-    on_select: SystemId,
+    name: CName,
+    value: Value,
 }
 
 impl EnumItem {
-    pub fn new<N, M, S>(world: &mut World, name: N, on_select: S) -> Result<EnumItem, Error>
+    pub fn new<N, V>(name: N, value: V) -> Result<EnumItem, Error>
     where
-        N: AsRef<str>,
-        S: IntoSystem<(), (), M> + 'static,
+        N: Into<CName>,
+        V: AsRef<str>,
     {
-        let on_select = world.register_system(on_select);
         Ok(EnumItem {
-            name: name.as_ref().to_string(),
-            on_select,
+            name: name.into(),
+            value: Value::from_str(value.as_ref())?,
         })
     }
 }
@@ -182,29 +185,19 @@ pub struct Slider {
     steps: usize,
 
     selected: usize,
-    on_select: SystemId<f32>,
+    cvar: CName,
 }
 
 impl Slider {
-    pub fn new<M, S>(
-        world: &mut World,
+    pub fn new(
         min: f32,
         max: f32,
         steps: usize,
         init: usize,
-        on_select: S,
-    ) -> Result<Slider, Error>
-    where
-        S: IntoSystem<f32, (), M> + 'static,
-    {
+        cvar: CName,
+    ) -> Result<Slider, Error> {
         ensure!(steps > 1, "Slider must have at least 2 steps");
         ensure!(init < steps, "Invalid initial setting");
-        ensure!(
-            min < max,
-            "Minimum setting must be less than maximum setting"
-        );
-
-        let on_select = world.register_system(on_select);
 
         Ok(Slider {
             min,
@@ -212,35 +205,41 @@ impl Slider {
             increment: (max - min) / (steps - 1) as f32,
             steps,
             selected: init,
-            on_select,
+            cvar,
         })
     }
 
-    pub fn increase(&mut self) -> Option<impl FnOnce(&mut Commands)> {
+    pub fn increase(&mut self) -> impl FnOnce(Commands) + '_ {
         let old = self.selected;
 
-        if old == self.steps - 1 {
-            None
-        } else {
+        let val = if old != self.steps - 1 {
             self.selected = old + 1;
+            Some(self.value())
+        } else {
+            None
+        };
 
-            let value = self.value();
-            let on_select = self.on_select;
-            Some(move |c: &mut Commands| c.run_system_with_input(on_select, value))
+        move |mut c| {
+            if let Some(val) = val {
+                c.add(SetCvar(self.cvar.clone(), val.into()))
+            }
         }
     }
 
-    pub fn decrease(&mut self) -> Option<impl FnOnce(&mut Commands)> {
+    pub fn decrease(&mut self) -> impl FnOnce(Commands) + '_ {
         let old = self.selected;
 
-        if old == 0 {
-            None
-        } else {
+        let val = if old != 0 {
             self.selected = old - 1;
+            Some(self.value())
+        } else {
+            None
+        };
 
-            let value = self.value();
-            let on_select = self.on_select;
-            Some(move |c: &mut Commands| c.run_system_with_input(on_select, value))
+        move |mut c| {
+            if let Some(val) = val {
+                c.add(SetCvar(self.cvar.clone(), val.into()))
+            }
         }
     }
 
@@ -257,32 +256,26 @@ impl Slider {
 pub struct TextField {
     chars: String,
     max_len: Option<usize>,
-    on_update: SystemId<String>,
+    cvar: CName,
     cursor: usize,
 }
 
 impl TextField {
-    pub fn new<D, M, S>(
-        world: &mut World,
-        default: Option<D>,
-        max_len: Option<usize>,
-        on_update: S,
-    ) -> Result<TextField, Error>
+    pub fn new<D, S>(default: Option<D>, max_len: Option<usize>, cvar: S) -> TextField
     where
-        D: AsRef<str>,
-        S: IntoSystem<String, (), M> + 'static,
+        D: Into<String>,
+        S: Into<CName>,
     {
-        let on_update = world.register_system(on_update);
-
-        let chars = default.map(|s| s.as_ref().to_string()).unwrap_or_default();
+        let chars = default.map(|s| s.into()).unwrap_or_default();
+        let cvar = cvar.into();
         let cursor = chars.len();
 
-        Ok(TextField {
+        TextField {
             chars,
             max_len,
-            on_update,
+            cvar,
             cursor,
-        })
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -327,44 +320,32 @@ impl TextField {
         }
     }
 
-    pub fn insert(&mut self, c: char) -> Option<impl FnOnce(&mut Commands)> {
-        if let Some(l) = self.max_len {
-            if self.len() == l {
-                return None;
+    pub fn insert(&mut self, c: char) -> impl FnOnce(Commands) + '_ {
+        let val = if self.max_len == Some(self.len()) {
+            None
+        } else {
+            self.chars.insert(self.cursor, c);
+            Some(self.text())
+        };
+
+        let cvar = &self.cvar;
+
+        move |mut c| {
+            if let Some(val) = val {
+                c.add(SetCvar(cvar.clone(), val.into()))
             }
         }
-
-        self.chars.insert(self.cursor, c);
-
-        let value = self.chars.clone();
-        let on_update = self.on_update;
-
-        Some(move |c: &mut Commands| c.run_system_with_input(on_update, value))
     }
 
-    pub fn backspace(&mut self) -> Option<impl FnOnce(&mut Commands)> {
+    pub fn backspace(&mut self) {
         if self.cursor > 1 {
             self.chars.remove(self.cursor - 1);
-
-            let value = self.chars.clone();
-            let on_update = self.on_update;
-
-            Some(move |c: &mut Commands| c.run_system_with_input(on_update, value))
-        } else {
-            None
         }
     }
 
-    pub fn delete(&mut self) -> Option<impl FnOnce(&mut Commands)> {
+    pub fn delete(&mut self) {
         if self.cursor < self.len() {
             self.chars.remove(self.cursor);
-
-            let value = self.chars.clone();
-            let on_update = self.on_update;
-
-            Some(move |c: &mut Commands| c.run_system_with_input(on_update, value))
-        } else {
-            None
         }
     }
 }

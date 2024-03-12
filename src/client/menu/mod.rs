@@ -22,12 +22,14 @@ mod item;
 
 use bevy::{
     ecs::{
-        system::{Commands, IntoSystem, Resource},
+        system::{Commands, IntoSystem, Resource, SystemId},
         world::World,
     },
     render::extract_resource::ExtractResource,
 };
 use failure::{bail, Error};
+
+use crate::common::console::CName;
 
 pub use self::item::{Enum, EnumItem, Item, Slider, TextField, Toggle};
 
@@ -194,7 +196,7 @@ impl Menu {
         if let MenuState::Active { index } = m.state {
             Ok(&m.items[index].item)
         } else {
-            bail!("Active menu in invalid state (invariant violation)");
+            bail!("Active menu in invalid state (invariant violation)")
         }
     }
 
@@ -209,7 +211,14 @@ impl Menu {
     ///
     /// Otherwise, this has no effect.
     #[must_use]
-    pub fn activate(&mut self) -> Result<Option<impl FnOnce(&mut Commands)>, Error> {
+    pub fn activate(&mut self) -> Result<impl FnOnce(Commands), Error> {
+        fn run(action: Option<SystemId>) -> impl FnOnce(Commands) {
+            move |mut c: Commands| match action {
+                Some(action) => c.run_system(action),
+                None => {}
+            }
+        }
+
         let m = self.active_submenu_mut()?;
 
         if let MenuState::Active { index } = m.state {
@@ -218,62 +227,52 @@ impl Menu {
                     m.state = MenuState::InSubMenu { index };
                     submenu.state = MenuState::Active { index: 0 };
 
-                    Ok(None)
+                    Ok(run(None))
                 }
 
                 Item::Action(action) => {
                     let action = *action;
-                    Ok(Some(move |c: &mut Commands| c.run_system(action)))
+                    Ok(run(Some(action)))
                 }
 
-                _ => Ok(None),
+                _ => Ok(run(None)),
             }
         } else {
-            Ok(None)
+            Ok(run(None))
         }
     }
 
     #[must_use]
-    pub fn left(&mut self) -> Result<Option<impl FnOnce(&mut Commands)>, Error> {
+    pub fn left(&mut self) -> Result<impl FnOnce(Commands) + '_, Error> {
         let m = self.active_submenu_mut()?;
 
-        Ok(if let MenuState::Active { index } = m.state {
-            match &mut m.items[index].item {
-                Item::Enum(e) => e
-                    .select_prev()
-                    .map(|f| Box::new(f) as Box<dyn FnOnce(&mut Commands)>),
-                Item::Slider(slider) => slider.decrease().map(|f| Box::new(f) as _),
-                Item::TextField(text) => {
-                    text.cursor_left();
-                    None
+        Ok(move |c: Commands| {
+            if let MenuState::Active { index } = m.state {
+                match &mut m.items[index].item {
+                    Item::Enum(e) => (e.select_prev())(c),
+                    Item::Slider(slider) => (slider.decrease())(c),
+                    Item::TextField(text) => text.cursor_left(),
+                    Item::Toggle(toggle) => (toggle.set_false())(c),
+                    _ => {}
                 }
-                Item::Toggle(toggle) => toggle.set_false().map(|f| Box::new(f) as _),
-                _ => None,
             }
-        } else {
-            None
         })
     }
 
     #[must_use]
-    pub fn right(&mut self) -> Result<Option<impl FnOnce(&mut Commands)>, Error> {
+    pub fn right(&mut self) -> Result<impl FnOnce(Commands) + '_, Error> {
         let m = self.active_submenu_mut()?;
 
-        Ok(if let MenuState::Active { index } = m.state {
-            match &mut m.items[index].item {
-                Item::Enum(e) => e
-                    .select_next()
-                    .map(|f| Box::new(f) as Box<dyn FnOnce(&mut Commands)>),
-                Item::Slider(slider) => slider.increase().map(|f| Box::new(f) as _),
-                Item::TextField(text) => {
-                    text.cursor_right();
-                    None
+        Ok(move |c: Commands| {
+            if let MenuState::Active { index } = m.state {
+                match &mut m.items[index].item {
+                    Item::Enum(e) => (e.select_next())(c),
+                    Item::Slider(slider) => (slider.increase())(c),
+                    Item::TextField(text) => text.cursor_right(),
+                    Item::Toggle(toggle) => (toggle.set_true())(c),
+                    _ => {}
                 }
-                Item::Toggle(toggle) => toggle.set_true().map(|f| Box::new(f) as _),
-                _ => None,
             }
-        } else {
-            None
         })
     }
 
@@ -360,7 +359,7 @@ impl<'a> MenuBuilder<'a> {
         submenu: impl FnOnce(MenuBuilder<'_>) -> Result<Menu, Error>,
     ) -> Result<Self, Error>
     where
-        S: AsRef<str>,
+        S: Into<CName>,
     {
         let submenu = submenu(MenuBuilder::new(&mut *self.world))?;
         self.items
@@ -370,7 +369,7 @@ impl<'a> MenuBuilder<'a> {
 
     pub fn add_action<N, S, M>(mut self, name: N, action: S) -> Self
     where
-        N: AsRef<str>,
+        N: Into<CName>,
         S: IntoSystem<(), (), M> + 'static,
     {
         let action_id = self.world.register_system(action);
@@ -379,101 +378,86 @@ impl<'a> MenuBuilder<'a> {
         self
     }
 
-    pub fn add_toggle<N, M, S>(mut self, name: N, init: bool, on_toggle: S) -> Self
+    pub fn add_toggle<N, S>(mut self, name: N, init: bool, cvar: S) -> Self
     where
-        N: AsRef<str>,
-        S: IntoSystem<bool, (), M> + 'static,
+        N: Into<CName>,
+        S: Into<CName>,
     {
         self.items.push_back(NamedMenuItem::new(
             name,
-            Item::Toggle(Toggle::new(&mut self.world, init, on_toggle)),
+            Item::Toggle(Toggle::new(init, cvar)),
         ));
         self
     }
 
-    pub fn add_enum<S, E>(mut self, name: S, items: E, init: usize) -> Result<Self, Error>
+    pub fn add_enum<S, C, E>(mut self, name: S, cvar: C, init: usize, items: E) -> Self
     where
-        S: AsRef<str>,
-        E: FnOnce(EnumBuilder) -> Result<Vec<EnumItem>, Error>,
+        S: Into<CName>,
+        C: Into<CName>,
+        E: FnOnce(EnumBuilder) -> Vec<EnumItem>,
     {
         self.items.push_back(NamedMenuItem::new(
             name,
-            Item::Enum(Enum::new(init, items(EnumBuilder::new(&mut *self.world))?)?),
+            Item::Enum(Enum::new(init, cvar, items(EnumBuilder::new()))),
         ));
-        Ok(self)
+        self
     }
 
-    pub fn add_slider<N, M, S>(
+    pub fn add_slider<N, S>(
         mut self,
         name: N,
         min: f32,
         max: f32,
         steps: usize,
         init: usize,
-        on_select: S,
+        cvar: S,
     ) -> Result<Self, Error>
     where
-        N: AsRef<str>,
-        S: IntoSystem<f32, (), M> + 'static,
+        N: Into<CName>,
+        S: Into<CName>,
     {
         self.items.push_back(NamedMenuItem::new(
             name,
-            Item::Slider(Slider::new(
-                &mut *self.world,
-                min,
-                max,
-                steps,
-                init,
-                on_select,
-            )?),
+            Item::Slider(Slider::new(min, max, steps, init, cvar.into())?),
         ));
         Ok(self)
     }
 
-    pub fn add_text_field<N, M, S>(
+    pub fn add_text_field<N, D, S>(
         mut self,
         name: N,
-        default: Option<N>,
+        default: Option<D>,
         max_len: Option<usize>,
-        on_update: S,
+        cvar: S,
     ) -> Result<Self, Error>
     where
-        N: AsRef<str>,
-        S: IntoSystem<String, (), M> + 'static,
+        N: Into<CName>,
+        D: Into<String>,
+        S: Into<CName>,
     {
         self.items.push_back(NamedMenuItem::new(
             name,
-            Item::TextField(TextField::new(
-                &mut *self.world,
-                default,
-                max_len,
-                on_update,
-            )?),
+            Item::TextField(TextField::new(default, max_len, cvar)),
         ));
         Ok(self)
     }
 }
 
-pub struct EnumBuilder<'a> {
-    world: &'a mut World,
+pub struct EnumBuilder {
     items: Vec<EnumItem>,
 }
 
-impl<'a> EnumBuilder<'a> {
-    pub fn new(world: &'a mut World) -> Self {
-        Self {
-            world,
-            items: Vec::new(),
-        }
+impl EnumBuilder {
+    pub fn new() -> Self {
+        Self { items: Vec::new() }
     }
 
-    pub fn add_item<N, M, S>(mut self, name: N, on_select: S) -> Result<Self, Error>
+    pub fn with<N, S>(mut self, name: N, val: S) -> Result<Self, Error>
     where
-        N: AsRef<str>,
-        S: IntoSystem<(), (), M> + 'static,
+        N: Into<CName>,
+        S: AsRef<str>,
     {
-        self.items
-            .push(EnumItem::new(&mut *self.world, name, on_select)?);
+        self.items.push(EnumItem::new(name, val)?);
 
         Ok(self)
     }
@@ -485,19 +469,17 @@ impl<'a> EnumBuilder<'a> {
 
 #[derive(Debug, Clone)]
 pub struct NamedMenuItem {
-    name: String,
+    name: CName,
     item: Item,
 }
 
 impl NamedMenuItem {
     fn new<S>(name: S, item: Item) -> NamedMenuItem
     where
-        S: AsRef<str>,
+        S: Into<CName>,
     {
-        NamedMenuItem {
-            name: name.as_ref().to_string(),
-            item,
-        }
+        let name = name.into();
+        NamedMenuItem { name, item }
     }
 
     pub fn name(&self) -> &str {

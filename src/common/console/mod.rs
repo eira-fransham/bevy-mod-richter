@@ -27,7 +27,7 @@ use std::{
 use beef::Cow;
 use bevy::{
     ecs::{
-        system::{Resource, SystemId},
+        system::{Command, Resource, SystemId},
         world::World,
     },
     prelude::*,
@@ -102,13 +102,14 @@ impl Plugin for RichterConsolePlugin {
                     systems::write_console_in.run_if(resource_changed::<RenderConsoleInput>),
                     systems::update_console_visibility.run_if(resource_changed::<InputFocus>),
                     console_text::systems::update_atlas_text,
+                    systems::execute_console,
+                    systems::update_cvars,
                 ),
-            )
-            .add_systems(Update, systems::execute_console);
+            );
     }
 }
 
-type CName = Cow<'static, str>;
+pub type CName = Cow<'static, str>;
 
 #[derive(Error, Debug)]
 pub enum ConsoleError {
@@ -176,7 +177,10 @@ pub enum CmdKind {
     },
     // TODO: Allow `Alias` to invoke an arbitrary sequence of commands
     Alias(CName),
-    Cvar(Cvar),
+    Cvar {
+        cvar: Cvar,
+        on_set: Option<SystemId<Value>>,
+    },
 }
 
 #[derive(Clone)]
@@ -328,6 +332,13 @@ pub trait RegisterCmdExt {
         S: IntoSystem<Box<[String]>, ExecResult, M> + 'static,
         I: Into<CName>;
 
+    fn cvar_on_set<N, I, S, C, M>(&mut self, name: N, value: C, on_set: S, usage: I) -> &mut Self
+    where
+        S: IntoSystem<Value, (), M> + 'static,
+        N: Into<CName>,
+        C: Into<Cvar>,
+        I: Into<CName>;
+
     fn cvar<N, I, C>(&mut self, name: N, value: C, usage: I) -> &mut Self
     where
         N: Into<CName>,
@@ -347,6 +358,17 @@ impl RegisterCmdExt for App {
         self
     }
 
+    fn cvar_on_set<N, I, S, C, M>(&mut self, name: N, value: C, on_set: S, usage: I) -> &mut Self
+    where
+        S: IntoSystem<Value, (), M> + 'static,
+        N: Into<CName>,
+        C: Into<Cvar>,
+        I: Into<CName>,
+    {
+        self.world.cvar_on_set(name, value, on_set, usage);
+
+        self
+    }
     fn cvar<N, I, C>(&mut self, name: N, value: C, usage: I) -> &mut Self
     where
         N: Into<CName>,
@@ -378,7 +400,22 @@ impl RegisterCmdExt for World {
         C: Into<Cvar>,
         I: Into<CName>,
     {
-        self.resource_mut::<Registry>().cvar(name, value, usage);
+        self.resource_mut::<Registry>()
+            .cvar(name, value, None, usage);
+
+        self
+    }
+
+    fn cvar_on_set<N, I, S, C, M>(&mut self, name: N, value: C, on_set: S, usage: I) -> &mut Self
+    where
+        S: IntoSystem<Value, (), M> + 'static,
+        N: Into<CName>,
+        C: Into<Cvar>,
+        I: Into<CName>,
+    {
+        let sys = self.register_system(on_set);
+        self.resource_mut::<Registry>()
+            .cvar(name, value, Some(sys), usage);
 
         self
     }
@@ -394,6 +431,21 @@ pub enum OutputType {
     #[default]
     Console,
     Alert,
+}
+
+pub struct SetCvar(pub CName, pub Value);
+
+pub struct ResetCvar(pub CName, pub Value);
+
+impl Command for SetCvar {
+    fn apply(self, world: &mut World) {
+        if let Err(e) = world
+            .resource_mut::<Registry>()
+            .set_cvar_raw(self.0, self.1)
+        {
+            warn!("{}", e);
+        }
+    }
 }
 
 pub struct ExecResult {
@@ -439,12 +491,19 @@ impl From<CName> for ExecResult {
     }
 }
 
+/// `SystemId` doesn't implement `Eq` for non-`Eq` types even though it should
+#[derive(Copy, Clone, PartialEq, Hash)]
+struct EqHack<T>(T);
+
+impl<T> Eq for EqHack<T> where T: PartialEq {}
+
 /// Stores console commands.
 #[derive(Resource, Default, Clone)]
 pub struct Registry {
     // We store a history so that we can remove functions and see the previously-defined ones
     // TODO: Implement a compression pass (e.g. after a removal)
     commands: FxHashMap<CName, (CommandImpl, Vec<CommandImpl>)>,
+    changed_cvars: FxHashMap<EqHack<SystemId<Value>>, Value>,
     names: BTreeSet<CName>,
 }
 
@@ -483,16 +542,20 @@ impl Registry {
         })
     }
 
-    fn cvar<S, C, H>(&mut self, name: S, cvar: C, help: H)
+    fn cvar<S, C, H>(&mut self, name: S, cvar: C, on_set: Option<SystemId<Value>>, help: H)
     where
         S: Into<CName>,
         C: Into<Cvar>,
         H: Into<CName>,
     {
+        let cvar = cvar.into();
+        if let Some(sys) = on_set.clone() {
+            self.changed_cvars.insert(EqHack(sys), cvar.default.clone());
+        }
         self.insert(
             name.into(),
             CommandImpl {
-                kind: CmdKind::Cvar(cvar.into()),
+                kind: CmdKind::Cvar { cvar, on_set },
                 help: help.into(),
             },
         );
@@ -611,14 +674,17 @@ impl Registry {
 
     fn get_cvar<S: AsRef<str>>(&self, name: S) -> Option<&Cvar> {
         self.get(name).and_then(|info| match &info.kind {
-            CmdKind::Cvar(cvar) => Some(cvar),
+            CmdKind::Cvar { cvar, .. } => Some(cvar),
             _ => None,
         })
     }
 
-    fn get_cvar_mut<S: AsRef<str>>(&mut self, name: S) -> Option<&mut Cvar> {
+    fn get_cvar_mut<S: AsRef<str>>(
+        &mut self,
+        name: S,
+    ) -> Option<(&mut Cvar, Option<SystemId<Value>>)> {
         self.get_mut(name).and_then(|info| match &mut info.kind {
-            CmdKind::Cvar(cvar) => Some(cvar),
+            CmdKind::Cvar { cvar, on_set } => Some((cvar, on_set.clone())),
             _ => None,
         })
     }
@@ -630,18 +696,68 @@ impl Registry {
         }) == Some(Trigger::Positive)
     }
 
+    pub fn reset_cvar<N>(&mut self, name: N) -> Result<Value, ConsoleError>
+    where
+        N: AsRef<str>,
+    {
+        let (cvar, on_set) = self
+            .get_cvar_mut(name.as_ref())
+            .ok_or_else(|| ConsoleError::NoSuchCvar(name.as_ref().to_owned().into()))?;
+
+        let to_insert = if let Some(sys) = on_set {
+            if cvar.value.is_some() {
+                Some((EqHack(sys), cvar.default.clone()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let out = Ok(mem::replace(&mut cvar.value, None).unwrap_or(cvar.default.clone()));
+
+        if let Some((sys, val)) = to_insert {
+            self.changed_cvars.insert(sys, val);
+        }
+
+        out
+    }
+
+    pub fn set_cvar_raw<N>(&mut self, name: N, value: Value) -> Result<Value, ConsoleError>
+    where
+        N: AsRef<str>,
+    {
+        let (cvar, on_set) = self
+            .get_cvar_mut(name.as_ref())
+            .ok_or_else(|| ConsoleError::NoSuchCvar(name.as_ref().to_owned().into()))?;
+
+        let to_insert = if let Some(sys) = on_set {
+            if cvar.value.as_ref().unwrap_or(&cvar.default) != &value {
+                let value = value.clone();
+                Some((EqHack(sys), value))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let out = Ok(mem::replace(&mut cvar.value, Some(value)).unwrap_or(cvar.default.clone()));
+
+        if let Some((sys, val)) = to_insert {
+            self.changed_cvars.insert(sys, val);
+        }
+
+        out
+    }
+
     pub fn set_cvar<N, V>(&mut self, name: N, value: V) -> Result<Value, ConsoleError>
     where
         N: AsRef<str>,
         V: AsRef<str>,
     {
         let value = Value::from_str(value.as_ref()).map_err(|_| ConsoleError::CvarParseInvalid)?;
-
-        let cvar = self
-            .get_cvar_mut(name.as_ref())
-            .ok_or_else(|| ConsoleError::NoSuchCvar(name.as_ref().to_owned().into()))?;
-
-        Ok(mem::replace(&mut cvar.value, Some(value)).unwrap_or(cvar.default.clone()))
+        self.set_cvar_raw(name, value)
     }
 
     /// Deserialize a single value from cvars
@@ -1002,7 +1118,7 @@ impl Registry {
         self.all_names().filter_map(move |name| {
             self.get(name)
                 .and_then(|CommandImpl { kind, .. }| match kind {
-                    CmdKind::Cvar(_) => Some(name),
+                    CmdKind::Cvar { .. } => Some(name),
                     _ => None,
                 })
         })
@@ -1243,7 +1359,7 @@ impl Default for ConsoleInput {
 }
 
 impl ConsoleInput {
-    const PROMPT: &'static str = "] ";
+    pub const PROMPT: &'static str = "] ";
 
     /// Constructs a new `ConsoleInput`.
     ///
@@ -2005,6 +2121,8 @@ mod systems {
             .drain()
             .collect::<VecDeque<_>>();
 
+        let mut changed_cvars = Vec::new();
+
         while let Some(RunCmd(CmdName { name, trigger }, args)) = commands.pop_front() {
             let mut name = Cow::from(name);
             loop {
@@ -2012,16 +2130,26 @@ mod systems {
                     // TODO: Implement helptext
                     Some(CommandImpl { kind, .. }) => {
                         match (trigger, kind) {
-                            (None, CmdKind::Cvar(cvar)) => match args.split_first() {
+                            (None, CmdKind::Cvar { cvar, on_set }) => match args.split_first() {
                                 None => (
                                     Cow::from(format!("\"{}\" is \"{}\"", name, cvar.value())),
                                     OutputType::Console,
                                 ),
                                 Some((new_value, [])) => {
-                                    cvar.value =
-                                        Some(Value::from_str(new_value).unwrap_or_else(|_| {
+                                    let new_value =
+                                        Value::from_str(new_value).unwrap_or_else(|_| {
                                             Value::String(new_value.clone().into())
-                                        }));
+                                        });
+
+                                    if cvar.value.as_ref().unwrap_or(&cvar.default) != &new_value {
+                                        if let Some(on_set) = on_set {
+                                            changed_cvars
+                                                .push((EqHack(on_set.clone()), new_value.clone()));
+                                        }
+
+                                        cvar.value = Some(new_value);
+                                    }
+
                                     break;
                                 }
                                 Some(_) => (
@@ -2029,7 +2157,7 @@ mod systems {
                                     OutputType::Console,
                                 ),
                             },
-                            (Some(_), CmdKind::Cvar(_)) => (
+                            (Some(_), CmdKind::Cvar { .. }) => (
                                 Cow::from(format!("{} is a cvar", name)),
                                 OutputType::Console,
                             ),
@@ -2120,6 +2248,17 @@ mod systems {
 
                 break;
             }
+        }
+
+        world
+            .resource_mut::<Registry>()
+            .changed_cvars
+            .extend(changed_cvars);
+    }
+
+    pub fn update_cvars(mut commands: Commands, mut registry: ResMut<Registry>) {
+        for (sys, val) in registry.changed_cvars.drain() {
+            commands.run_system_with_input(sys.0, val);
         }
     }
 }
