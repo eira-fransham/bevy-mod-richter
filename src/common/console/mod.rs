@@ -1317,7 +1317,7 @@ impl ConsoleInput {
 #[derive(Debug, Clone)]
 pub struct ConsoleText {
     pub output_type: OutputType,
-    pub text: CName,
+    pub text: QString,
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1340,7 +1340,7 @@ pub struct ConsoleOutput {
     generation: u16,
     center_print: Option<(Timestamp, QString)>,
     buffer_ty: OutputType,
-    buffer: String,
+    buffer: QString,
     last_timestamp: i64,
     unwritten_chunks: Vec<(Timestamp, ConsoleText)>,
 }
@@ -1352,19 +1352,19 @@ pub struct RenderConsoleOutput {
 }
 
 impl ConsoleOutput {
-    pub fn print<S: AsRef<str>>(&mut self, s: S, timestamp: Duration) {
+    pub fn print<S: AsRef<[u8]>>(&mut self, s: S, timestamp: Duration) {
         self.push(s, timestamp.num_milliseconds(), OutputType::Console);
     }
 
-    pub fn print_alert<S: AsRef<str>>(&mut self, s: S, timestamp: Duration) {
+    pub fn print_alert<S: AsRef<[u8]>>(&mut self, s: S, timestamp: Duration) {
         self.push(s, timestamp.num_milliseconds(), OutputType::Alert);
     }
 
-    pub fn println<S: AsRef<str>>(&mut self, s: S, timestamp: Duration) {
+    pub fn println<S: AsRef<[u8]>>(&mut self, s: S, timestamp: Duration) {
         self.push_line(s, timestamp.num_milliseconds(), OutputType::Console);
     }
 
-    pub fn println_alert<S: AsRef<str>>(&mut self, s: S, timestamp: Duration) {
+    pub fn println_alert<S: AsRef<[u8]>>(&mut self, s: S, timestamp: Duration) {
         self.push_line(s, timestamp.num_milliseconds(), OutputType::Alert);
     }
 
@@ -1372,7 +1372,7 @@ impl ConsoleOutput {
         ConsoleOutput::default()
     }
 
-    fn push<S: AsRef<str>>(&mut self, chars: S, timestamp: i64, ty: OutputType) {
+    fn push<S: AsRef<[u8]>>(&mut self, chars: S, timestamp: i64, ty: OutputType) {
         let chars = chars.as_ref();
 
         if chars.is_empty() {
@@ -1387,13 +1387,13 @@ impl ConsoleOutput {
         }
 
         self.buffer_ty = ty;
-        self.buffer.push_str(chars);
+        self.buffer.push_bytes(chars);
 
         self.try_flush();
     }
 
     fn try_flush(&mut self) {
-        if let Some(last_newline) = self.buffer.rfind('\n') {
+        if let Some(last_newline) = self.buffer.raw.iter().rposition(|v| *v == b'\n') {
             let (to_flush, rest) = self.buffer.split_at(last_newline + 1);
             let new_buf = rest.to_owned();
             self.buffer.truncate(to_flush.len());
@@ -1401,7 +1401,7 @@ impl ConsoleOutput {
             self.unwritten_chunks.push((
                 Timestamp::new(self.last_timestamp, generation),
                 ConsoleText {
-                    text: mem::replace(&mut self.buffer, new_buf).into(),
+                    text: mem::replace(&mut self.buffer, new_buf.into()).into(),
                     output_type: self.buffer_ty,
                 },
             ));
@@ -1419,7 +1419,7 @@ impl ConsoleOutput {
         ));
     }
 
-    fn push_line<S: AsRef<str>>(&mut self, chars: S, timestamp: i64, ty: OutputType) {
+    fn push_line<S: AsRef<[u8]>>(&mut self, chars: S, timestamp: i64, ty: OutputType) {
         self.push(chars, timestamp, ty);
         self.push("\n", timestamp, ty);
     }
@@ -1919,7 +1919,7 @@ mod systems {
             }
 
             for (_, line) in console_out.text_chunks.iter() {
-                text.text.push_str(&*line.text);
+                text.text.push_bytes(&*line.text);
             }
         }
     }
@@ -1988,10 +1988,10 @@ mod systems {
             let Some((_, first)) = first else {
                 continue;
             };
-            text.text.push_str(first.as_ref());
+            text.text.push_bytes(first.as_ref());
 
             for (_, line) in lines {
-                text.text.push_str(&*line);
+                text.text.push_bytes(&*line.raw);
             }
         }
     }
@@ -2111,10 +2111,10 @@ mod systems {
                     match output_ty {
                         OutputType::Console => world
                             .resource_mut::<ConsoleOutput>()
-                            .println(output, timestamp),
+                            .println(output.as_bytes(), timestamp),
                         OutputType::Alert => world
                             .resource_mut::<ConsoleOutput>()
-                            .println_alert(output, timestamp),
+                            .println_alert(output.as_bytes(), timestamp),
                     }
                 }
 

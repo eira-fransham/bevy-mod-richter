@@ -34,7 +34,7 @@ use bevy::{
     },
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
-    render::{camera::Exposure, view::ColorGrading},
+    render::view::ColorGrading,
     window::{PresentMode, WindowTheme},
 };
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
@@ -69,69 +69,7 @@ struct Opt {
     game: Option<String>,
 }
 
-const EXPOSURE_CURVE: &[[f32; 2]] = &[[-16.; 2], [0.; 2]];
-
-fn get_default_adjust(tonemapping: Tonemapping) -> ExposureAdjust {
-    match tonemapping {
-        Tonemapping::AcesFitted => ExposureAdjust::new(1.4, 2.),
-        Tonemapping::BlenderFilmic => ExposureAdjust::new(2.0, -1.0),
-        Tonemapping::TonyMcMapface => ExposureAdjust::new(1.8, 0.5),
-        Tonemapping::SomewhatBoringDisplayTransform => ExposureAdjust::new(2.0, 0.0),
-        _ => ExposureAdjust::new(1.0, 0.0),
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Debug, Component)]
-struct ExposureAdjust {
-    inv_scale: f32,
-    offset: f32,
-}
-
-impl ExposureAdjust {
-    fn set_scale(&mut self, scale: f32) {
-        self.inv_scale = scale.recip();
-    }
-
-    fn set_offset(&mut self, offset: f32) {
-        self.offset = offset;
-    }
-
-    fn new(scale: f32, offset: f32) -> Self {
-        Self {
-            inv_scale: scale.recip(),
-            offset,
-        }
-    }
-    fn combine(self, rhs: Self) -> Self {
-        Self {
-            inv_scale: self.inv_scale * rhs.inv_scale,
-            offset: self.offset + rhs.offset,
-        }
-    }
-}
-
-impl Default for ExposureAdjust {
-    fn default() -> Self {
-        Self::new(1., 0.)
-    }
-}
-
-fn adjust_exposure(
-    mut cameras: Query<
-        (&mut AutoExposure, Option<&Tonemapping>, &ExposureAdjust),
-        Or<(Changed<ExposureAdjust>, Changed<Tonemapping>)>,
-    >,
-) {
-    for (mut auto_exposure, tonemapping, adjust) in &mut cameras {
-        let adjust = adjust.combine(get_default_adjust(
-            tonemapping.copied().unwrap_or(Tonemapping::None),
-        ));
-        auto_exposure.compensation_curve = EXPOSURE_CURVE
-            .iter()
-            .map(|[from, to]| (*from, adjust.offset + *to * adjust.inv_scale).into())
-            .collect();
-    }
-}
+const EXPOSURE_CURVE: &[[f32; 2]] = &[[-16., -8.], [0., 0.]];
 
 fn cmd_exposure(In(args): In<Box<[String]>>, mut gradings: Query<&mut ColorGrading>) -> ExecResult {
     let exposure = match &*args {
@@ -188,27 +126,42 @@ fn cmd_saturation(
 
 fn cmd_autoexposure(
     In(args): In<Box<[String]>>,
-    mut gradings: Query<&mut ColorGrading>,
+    mut commands: Commands,
+    mut cameras: Query<(Entity, Option<&AutoExposure>), With<Camera3d>>,
 ) -> ExecResult {
-    let exposure = match &*args {
+    let enabled = match &*args {
         [] => {
-            let exposures = gradings
+            let enabled = cameras
                 .iter()
-                .map(|g| format!("{} ", g.exposure))
+                .map(|(_, val)| format!("{} ", if val.is_some() { "on" } else { "off" }))
                 .collect::<String>();
-            return format!("autoexposure: {}", exposures).into();
+            return format!("autoexposure: {}", enabled).into();
         }
-        [new_exposure] => new_exposure,
-        _ => return "usage: r_exposure [EXPOSURE]".into(),
+        [val] => match &**val {
+            "on" => true,
+            "off" => false,
+            _ => return "usage: r_autoexposure [on|off]".into(),
+        },
+        _ => return "usage: r_autoexposure [on|off]".into(),
     };
 
-    let exposure: f32 = match exposure.parse() {
-        Ok(exposure) => exposure,
-        Err(e) => return format!("couldn't parse exposure: {}", e).into(),
-    };
-
-    for mut grading in &mut gradings {
-        grading.exposure = exposure;
+    for (e, autoexposure) in &mut cameras {
+        match (autoexposure.is_some(), enabled) {
+            (true, false) => {
+                commands.entity(e).remove::<AutoExposure>();
+            }
+            (false, true) => {
+                commands.entity(e).insert(AutoExposure {
+                    compensation_curve: EXPOSURE_CURVE
+                        .iter()
+                        .copied()
+                        .map(|vals| vals.into())
+                        .collect(),
+                    ..default()
+                });
+            }
+            _ => {}
+        }
     }
 
     default()
@@ -252,11 +205,9 @@ fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
                 tonemapping: Tonemapping::TonyMcMapface,
                 ..default()
             },
-            AutoExposure::default(),
             BloomSettings::default(),
             DepthPrepass,
             NormalPrepass,
-            ExposureAdjust::default(),
         ));
 
         console_cmds.send(RunCmd::parse("exec quake.rc").unwrap());
@@ -343,12 +294,16 @@ fn main() -> ExitCode {
     )
     .command(
         "r_tonemapping",
-        cmd_tonemapping ,
+        cmd_tonemapping,
         "Set the tonemapping type - Tony McMapFace (TMMF), ACES, Blender Filmic, Somewhat Boring Display Transform (SBBT), or none",
     )
+    .command(
+        "r_autoexposure",
+        cmd_autoexposure,
+        "Enable/disable automatic exposure compensation",
+    )
     .insert_resource(DefaultOpaqueRendererMethod::deferred())
-    .add_systems(Startup, startup(opt))
-    .add_systems(Update, adjust_exposure);
+    .add_systems(Startup, startup(opt));
 
     fs::write(
         "debug-out.dot",

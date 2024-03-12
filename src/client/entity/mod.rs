@@ -60,7 +60,7 @@ pub struct ClientEntity {
     model_changed: bool,
     pub frame_id: usize,
     pub skin_id: usize,
-    colormap: Option<u8>,
+    pub colormap: Option<u8>,
     pub sync_base: Duration,
     pub effects: EntityEffects,
     pub light_id: Option<usize>,

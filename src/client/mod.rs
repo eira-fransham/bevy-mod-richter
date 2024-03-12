@@ -629,8 +629,7 @@ impl Connection {
                     }
                 }
 
-                // TODO: Make alerts actually use the quake text colour code (currently only center print uses it)
-                ServerCmd::Print { text } => console_output.print_alert(text.to_str(), time),
+                ServerCmd::Print { text } => console_output.print_alert(text.raw, time),
 
                 ServerCmd::ServerInfo {
                     protocol_version,
@@ -646,7 +645,7 @@ impl Connection {
                     }
 
                     console_output.println_alert(CONSOLE_DIVIDER, time);
-                    console_output.println_alert(message.to_str(), time);
+                    console_output.println_alert(message.raw, time);
                     console_output.println_alert(CONSOLE_DIVIDER, time);
 
                     let _server_info = ServerInfo {

@@ -806,15 +806,10 @@ impl ClientState {
             }
         }
 
-        if let Some(_c) = entity.colormap() {
-            // only players may have custom colormaps
-            if id > self.max_players {
-                warn!(
-                    "Server attempted to set colormap on entity {}, which is not a player",
-                    id
-                );
+        if let Some(c) = entity.colormap() {
+            if let Some(e) = self.entities.get_mut(id) {
+                e.colormap = Some(c);
             }
-            // TODO: set player custom colormaps
         }
 
         Ok(())

@@ -63,16 +63,28 @@ impl Default for QStr<'_> {
 
 impl<'a> From<&'a str> for QStr<'a> {
     fn from(value: &'a str) -> Self {
+        value.as_bytes().into()
+    }
+}
+
+impl From<String> for QString {
+    fn from(value: String) -> Self {
+        value.into_bytes().into()
+    }
+}
+
+impl<'a> From<&'a [u8]> for QStr<'a> {
+    fn from(value: &'a [u8]) -> Self {
         Self {
             raw: Cow::borrowed(value.as_bytes()),
         }
     }
 }
 
-impl From<String> for QString {
-    fn from(value: String) -> Self {
+impl From<Vec<u8>> for QString {
+    fn from(value: Vec<u8>) -> Self {
         Self {
-            raw: Cow::owned(value.into_bytes()),
+            raw: Cow::owned(value),
         }
     }
 }
@@ -162,6 +174,17 @@ impl<'a> QStr<'a> {
         let mut raw = mem::take(&mut self.raw).into_owned();
         raw.extend_from_slice(s.as_ref());
         self.raw = raw.into();
+    }
+
+    pub fn truncate(&mut self, to: usize) {
+        if self.raw.is_owned() {
+            let mut raw = mem::take(&mut self.raw).into_owned();
+            raw.truncate(to);
+            self.raw = raw.into();
+        } else {
+            self.raw = (&mem::take(&mut self.raw).unwrap_borrowed()[..to]).into();
+        }
+    
     }
 }
 
