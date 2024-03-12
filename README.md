@@ -20,7 +20,7 @@ accessed as such. The project for the fork of `bevy_audio` is at [`bevy-mod-dyna
 of the game at time of writing are a subtle reverb and filter delay, but most importantly I have added a limiter so that
 the game audio doesn't completly blow the speakers out when there are more than a couple of sounds playing at once.
 
-![alt tag](content/bevy-mod-richter.gif)
+![alt tag](content/bevy-mod-richter-rogue.gif)
 
 ### Goals
 
