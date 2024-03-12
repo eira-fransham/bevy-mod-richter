@@ -5,7 +5,7 @@
 An extended port of components from the [Richter](https://github.com/cormac-obrien/richter) Quake engine as a collection
 of extensible modules for the [Bevy](https://bevyengine.org/) ecosystem. Should be at feature parity with Richter but as
 refactoring work is ongoing some things may be broken temporarily. Started as a quick project to make Richter run on
-macOS, but ended up with over 8500 lines added and 7000 lines removed.
+macOS, but ended up with 10,000 lines added and 7500 lines removed.
 
 As a part of the port, I heavily refactored the code to work closer to how Bevy expects things to work. This means that I
 can get features for free that in my [previous Quake-related project](https://github.com/eira-fransham/goeld) I had to
