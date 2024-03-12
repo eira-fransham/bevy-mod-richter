@@ -986,13 +986,9 @@ impl ClientState {
                     Grapple => "progs/beam.mdl".to_string(),
                 };
 
-                self.spawn_beam(
-                    self.time,
-                    *entity_id as usize,
-                    *self.model_names.get(&model_name).unwrap(),
-                    *start,
-                    *end,
-                );
+                if let Some(beam) = self.model_names.get(&model_name) {
+                    self.spawn_beam(self.time, *entity_id as usize, *beam, *start, *end);
+                }
             }
         }
     }

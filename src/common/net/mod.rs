@@ -40,6 +40,8 @@ use chrono::Duration;
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
+use super::util::QString;
+
 pub const MAX_MESSAGE: usize = 8192;
 const MAX_DATAGRAM: usize = 1024;
 const HEADER_SIZE: usize = 8;
@@ -153,7 +155,7 @@ bitflags! {
         const VELOCITY_X = 1 << 5;
         const VELOCITY_Y = 1 << 6;
         const VELOCITY_Z = 1 << 7;
-        // const AIM_ENT = 1 << 8; // unused
+        const _AIM_ENT = 1 << 8; // unused
         const ITEMS = 1 << 9;
         const ON_GROUND = 1 << 10;
         const IN_WATER = 1 << 11;
@@ -198,6 +200,14 @@ bitflags! {
         const INVULNERABILITY  = 0x00100000;
         const SUIT             = 0x00200000;
         const QUAD             = 0x00400000;
+
+        // We include definitions for unused flags as mods use them (e.g. Rogue)
+        const _UNUSED_1         = 0x00800000;
+        const _UNUSED_2         = 0x01000000;
+        const _UNUSED_3         = 0x02000000;
+        const _UNUSED_4         = 0x04000000;
+        const _UNUSED_5         = 0x08000000;
+
         const SIGIL_1          = 0x10000000;
         const SIGIL_2          = 0x20000000;
         const SIGIL_3          = 0x40000000;
@@ -664,7 +674,7 @@ pub enum GameType {
     Deathmatch = 1,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Event, Debug, PartialEq)]
 pub enum ServerCmd {
     Bad,
     NoOp,
@@ -691,10 +701,10 @@ pub enum ServerCmd {
         time: f32,
     },
     Print {
-        text: String,
+        text: QString,
     },
     StuffText {
-        text: String,
+        text: QString,
     },
     SetAngle {
         angles: Vector3<Deg<f32>>,
@@ -703,7 +713,7 @@ pub enum ServerCmd {
         protocol_version: i32,
         max_clients: u8,
         game_type: GameType,
-        message: String,
+        message: QString,
         model_precache: Vec<String>,
         sound_precache: Vec<String>,
     },
@@ -713,7 +723,7 @@ pub enum ServerCmd {
     },
     UpdateName {
         player_id: u8,
-        new_name: String,
+        new_name: QString,
     },
     UpdateFrags {
         player_id: u8,
@@ -767,7 +777,7 @@ pub enum ServerCmd {
         stage: SignOnStage,
     },
     CenterPrint {
-        text: String,
+        text: QString,
     },
     KilledMonster,
     FoundSecret,
@@ -779,7 +789,7 @@ pub enum ServerCmd {
     },
     Intermission,
     Finale {
-        text: String,
+        text: QString,
     },
     CdTrack {
         track: u8,
@@ -787,7 +797,7 @@ pub enum ServerCmd {
     },
     SellScreen,
     Cutscene {
-        text: String,
+        text: QString,
     },
     FastUpdate(EntityUpdate),
 }
@@ -1106,7 +1116,7 @@ impl ServerCmd {
 
                 let mut model_precache = Vec::new();
                 loop {
-                    let model_name = util::read_cstring(reader);
+                    let model_name = util::read_cstring(reader).into_string();
                     if model_name.is_empty() {
                         break;
                     }
@@ -1115,7 +1125,7 @@ impl ServerCmd {
 
                 let mut sound_precache = Vec::new();
                 loop {
-                    let sound_name = util::read_cstring(reader);
+                    let sound_name = util::read_cstring(reader).into_string();
                     if sound_name.is_empty() {
                         break;
                     }
@@ -1134,7 +1144,7 @@ impl ServerCmd {
 
             ServerCmdCode::LightStyle => {
                 let id = reader.read_u8()?;
-                let value = util::read_cstring(reader);
+                let value = util::read_cstring(reader).into_string();
                 ServerCmd::LightStyle { id, value }
             }
 
@@ -1513,12 +1523,12 @@ impl ServerCmd {
             ServerCmd::Time { time } => writer.write_f32::<LittleEndian>(time)?,
 
             ServerCmd::Print { ref text } => {
-                writer.write_all(text.as_bytes())?;
+                writer.write_all(&*text.raw)?;
                 writer.write_u8(0)?;
             }
 
             ServerCmd::StuffText { ref text } => {
-                writer.write_all(text.as_bytes())?;
+                writer.write_all(&*text.raw)?;
                 writer.write_u8(0)?;
             }
 
@@ -1536,7 +1546,7 @@ impl ServerCmd {
                 writer.write_u8(max_clients)?;
                 writer.write_u8(game_type as u8)?;
 
-                writer.write_all(message.as_bytes())?;
+                writer.write_all(&*message.raw)?;
                 writer.write_u8(0)?;
 
                 for model_name in model_precache.iter() {
@@ -1563,7 +1573,7 @@ impl ServerCmd {
                 ref new_name,
             } => {
                 writer.write_u8(player_id)?;
-                writer.write_all(new_name.as_bytes())?;
+                writer.write_all(&*new_name.raw)?;
                 writer.write_u8(0)?;
             }
 
@@ -1788,7 +1798,7 @@ impl ServerCmd {
             }
 
             ServerCmd::CenterPrint { ref text } => {
-                writer.write_all(text.as_bytes())?;
+                writer.write_all(&*text.raw)?;
                 writer.write_u8(0)?;
             }
 
@@ -1809,7 +1819,7 @@ impl ServerCmd {
             ServerCmd::Intermission => (),
 
             ServerCmd::Finale { ref text } => {
-                writer.write_all(text.as_bytes())?;
+                writer.write_all(&*text.raw)?;
                 writer.write_u8(0)?;
             }
 
@@ -1821,7 +1831,7 @@ impl ServerCmd {
             ServerCmd::SellScreen => (),
 
             ServerCmd::Cutscene { ref text } => {
-                writer.write_all(text.as_bytes())?;
+                writer.write_all(&*text.raw)?;
                 writer.write_u8(0)?;
             }
 
@@ -1923,7 +1933,7 @@ impl ClientCmd {
                 }
             }
             ClientCmdCode::StringCmd => {
-                let cmd = util::read_cstring(reader);
+                let cmd = util::read_cstring(reader).into_str().into_owned();
                 ClientCmd::StringCmd { cmd }
             }
         };
@@ -2425,7 +2435,7 @@ mod test {
     #[test]
     fn test_server_cmd_print_read_write_eq() {
         let src = ServerCmd::Print {
-            text: String::from("print test"),
+            text: QString::from("print test"),
         };
 
         let mut packet = Vec::new();
@@ -2439,7 +2449,7 @@ mod test {
     #[test]
     fn test_server_cmd_stuff_text_read_write_eq() {
         let src = ServerCmd::StuffText {
-            text: String::from("stufftext test"),
+            text: QString::from("stufftext test"),
         };
 
         let mut packet = Vec::new();
@@ -2456,9 +2466,9 @@ mod test {
             protocol_version: 42,
             max_clients: 16,
             game_type: GameType::Deathmatch,
-            message: String::from("Test message"),
-            model_precache: vec![String::from("test1.bsp"), String::from("test2.bsp")],
-            sound_precache: vec![String::from("test1.wav"), String::from("test2.wav")],
+            message: QString::from("Test message"),
+            model_precache: vec![QString::from("test1.bsp"), QString::from("test2.bsp")],
+            sound_precache: vec![QString::from("test1.wav"), QString::from("test2.wav")],
         };
 
         let mut packet = Vec::new();
@@ -2473,7 +2483,7 @@ mod test {
     fn test_server_cmd_light_style_read_write_eq() {
         let src = ServerCmd::LightStyle {
             id: 11,
-            value: String::from("aaaaabcddeefgghjjjkaaaazzzzyxwaaaba"),
+            value: QString::from("aaaaabcddeefgghjjjkaaaazzzzyxwaaaba"),
         };
 
         let mut packet = Vec::new();
@@ -2488,7 +2498,7 @@ mod test {
     fn test_server_cmd_update_name_read_write_eq() {
         let src = ServerCmd::UpdateName {
             player_id: 7,
-            new_name: String::from("newname"),
+            new_name: QString::from("newname"),
         };
 
         let mut packet = Vec::new();
@@ -2571,7 +2581,7 @@ mod test {
     #[test]
     fn test_server_cmd_center_print_read_write_eq() {
         let src = ServerCmd::CenterPrint {
-            text: String::from("Center print test"),
+            text: QString::from("Center print test"),
         };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
@@ -2584,7 +2594,7 @@ mod test {
     #[test]
     fn test_server_cmd_finale_read_write_eq() {
         let src = ServerCmd::Finale {
-            text: String::from("Finale test"),
+            text: QString::from("Finale test"),
         };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
@@ -2608,7 +2618,7 @@ mod test {
     #[test]
     fn test_server_cmd_cutscene_read_write_eq() {
         let src = ServerCmd::Cutscene {
-            text: String::from("Cutscene test"),
+            text: QString::from("Cutscene test"),
         };
         let mut packet = Vec::new();
         src.serialize(&mut packet).unwrap();
@@ -2634,7 +2644,7 @@ mod test {
     #[test]
     fn test_client_cmd_move_read_write_eq() {
         let src = ClientCmd::Move {
-            send_time: Duration::milliseconds(1234),
+            send_time: Duration::try_milliseconds(1234).unwrap(),
             // have to use angles that won't lose precision from write_angle
             angles: Vector3::new(Deg(90.0), Deg(-90.0), Deg(0.0)),
             fwd_move: 27,
@@ -2669,7 +2679,7 @@ mod test {
     fn test_qsocket_send_msg_short() {
         let (mut src, mut dst) = gen_qsocket_pair();
 
-        let message = String::from("test message").into_bytes();
+        let message = QString::from("test message").raw;
         src.begin_send_msg(&message).unwrap();
         let received = dst.recv_msg(BlockingMode::Blocking).unwrap();
         assert_eq!(message, received);
@@ -2681,7 +2691,7 @@ mod test {
     fn test_qsocket_send_msg_unreliable_recv_msg_eq() {
         let (mut src, mut dst) = gen_qsocket_pair();
 
-        let message = String::from("test message").into_bytes();
+        let message = QString::from("test message").raw;
         src.send_msg_unreliable(&message).unwrap();
         let received = dst.recv_msg(BlockingMode::Blocking).unwrap();
         assert_eq!(message, received);

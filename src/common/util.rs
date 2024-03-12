@@ -15,13 +15,149 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::mem::size_of;
+use std::{
+    fmt, mem::{self, size_of}, ops::{Deref, Not}
+};
 
+use beef::Cow;
 use byteorder::{LittleEndian, ReadBytesExt};
+use nom::AsBytes;
 
 /// A plain-old-data type.
 pub trait Pod: 'static + Copy + Sized + Send + Sync {}
 impl<T: 'static + Copy + Sized + Send + Sync> Pod for T {}
+
+#[derive(Default, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum StringColor {
+    #[default]
+    Default,
+    Red,
+}
+
+impl Not for StringColor {
+    type Output = Self;
+    fn not(self) -> Self::Output {
+        match self {
+            Self::Default => Self::Red,
+            Self::Red => Self::Default,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct QStr<'a> {
+    pub raw: Cow<'a, [u8]>,
+}
+
+pub type QString = QStr<'static>;
+
+impl Default for QStr<'_> {
+    fn default() -> Self {
+        Self { raw: Cow::borrowed(&[]) }
+    }
+}
+
+impl<'a> From<&'a str> for QStr<'a> {
+    fn from(value: &'a str) -> Self {
+        Self {
+            raw: Cow::borrowed(value.as_bytes()),
+        }
+    }
+}
+
+impl From<String> for QString {
+    fn from(value: String) -> Self {
+        Self {
+            raw: Cow::owned(value.into_bytes()),
+        }
+    }
+}
+
+impl<'a> Deref for QStr<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &*self.raw
+    }
+}
+
+impl fmt::Display for QStr<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.to_str().fmt(f)
+    }
+}
+
+impl<'a> QStr<'a> {
+    /// Borrows this `QString` as a regular str, without any color information
+    pub fn to_str(&self) -> Cow<'_, str> {
+        self.reborrow().into_str()
+    }
+
+    /// Converts this `QString` into a regular str, without any color information
+    pub fn into_str(self) -> Cow<'a, str> {
+        let mut out = self.raw;
+        for i in 0..out.len() {
+            if out[i] >= 128 {
+                let mut new = out.into_owned();
+                new[i] %= 128;
+                out = new.into();
+            }
+        }
+
+        if out.is_owned() {
+            String::from_utf8(out.into_owned()).unwrap().into()
+        } else {
+            std::str::from_utf8(out.unwrap_borrowed()).unwrap().into()
+        }
+    }
+
+    pub fn into_string(self) -> String {
+        self.into_str().into_owned()
+    }
+
+    pub fn reborrow(&self) -> QStr<'_> {
+        QStr {
+            raw: Cow::borrowed(&*self.raw),
+        }
+    }
+
+    pub fn chars(&self) -> impl Iterator<Item = (char, StringColor)> + '_ {
+        self.raw.iter().copied().map(|b| {
+            (
+                (b % 128) as char,
+                if b >= 128 {
+                    StringColor::Red
+                } else {
+                    StringColor::Default
+                },
+            )
+        })
+    }
+
+    pub fn lines(&self) -> impl Iterator<Item = QStr<'_>> + '_ {
+        self.raw.chunk_by(|_, b| *b != b'\n').map(|bytes| QStr { raw: Cow::borrowed(bytes) })
+    }
+
+    pub fn clear(&mut self) {
+        if self.raw.is_owned() {
+            let mut raw = mem::take(&mut self.raw).into_owned();
+            raw.clear();
+            self.raw = raw.into();
+        } else {
+            self.raw = (&[][..]).into();
+        }
+    }
+
+    pub fn push_str<S: AsRef<str>>(&mut self, s: S) {
+        self.push_bytes(s.as_ref().as_bytes())
+    }
+
+    pub fn push_bytes<S: AsRef<[u8]>>(&mut self, s: S) {
+        let mut raw = mem::take(&mut self.raw).into_owned();
+        raw.extend_from_slice(s.as_ref());
+        self.raw = raw.into();
+    }
+}
 
 /// Read a `[f32; 3]` in little-endian byte order.
 pub fn read_f32_3<R>(reader: &mut R) -> Result<[f32; 3], std::io::Error>
@@ -39,14 +175,17 @@ where
 ///
 /// ## Panics
 /// - If the end of the input is reached before a zero byte is found.
-pub fn read_cstring<R>(src: &mut R) -> String
+pub fn read_cstring<R>(src: &mut R) -> QString
+// QStringOwned
 where
     R: std::io::BufRead,
 {
     let mut bytes: Vec<u8> = Vec::new();
     src.read_until(0, &mut bytes).unwrap();
     bytes.pop();
-    String::from_utf8_lossy(&*bytes).into_owned()
+    QStr {
+        raw: Cow::owned(bytes),
+    }
 }
 
 pub unsafe fn any_as_bytes<T>(t: &T) -> &[u8]

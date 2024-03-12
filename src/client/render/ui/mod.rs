@@ -174,14 +174,12 @@ impl ViewNode for UiPass {
         let menu = world.get_resource::<Menu>();
         let focus = world.resource::<InputFocus>();
 
-        // quad_commands must outlive final pass
         let mut quad_commands = Vec::new();
         let mut glyph_commands = Vec::new();
 
         let encoder = render_context.command_encoder();
         let diffuse_target = view_target.get_unsampled_color_attachment();
 
-        // final render pass: postprocess the world and draw the UI
         {
             let mut final_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Ui pass"),

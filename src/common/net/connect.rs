@@ -26,7 +26,7 @@ use std::{
 
 use crate::common::{
     net::{NetError, QSocket, MAX_MESSAGE},
-    util,
+    util::{self, QString},
 };
 
 use byteorder::{LittleEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
@@ -310,7 +310,7 @@ impl ConnectPacket for ResponseAccept {
 
 #[derive(Debug)]
 pub struct ResponseReject {
-    pub message: String,
+    pub message: QString,
 }
 
 impl ConnectPacket for ResponseReject {
@@ -327,7 +327,7 @@ impl ConnectPacket for ResponseReject {
     where
         W: WriteBytesExt,
     {
-        writer.write_all(self.message.as_bytes())?;
+        writer.write_all(&*self.message.raw)?;
         writer.write_u8(0)?;
         Ok(())
     }
@@ -588,7 +588,7 @@ impl ConnectListener {
 
         let request = match request_code {
             RequestCode::Connect => {
-                let game_name = util::read_cstring(&mut reader);
+                let game_name = util::read_cstring(&mut reader).into_string();
                 let proto_ver = reader.read_u8()?;
                 Request::Connect(RequestConnect {
                     game_name,
@@ -597,7 +597,7 @@ impl ConnectListener {
             }
 
             RequestCode::ServerInfo => {
-                let game_name = util::read_cstring(&mut reader);
+                let game_name = util::read_cstring(&mut reader).into_string();
                 Request::ServerInfo(RequestServerInfo { game_name })
             }
 
@@ -607,7 +607,7 @@ impl ConnectListener {
             }
 
             RequestCode::RuleInfo => {
-                let prev_cvar = util::read_cstring(&mut reader);
+                let prev_cvar = util::read_cstring(&mut reader).into_string();
                 Request::RuleInfo(RequestRuleInfo { prev_cvar })
             }
         };
@@ -716,9 +716,9 @@ impl ConnectSocket {
             }
 
             ResponseCode::ServerInfo => {
-                let address = util::read_cstring(&mut reader);
-                let hostname = util::read_cstring(&mut reader);
-                let levelname = util::read_cstring(&mut reader);
+                let address = util::read_cstring(&mut reader).into_string();
+                let hostname = util::read_cstring(&mut reader).into_string();
+                let levelname = util::read_cstring(&mut reader).into_string();
                 let client_count = reader.read_u8()?;
                 let client_max = reader.read_u8()?;
                 let protocol_version = reader.read_u8()?;

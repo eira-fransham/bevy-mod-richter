@@ -49,7 +49,7 @@ use crate::client::{
     render::{Palette, TextureData},
 };
 
-use super::{parse, vfs::Vfs, wad::Wad};
+use super::{parse, util::{QStr, QString}, vfs::Vfs, wad::Wad};
 
 pub struct RichterConsolePlugin;
 
@@ -1333,7 +1333,7 @@ impl Timestamp {
 #[derive(Resource, Default, Debug)]
 pub struct ConsoleOutput {
     generation: u16,
-    center_print: Option<(Timestamp, String)>,
+    center_print: Option<(Timestamp, QString)>,
     buffer_ty: OutputType,
     buffer: String,
     last_timestamp: i64,
@@ -1343,7 +1343,7 @@ pub struct ConsoleOutput {
 #[derive(Resource, Default)]
 pub struct RenderConsoleOutput {
     pub text_chunks: BTreeMap<Timestamp, ConsoleText>,
-    pub center_print: (Timestamp, String),
+    pub center_print: (Timestamp, QString),
 }
 
 impl ConsoleOutput {
@@ -1425,7 +1425,7 @@ impl ConsoleOutput {
         out
     }
 
-    pub fn set_center_print<S: Into<String>>(&mut self, print: S, timestamp: Duration) {
+    pub fn set_center_print<S: Into<QString>>(&mut self, print: S, timestamp: Duration) {
         let generation = self.generation();
         self.center_print = Some((
             Timestamp::new(timestamp.num_milliseconds(), generation),
@@ -1433,7 +1433,7 @@ impl ConsoleOutput {
         ));
     }
 
-    pub fn drain_center_print(&mut self) -> Option<(Timestamp, String)> {
+    pub fn drain_center_print(&mut self) -> Option<(Timestamp, QString)> {
         self.center_print.take()
     }
 
@@ -1451,9 +1451,9 @@ impl RenderConsoleOutput {
             .map(|(Timestamp { timestamp: k, .. }, v)| (*k, v))
     }
 
-    pub fn center_print(&self, since: Duration) -> Option<&str> {
+    pub fn center_print(&self, since: Duration) -> Option<QStr> {
         if self.center_print.0.timestamp >= since.num_milliseconds() {
-            Some(&*self.center_print.1)
+            Some(self.center_print.1.reborrow())
         } else {
             None
         }
@@ -1595,11 +1595,12 @@ mod console_text {
 
     #[derive(Component, Debug)]
     pub struct AtlasText {
-        pub text: String,
+        pub text: QString,
         pub image: UiImage,
         pub line_padding: UiRect,
         pub layout: Handle<TextureAtlasLayout>,
         pub glyph_size: (Val, Val),
+        pub justify: JustifyContent,
     }
 
     pub mod systems {
@@ -1621,14 +1622,16 @@ mod console_text {
                                 style: Style {
                                     flex_direction: FlexDirection::Row,
                                     min_height: text.glyph_size.1,
+                                    width: Val::Percent(100.),
                                     flex_wrap: FlexWrap::Wrap,
                                     padding: text.line_padding.clone(),
+                                    justify_content: text.justify.clone(),
                                     ..default()
                                 },
                                 ..default()
                             })
                             .with_children(|commands| {
-                                for chr in line.chars() {
+                                for chr in &*line.raw {
                                     if chr.is_ascii_whitespace() {
                                         commands.spawn(NodeBundle {
                                             style: Style {
@@ -1643,7 +1646,7 @@ mod console_text {
                                             image: text.image.clone(),
                                             texture_atlas: TextureAtlas {
                                                 layout: text.layout.clone(),
-                                                index: chr as _,
+                                                index: *chr as usize,
                                             },
                                             style: Style {
                                                 width: text.glyph_size.0,
@@ -1689,13 +1692,14 @@ mod systems {
                         width: Val::Percent(100.),
                         top: Val::Percent(30.),
                         justify_content: JustifyContent::Center,
+                        flex_direction: FlexDirection::Column,
                         ..default()
                     },
                     z_index: ZIndex::Global(1),
                     ..default()
                 },
                 AtlasText {
-                    text: "Hello, world!".into(),
+                    text: "".into(),
                     image: image.clone(),
                     layout: layout.clone(),
                     glyph_size: (glyph_size.0 * 1.5, glyph_size.1 * 1.5),
@@ -1703,6 +1707,7 @@ mod systems {
                         top: Val::Px(4.),
                         ..default()
                     },
+                    justify: JustifyContent::Center,
                 },
                 ConsoleTextCenterPrintUi,
             ));
@@ -1725,6 +1730,7 @@ mod systems {
                         ..default()
                     },
                     glyph_size: (glyph_size.0, glyph_size.1),
+                    justify: JustifyContent::Center,
                 },
                 AlertOutput::default(),
             ));
@@ -1821,6 +1827,7 @@ mod systems {
                                         top: Val::Px(4.),
                                         ..default()
                                     },
+                                    justify: JustifyContent::FlexStart,
                                 },
                                 ConsoleTextOutputUi,
                             ));
@@ -1841,6 +1848,7 @@ mod systems {
                                         top: Val::Px(4.),
                                         ..default()
                                     },
+                                    justify: JustifyContent::FlexStart,
                                 },
                                 ConsoleTextInputUi,
                             ));
@@ -1922,7 +1930,7 @@ mod systems {
             }
 
             if !console_out.center_print.1.is_empty() {
-                text.text.push_str(&console_out.center_print.1);
+                text.text.push_bytes(&*console_out.center_print.1.raw);
             }
         }
     }
@@ -1932,7 +1940,7 @@ mod systems {
         mut in_ui: Query<&mut AtlasText, With<ConsoleTextInputUi>>,
     ) {
         for mut text in in_ui.iter_mut() {
-            if console_in.cur_text == text.text {
+            if console_in.cur_text.as_bytes() == &*text.text.raw {
                 continue;
             }
 

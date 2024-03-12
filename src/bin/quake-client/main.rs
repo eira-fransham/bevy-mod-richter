@@ -34,7 +34,7 @@ use bevy::{
     },
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
-    render::camera::Exposure,
+    render::{camera::Exposure, view::ColorGrading},
     window::{PresentMode, WindowTheme},
 };
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
@@ -135,11 +135,14 @@ fn adjust_exposure(
 
 fn cmd_exposure(
     In(args): In<Box<[String]>>,
-    mut adjusts: Query<&mut ExposureAdjust>,
+    mut gradings: Query<&mut ColorGrading>,
 ) -> ExecResult {
-    let (exposure, offset) = match &*args {
-        [new_exposure] => (new_exposure, None),
-        [new_exposure, new_offset] => (new_exposure, Some(new_offset)),
+    let exposure = match &*args {
+        [] => {
+            let exposures = gradings.iter().map(|g| format!("{} ", g.exposure)).collect::<String>();
+            return format!("exposure: {}", exposures).into();
+        }
+        [new_exposure] => new_exposure,
         _ => return "usage: r_exposure [EXPOSURE]".into(),
     };
 
@@ -147,17 +150,34 @@ fn cmd_exposure(
         Ok(exposure) => exposure,
         Err(e) => return format!("couldn't parse exposure: {}", e).into(),
     };
-    let offset: Option<f32> = match offset.map(|offset| offset.parse()) {
-        Some(Ok(offset)) => Some(offset),
-        None => None,
-        Some(Err(e)) => return format!("couldn't parse exposure: {}", e).into(),
+
+    for mut grading in &mut gradings {
+        grading.exposure = exposure;
+    }
+
+    default()
+}
+
+fn cmd_saturation(
+    In(args): In<Box<[String]>>,
+    mut gradings: Query<&mut ColorGrading>,
+) -> ExecResult {
+    let saturation = match &*args {
+        [] => {
+            let saturations = gradings.iter().map(|g| format!("{} ", g.exposure)).collect::<String>();
+            return format!("saturation: {}", saturations).into();
+        }
+        [new_exposure] => new_exposure,
+        _ => return "usage: r_saturation [SATURATION]".into(),
     };
 
-    for mut adjust in &mut adjusts {
-        adjust.set_scale(exposure);
-        if let Some(offset) = offset {
-            adjust.set_offset(offset);
-        }
+    let saturation: f32 = match saturation.parse() {
+        Ok(saturation) => saturation,
+        Err(e) => return format!("couldn't parse saturation: {}", e).into(),
+    };
+
+    for mut grading in &mut gradings {
+        grading.pre_saturation = saturation;
     }
 
     default()
@@ -185,7 +205,7 @@ fn cmd_tonemapping(
 
 fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
     move |mut commands, mut console_cmds| {
-        // camera
+        // main game camera
         commands.spawn((
             Camera3dBundle {
                 transform: Transform::from_translation(Vec3::new(0.0, 0.0, 5.0))
@@ -194,7 +214,10 @@ fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
                     hdr: true,
                     ..default()
                 },
-                exposure: Exposure::INDOOR,
+                color_grading: ColorGrading {
+                    exposure: 2.,
+                    ..default()
+                },
                 tonemapping: Tonemapping::TonyMcMapface,
                 ..default()
             },
@@ -285,6 +308,11 @@ fn main() -> ExitCode {
         "r_exposure",
         cmd_exposure,
         "Adjust the exposure of the screen by a factor and an optional offset",
+    )
+    .command(
+        "r_saturation",
+        cmd_saturation,
+        "Adjust the color saturation of the screen (applied before tonemapping)",
     )
     .command(
         "r_tonemapping",

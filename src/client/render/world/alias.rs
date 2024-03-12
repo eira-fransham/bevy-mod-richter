@@ -457,16 +457,19 @@ impl AliasRenderer {
         keyframe_id: usize,
         texture_id: usize,
     ) {
-        if let Some(keyframe) = self.keyframes.get(keyframe_id).map(|k| k.animate(time)) {
-            pass.set_pipeline(state.alias_pipeline().pipeline());
-            pass.set_vertex_buffer(0, *self.vertex_buffer.slice(..));
+        let Some(keyframe) = self.keyframes.get(keyframe_id).map(|k| k.animate(time)) else {
+            return;
+        };
+        let Some(tex) = self.textures.get(texture_id) else {
+            return;
+        };
 
-            pass.set_bind_group(
-                BindGroupLayoutId::PerTexture as u32,
-                self.textures[texture_id].animate(time),
-                &[],
-            );
-            pass.draw(keyframe, 0..1)
-        }
+        pass.set_pipeline(state.alias_pipeline().pipeline());
+        pass.set_vertex_buffer(0, *self.vertex_buffer.slice(..));
+
+        let tex = tex.animate(time);
+
+        pass.set_bind_group(BindGroupLayoutId::PerTexture as u32, tex, &[]);
+        pass.draw(keyframe, 0..1)
     }
 }

@@ -33,6 +33,8 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use failure::{bail, Backtrace, Context, Error, Fail};
 use fxhash::FxHashMap;
 
+use super::util::QString;
+
 // see definition of lumpinfo_t:
 // https://github.com/id-Software/Quake/blob/master/WinQuake/wad.h#L54-L63
 const MAGIC: u32 = 'W' as u32 | ('A' as u32) << 8 | ('D' as u32) << 16 | ('2' as u32) << 24;
@@ -148,7 +150,7 @@ impl QPic {
 struct LumpInfo {
     offset: u32,
     size: u32,
-    name: String,
+    name: QString,
 }
 
 pub struct Wad {
@@ -199,7 +201,7 @@ impl Wad {
             (&mut reader)
                 .take(lump_info.size as u64)
                 .read_to_end(&mut data)?;
-            files.insert(lump_info.name.to_owned(), data.into_boxed_slice());
+            files.insert(lump_info.name.into_string(), data.into_boxed_slice());
         }
 
         Ok(Wad { files })

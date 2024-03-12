@@ -62,6 +62,7 @@ use chrono::Duration;
 use failure::Error;
 use fxhash::FxHashMap;
 use lazy_static::lazy_static;
+use num::Zero;
 
 pub struct BrushPipeline {
     pipeline: RenderPipeline,
@@ -425,7 +426,10 @@ impl BrushRendererBuilder {
         if tex.name().starts_with("*") {
             // tessellate the surface so we can do texcoord warping
             let verts = warp::subdivide(no_collinear);
-            let normal = (verts[0] - verts[1]).cross(verts[2] - verts[1]).normalize();
+            let normal = match &*verts {
+                [a, b, c, ..] => (a - b).cross(c - b).normalize(),
+                _ => Vector3::zero(),
+            };
             for vert in verts.into_iter() {
                 self.vertices.push(BrushVertex {
                     position: vert.into(),
@@ -448,7 +452,10 @@ impl BrushRendererBuilder {
             // v2 takes the previous value of v3.
             // v3 is the newest vertex.
             let verts = no_collinear;
-            let normal = (verts[0] - verts[1]).cross(verts[2] - verts[1]).normalize();
+            let normal = match &*verts {
+                [a, b, c, ..] => (a - b).cross(c - b).normalize(),
+                _ => Vector3::zero(),
+            };
             let mut vert_iter = verts.into_iter();
 
             let v1 = vert_iter.next().unwrap();
