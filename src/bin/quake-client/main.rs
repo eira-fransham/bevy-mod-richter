@@ -23,7 +23,7 @@
 mod capture;
 mod menu;
 
-use std::{fs, net::SocketAddr, path::PathBuf, process::ExitCode};
+use std::{borrow::Cow, fs, net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use bevy::{
     audio::AudioPlugin,
@@ -34,7 +34,7 @@ use bevy::{
     },
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
-    render::view::ColorGrading,
+    render::{camera::Exposure, view::ColorGrading},
     window::{PresentMode, WindowTheme},
 };
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
@@ -71,26 +71,40 @@ struct Opt {
 
 const EXPOSURE_CURVE: &[[f32; 2]] = &[[-16., -8.], [0., 0.]];
 
-fn cmd_exposure(In(args): In<Box<[String]>>, mut gradings: Query<&mut ColorGrading>) -> ExecResult {
+fn cmd_exposure(In(args): In<Box<[String]>>, mut exposures: Query<&mut Exposure>) -> ExecResult {
     let exposure = match &*args {
         [] => {
-            let exposures = gradings
+            let exposures = exposures
                 .iter()
-                .map(|g| format!("{} ", g.exposure))
+                .map(|exposure| -> Cow<str> {
+                    match exposure.ev100 {
+                        Exposure::EV100_INDOOR => "indoor ".into(),
+                        Exposure::EV100_BLENDER => "blender ".into(),
+                        Exposure::EV100_SUNLIGHT => "sunlight ".into(),
+                        Exposure::EV100_OVERCAST => "overcast ".into(),
+                        _ => format!("{} ", exposure.ev100).into(),
+                    }
+                })
                 .collect::<String>();
             return format!("exposure: {}", exposures).into();
         }
         [new_exposure] => new_exposure,
-        _ => return "usage: r_exposure [EXPOSURE]".into(),
+        _ => return "usage: r_exposure [indoor|blender|sunlight|overcast|EV100]".into(),
     };
 
-    let exposure: f32 = match exposure.parse() {
-        Ok(exposure) => exposure,
-        Err(e) => return format!("couldn't parse exposure: {}", e).into(),
+    let new_exposure = match &**exposure {
+        "indoor" => Exposure::INDOOR,
+        "blender" => Exposure::BLENDER,
+        "sunlight" => Exposure::SUNLIGHT,
+        "overcast" => Exposure::OVERCAST,
+        _ => match exposure.parse() {
+            Ok(exposure) => Exposure { ev100: exposure },
+            Err(e) => return format!("couldn't parse exposure: {}", e).into(),
+        },
     };
 
-    for mut grading in &mut gradings {
-        grading.exposure = exposure;
+    for mut exposure in &mut exposures {
+        *exposure = new_exposure;
     }
 
     default()
@@ -104,7 +118,7 @@ fn cmd_saturation(
         [] => {
             let saturations = gradings
                 .iter()
-                .map(|g| format!("{} ", g.exposure))
+                .map(|g| format!("{} ", g.pre_saturation))
                 .collect::<String>();
             return format!("saturation: {}", saturations).into();
         }
@@ -119,6 +133,31 @@ fn cmd_saturation(
 
     for mut grading in &mut gradings {
         grading.pre_saturation = saturation;
+    }
+
+    default()
+}
+
+fn cmd_gamma(In(args): In<Box<[String]>>, mut gradings: Query<&mut ColorGrading>) -> ExecResult {
+    let gamma = match &*args {
+        [] => {
+            let gammas = gradings
+                .iter()
+                .map(|g| format!("{} ", g.gamma))
+                .collect::<String>();
+            return format!("gamma: {}", gammas).into();
+        }
+        [new_exposure] => new_exposure,
+        _ => return "usage: r_gamma [SATURATION]".into(),
+    };
+
+    let gamma: f32 = match gamma.parse() {
+        Ok(gamma) => gamma,
+        Err(e) => return format!("couldn't parse gamma: {}", e).into(),
+    };
+
+    for mut grading in &mut gradings {
+        grading.gamma = gamma;
     }
 
     default()
@@ -198,6 +237,9 @@ fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
                     hdr: true,
                     ..default()
                 },
+                exposure: Exposure::INDOOR,
+                // In addition to the in-camera exposure, we add a post exposure grading
+                // in order to adjust the brightness on the UI elements.
                 color_grading: ColorGrading {
                     exposure: 2.,
                     ..default()
@@ -282,9 +324,15 @@ fn main() -> ExitCode {
         main_menu: menu::build_main_menu,
     })
     .add_plugins(CapturePlugin)
+    // TODO: Make these into cvars - should we allow cvars to access arbitrary parts of the world on get/set?
     .command(
         "r_exposure",
         cmd_exposure,
+        "Adjust the exposure of the screen by a factor and an optional offset",
+    )
+    .command(
+        "r_gamma",
+        cmd_gamma,
         "Adjust the exposure of the screen by a factor and an optional offset",
     )
     .command(

@@ -13,7 +13,7 @@ layout(set = 0, binding = 4) uniform texture2D u_depth;
 layout(set = 0, binding = 5) uniform DeferredUniforms {
   mat4 inv_projection;
   uint light_count;
-  uint _pad1;
+  float exposure;
   uvec2 _pad2;
   vec4 lights[MAX_LIGHTS];
 } u_deferred;
@@ -65,5 +65,5 @@ void main() {
     }
   }
 
-  color_attachment = vec4(pow(max(MIN_LIGHT, light), 1.3) * out_color.rgb, 1.0);
+  color_attachment = vec4(u_deferred.exposure * max(MIN_LIGHT, light) * out_color.rgb, 1.0);
 }

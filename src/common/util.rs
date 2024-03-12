@@ -184,7 +184,6 @@ impl<'a> QStr<'a> {
         } else {
             self.raw = (&mem::take(&mut self.raw).unwrap_borrowed()[..to]).into();
         }
-    
     }
 }
 

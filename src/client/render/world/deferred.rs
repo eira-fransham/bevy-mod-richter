@@ -1,10 +1,11 @@
 use std::{mem::size_of, num::NonZeroU64, slice};
 
 use bevy::{
-    core_pipeline::{core_3d::Camera3d, prepass::ViewPrepassTextures},
+    core_pipeline::prepass::ViewPrepassTextures,
     ecs::system::Resource,
     prelude::default,
     render::{
+        camera::ExtractedCamera,
         render_graph::{RenderLabel, ViewNode},
         render_resource::{
             BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, TextureView,
@@ -36,7 +37,8 @@ pub struct PointLight {
 pub struct DeferredUniforms {
     pub inv_projection: [[f32; 4]; 4],
     pub light_count: u32,
-    pub _pad: [u32; 3],
+    pub exposure: f32,
+    pub _pad: [u32; 2],
     pub lights: [PointLight; MAX_LIGHTS],
 }
 
@@ -61,7 +63,8 @@ impl DeferredPipeline {
             contents: bytemuck::cast_slice(&[DeferredUniforms {
                 inv_projection: Matrix4::identity().into(),
                 light_count: 0,
-                _pad: [0; 3],
+                exposure: 0.,
+                _pad: default(),
                 lights: [PointLight {
                     origin: [0.; 3],
                     radius: 0.0,
@@ -331,16 +334,22 @@ impl ViewNode for DeferredPass {
     type ViewQuery = (
         &'static ViewTarget,
         &'static ViewPrepassTextures,
-        &'static Camera3d,
+        &'static ExtractedCamera,
     );
 
     fn run<'w>(
         &self,
         _graph: &mut bevy::render::render_graph::RenderGraphContext,
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
-        (target, prepass, _): (&ViewTarget, &ViewPrepassTextures, &Camera3d),
+        (target, prepass, extracted_camera): (&ViewTarget, &ViewPrepassTextures, &ExtractedCamera),
         world: &'w bevy::prelude::World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
+        // Bevy's physically-based renderer assumes lighting in lumens, so we multiply the lighting by a "fudge factor"
+        // which adapts Quake's more-direct 0..1 lighting levels to something which more-closely matches the expected
+        // lighting level. This is calibrated assuming "indoor" lighting levels, as Quake's environments are mostly
+        // indoor and so that seems to make most physical sense.
+        const EXPOSURE_MULTIPLIER: f32 = 200.;
+
         let gfx_state = world.resource::<GraphicsState>();
         let conn = world.get_resource::<RenderState>();
         let queue = world.resource::<RenderQueue>();
@@ -435,7 +444,8 @@ impl ViewNode for DeferredPass {
             let uniforms = DeferredUniforms {
                 inv_projection: camera.inverse_projection().into(),
                 light_count,
-                _pad: [0; 3],
+                exposure: EXPOSURE_MULTIPLIER * extracted_camera.exposure,
+                _pad: default(),
                 lights,
             };
 
