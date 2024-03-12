@@ -105,6 +105,20 @@ impl Plugin for RichterConsolePlugin {
                     systems::execute_console,
                     systems::update_cvars,
                 ),
+            )
+            .command(
+                "stuffcmds",
+                |In(args): In<Box<[String]>>, mut input: ResMut<ConsoleInput>| -> ExecResult {
+                    if !args.is_empty() {
+                        return "usage: stuffcmds".into();
+                    }
+
+                    ExecResult {
+                        extra_commands: Box::new(mem::take(&mut input.stuffcmds).into_iter()),
+                        ..default()
+                    }
+                },
+                "Run the commands from the input arguments",
             );
     }
 }
@@ -1345,6 +1359,7 @@ where
 pub struct ConsoleInput {
     editor: Editor<ConsoleInputContext>,
     keymap: Emacs,
+    pub stuffcmds: Vec<RunCmd<'static>>,
 }
 
 #[derive(Resource, Default)]
@@ -1382,6 +1397,7 @@ impl ConsoleInput {
         Ok(ConsoleInput {
             editor,
             keymap: Emacs::new(),
+            stuffcmds: default(),
         })
     }
 

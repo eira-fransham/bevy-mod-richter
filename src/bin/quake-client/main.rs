@@ -23,7 +23,7 @@
 mod capture;
 mod menu;
 
-use std::{borrow::Cow, fs, net::SocketAddr, path::PathBuf, process::ExitCode};
+use std::{fs, net::SocketAddr, path::PathBuf, process::ExitCode};
 
 use bevy::{
     audio::AudioPlugin,
@@ -41,7 +41,7 @@ use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
 use capture::CapturePlugin;
 use richter::{
     client::RichterPlugin,
-    common::console::{Cvar, ExecResult, RegisterCmdExt as _, RunCmd},
+    common::console::{CommandImpl, ConsoleInput, RegisterCmdExt as _, RunCmd},
 };
 use serde_lexpr::Value;
 use structopt::StructOpt;
@@ -57,9 +57,6 @@ struct Opt {
     #[structopt(long)]
     demos: Vec<String>,
 
-    #[structopt(short, long)]
-    commands: Option<String>,
-
     #[structopt(long)]
     base_dir: Option<PathBuf>,
 
@@ -68,6 +65,8 @@ struct Opt {
 
     #[structopt(long)]
     game: Option<String>,
+
+    commands: Vec<String>,
 }
 
 const EXPOSURE_CURVE: &[[f32; 2]] = &[[-16., -8.], [0., 0.]];
@@ -175,8 +174,8 @@ fn cmd_tonemapping(In(new_tonemapping): In<Value>, mut tonemapping: Query<&mut T
     }
 }
 
-fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
-    move |mut commands, mut console_cmds| {
+fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<ConsoleInput>, EventWriter<RunCmd<'static>>) {
+    move |mut commands, mut input: ResMut<ConsoleInput>, mut console_cmds| {
         // main game camera
         commands.spawn((
             Camera3dBundle {
@@ -219,13 +218,39 @@ fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
             console_cmds.send(format!("r_tonemapping {}", tonemapping).parse().unwrap());
         }
 
-        if let Some(extra_commands) = &opt.commands {
-            console_cmds.send_batch(
-                RunCmd::parse_many(extra_commands)
-                    .unwrap()
-                    .into_iter()
-                    .map(RunCmd::into_owned),
-            );
+        let mut commands = opt.commands.iter();
+        let mut next = commands.next();
+        while let Some(cur) = next {
+            if let Some(rest) = cur.strip_prefix("+") {
+                let mut cmd = rest.to_string();
+                loop {
+                    next = commands.next();
+
+                    if let Some(arg) = next {
+                        if arg.starts_with("+") {
+                            break;
+                        }
+
+                        cmd.push(' ');
+                        cmd.push_str(arg);
+                    } else {
+                        break;
+                    }
+                }
+
+                let runcmd = match RunCmd::parse(&*cmd) {
+                    Ok(cmd) => cmd.into_owned(),
+                    Err(e) => {
+                        warn!("Couldn't parse cmd {:?}: {}", cmd, e);
+                        continue;
+                    }
+                };
+
+                input.stuffcmds.push(runcmd);
+            } else {
+                warn!("Arg without command: {}", cur);
+                next = commands.next();
+            }
         }
     }
 }

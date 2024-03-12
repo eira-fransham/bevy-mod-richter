@@ -19,10 +19,13 @@
 // SOFTWARE.
 
 use bevy::{
-    app::AppExit, ecs::{
+    app::AppExit,
+    ecs::{
         event::{EventWriter, Events},
         system::{In, Query, ResMut},
-    }, log::warn, render::view::ColorGrading
+    },
+    log::warn,
+    render::view::ColorGrading,
 };
 use richter::{
     client::menu::{Menu, MenuBodyView, MenuBuilder, MenuView},
