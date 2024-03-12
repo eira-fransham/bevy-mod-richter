@@ -9,7 +9,7 @@ use std::{
 use bevy::{prelude::*, render::view::screenshot::ScreenshotManager, window::PrimaryWindow};
 use chrono::Utc;
 use image::RgbImage;
-use richter::common::console::{ExecResult, RegisterCmdExt as _};
+use seismon::common::console::{ExecResult, RegisterCmdExt as _};
 
 pub struct CapturePlugin;
 

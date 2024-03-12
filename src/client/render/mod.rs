@@ -129,7 +129,7 @@ use failure::Error;
 
 use super::{state::ClientState, Connection, ConnectionKind, ConnectionState};
 
-pub struct RichterRenderPlugin;
+pub struct SeismonRenderPlugin;
 
 fn extract_now<U: Resource, V: ExtractResource<Source = U>>(app: &mut App) {
     let res = V::extract_resource(app.world.resource::<U>());
@@ -139,7 +139,7 @@ fn extract_now<U: Resource, V: ExtractResource<Source = U>>(app: &mut App) {
     render_app.insert_resource(res);
 }
 
-impl Plugin for RichterRenderPlugin {
+impl Plugin for SeismonRenderPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         #[derive(Hash, Debug, PartialEq, Eq, Copy, Clone, ScheduleLabel)]
         struct RenderSetup;

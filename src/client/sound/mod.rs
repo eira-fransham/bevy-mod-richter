@@ -144,9 +144,9 @@ fn create_mixer() -> ReverbNode {
     ((multipass() & 0.3 * reverb_stereo(20.0, 0.8) & 0.2 * delay) >> limiter_stereo(0.05)).0
 }
 
-pub struct RichterSoundPlugin;
+pub struct SeismonSoundPlugin;
 
-impl Plugin for RichterSoundPlugin {
+impl Plugin for SeismonSoundPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         let mixer = create_mixer();
 

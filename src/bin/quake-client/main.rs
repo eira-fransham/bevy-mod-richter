@@ -23,7 +23,7 @@
 mod capture;
 mod menu;
 
-use std::{fs, path::PathBuf, process::ExitCode};
+use std::{path::PathBuf, process::ExitCode};
 
 use bevy::{
     audio::AudioPlugin,
@@ -37,10 +37,11 @@ use bevy::{
     render::{camera::Exposure, view::ColorGrading},
     window::{PresentMode, WindowTheme},
 };
+#[cfg(feature = "auto-exposure")]
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
 use capture::CapturePlugin;
-use richter::{
-    client::RichterPlugin,
+use seismon::{
+    client::SeismonPlugin,
     common::console::{ConsoleInput, RegisterCmdExt as _, RunCmd},
 };
 use serde_lexpr::Value;
@@ -56,8 +57,6 @@ struct Opt {
 
     commands: Vec<String>,
 }
-
-const EXPOSURE_CURVE: &[[f32; 2]] = &[[-16., -8.], [0., 0.]];
 
 fn cmd_exposure(In(val): In<Value>, mut exposures: Query<&mut Exposure>) {
     let new_exposure = match val.as_str().or(val.as_symbol()) {
@@ -107,11 +106,14 @@ fn cmd_gamma(In(gamma): In<Value>, mut gradings: Query<&mut ColorGrading>) {
     }
 }
 
+#[cfg(feature = "auto-exposure")]
 fn cmd_autoexposure(
     In(autoexposure): In<Value>,
     mut commands: Commands,
     mut cameras: Query<(Entity, Option<&AutoExposure>), With<Camera3d>>,
 ) {
+    const EXPOSURE_CURVE: &[[f32; 2]] = &[[-16., -8.], [0., 0.]];
+
     let enabled: bool = match autoexposure.as_str().or(autoexposure.as_symbol()) {
         Some("on") => true,
         Some("off") => false,
@@ -233,8 +235,8 @@ fn main() -> ExitCode {
     let default_plugins = DefaultPlugins
         .set(WindowPlugin {
             primary_window: Some(bevy::window::Window {
-                title: "Richter client".into(),
-                name: Some("Richter client".into()),
+                title: "Seismon client".into(),
+                name: Some("Seismon client".into()),
                 resolution: (1366., 768.).into(),
                 present_mode: PresentMode::AutoVsync,
                 // Tells wasm not to override default event handling, like F5, Ctrl+R etc.
@@ -254,12 +256,10 @@ fn main() -> ExitCode {
         .disable::<AudioPlugin>()
         .add(bevy_mod_dynamicaudio::AudioPlugin::default());
 
-    app.add_plugins(
-        default_plugins
-    )
-    .insert_resource(Msaa::Off)
-    .add_plugins(AutoExposurePlugin)
-    .add_plugins(RichterPlugin {
+    app.add_plugins(default_plugins).insert_resource(Msaa::Off);
+
+    app
+    .add_plugins(SeismonPlugin {
         base_dir: opt.base_dir.clone(),
         game: opt.game.clone(),
         main_menu: menu::build_main_menu,
@@ -289,21 +289,16 @@ fn main() -> ExitCode {
         "blender",
         cmd_tonemapping,
         "Set the tonemapping type - Tony McMapFace (TMMF), ACES, Blender Filmic, Somewhat Boring Display Transform (SBBT), or none",
-    )
-    .cvar_on_set(
+    ).insert_resource(DefaultOpaqueRendererMethod::deferred())
+        .add_systems(Startup, startup(opt));
+
+    #[cfg(feature = "auto-exposure")]
+    app.add_plugins(AutoExposurePlugin).cvar_on_set(
         "r_autoexposure",
         "off",
         cmd_autoexposure,
         "Enable/disable automatic exposure compensation",
-    )
-    .insert_resource(DefaultOpaqueRendererMethod::deferred())
-    .add_systems(Startup, startup(opt));
-
-    fs::write(
-        "debug-out.dot",
-        bevy_mod_debugdump::render_graph_dot(&app, &Default::default()),
-    )
-    .unwrap();
+    );
 
     app.run();
 

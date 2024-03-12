@@ -1,7 +1,0 @@
-{% extends "base.html" %}
-
-{% block title %}Home{% endblock title %}
-{% block style %}
-<link rel="stylesheet" href="{{ get_url(path='style.css', trailing_slash=false) }}" />
-{% endblock style %}
-{% block main %}{{ section.content | safe }}{% endblock main %}

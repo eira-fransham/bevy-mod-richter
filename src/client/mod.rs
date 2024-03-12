@@ -31,10 +31,10 @@ pub mod trace;
 pub mod view;
 
 use self::{
-    input::RichterInputPlugin,
+    input::SeismonInputPlugin,
     menu::{MenuBodyView, MenuBuilder, MenuView},
-    render::{RenderResolution, RichterRenderPlugin},
-    sound::{MixerEvent, RichterSoundPlugin},
+    render::{RenderResolution, SeismonRenderPlugin},
+    sound::{MixerEvent, SeismonSoundPlugin},
 };
 
 use std::{collections::VecDeque, io::BufReader, net::ToSocketAddrs, path::PathBuf};
@@ -50,7 +50,7 @@ use crate::{
     },
     common::{
         self,
-        console::{ConsoleError, ConsoleOutput, RichterConsolePlugin},
+        console::{ConsoleError, ConsoleOutput, SeismonConsolePlugin},
         engine,
         model::{Model, ModelError},
         net::{
@@ -102,7 +102,7 @@ const CONSOLE_DIVIDER: &str = "\
 \n\n";
 
 #[derive(Default)]
-pub struct RichterPlugin<
+pub struct SeismonPlugin<
     F = Box<dyn Fn(MenuBuilder) -> Result<Menu, failure::Error> + Send + Sync + 'static>,
 > {
     pub base_dir: Option<PathBuf>,
@@ -120,7 +120,7 @@ fn build_default(builder: MenuBuilder) -> Result<Menu, failure::Error> {
     }))
 }
 
-impl RichterPlugin {
+impl SeismonPlugin {
     pub fn new() -> Self {
         Self {
             base_dir: None,
@@ -131,12 +131,12 @@ impl RichterPlugin {
 }
 
 #[derive(Clone, Resource, ExtractResource)]
-pub struct RichterGameSettings {
+pub struct SeismonGameSettings {
     pub base_dir: PathBuf,
     pub game: Option<String>,
 }
 
-impl<F> Plugin for RichterPlugin<F>
+impl<F> Plugin for SeismonPlugin<F>
 where
     F: Fn(MenuBuilder) -> Result<Menu, failure::Error> + Clone + Send + Sync + 'static,
 {
@@ -146,7 +146,7 @@ where
         }
 
         let app = app
-            .insert_resource(RichterGameSettings {
+            .insert_resource(SeismonGameSettings {
                 base_dir: self
                     .base_dir
                     .clone()
@@ -177,10 +177,10 @@ where
                     }),
                 ),
             )
-            .add_plugins(RichterConsolePlugin)
-            .add_plugins(RichterRenderPlugin)
-            .add_plugins(RichterSoundPlugin)
-            .add_plugins(RichterInputPlugin);
+            .add_plugins(SeismonConsolePlugin)
+            .add_plugins(SeismonRenderPlugin)
+            .add_plugins(SeismonSoundPlugin)
+            .add_plugins(SeismonInputPlugin);
 
         cvars::register_cvars(app);
         commands::register_commands(app);

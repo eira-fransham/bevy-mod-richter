@@ -24,7 +24,7 @@ use std::{
 };
 
 use crate::{
-    client::RichterGameSettings,
+    client::SeismonGameSettings,
     common::pak::{Pak, PakError},
 };
 
@@ -51,7 +51,7 @@ pub struct Vfs {
 
 impl FromWorld for Vfs {
     fn from_world(world: &mut World) -> Self {
-        if let Some(settings) = world.get_resource::<RichterGameSettings>() {
+        if let Some(settings) = world.get_resource::<SeismonGameSettings>() {
             Self::with_base_dir(settings.base_dir.clone(), settings.game.as_deref())
         } else {
             Self::new()

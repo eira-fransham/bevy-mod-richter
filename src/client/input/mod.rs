@@ -26,9 +26,9 @@ use bevy::{
 
 use self::{game::GameInput, systems::InputEventReader};
 
-pub struct RichterInputPlugin;
+pub struct SeismonInputPlugin;
 
-impl Plugin for RichterInputPlugin {
+impl Plugin for SeismonInputPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         app.init_resource::<InputFocus>()
             .init_resource::<GameInput>()

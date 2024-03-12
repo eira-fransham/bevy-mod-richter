@@ -1,5 +1,5 @@
 [package]
-name = "richter"
+name = "seismon"
 version = "0.2.0"
 authors = ["Eira Fransham <eira.fransham@gmail.com>", "Cormac O'Brien <cormac@c-obrien.org>"]
 edition = "2021"
@@ -10,8 +10,7 @@ arrayvec = "0.7"
 beef = "0.5"
 bevy = { version = "0.13", features = ["vorbis", "wav", "flac"] }
 # TODO: Need to use git checkout for bevy 0.13 compatibility
-bevy_mod_auto_exposure = { git = "https://github.com/Kurble/bevy_mod_auto_exposure.git" }
-bevy_mod_debugdump = "0.10"
+bevy_mod_auto_exposure = { git = "https://github.com/Kurble/bevy_mod_auto_exposure.git", optional = true }
 bevy-mod-dynamicaudio = { git = "https://github.com/eira-fransham/bevy-mod-dynamicaudio.git" }
 bitflags = "2.4"
 bimap = "0.6"
@@ -63,6 +62,7 @@ video-rs = { version = "0.6", features = ["ndarray"], optional = true }
 default = ["screenrecord"]
 screenrecord = ["video-rs"]
 fast-compile = ["bevy/dynamic_linking"]
+auto-exposure = ["bevy_mod_auto_exposure"]
 
 [profile.dev]
 opt-level = 1

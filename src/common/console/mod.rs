@@ -20,7 +20,8 @@
 
 use std::{
     collections::{hash_map::Entry, BTreeMap, BTreeSet},
-    fmt::{self, Write}, io, mem,
+    fmt::{self, Write},
+    io, mem,
     str::FromStr,
 };
 
@@ -56,9 +57,9 @@ use super::{
     wad::Wad,
 };
 
-pub struct RichterConsolePlugin;
+pub struct SeismonConsolePlugin;
 
-impl Plugin for RichterConsolePlugin {
+impl Plugin for SeismonConsolePlugin {
     fn build(&self, app: &mut App) {
         let vfs = app.world.resource::<Vfs>();
 
@@ -151,7 +152,7 @@ impl Plugin for RichterConsolePlugin {
                 "reset",
                 |In(args): In<Box<[String]>>, mut registry: ResMut<Registry>| -> ExecResult {
                     if args.is_empty() {
-                        return  "usage: reset [CVAR...]".into();
+                        return "usage: reset [CVAR...]".into();
                     }
 
                     let mut out = String::new();
@@ -165,14 +166,18 @@ impl Plugin for RichterConsolePlugin {
                     out.into()
                 },
                 "Reset a cvar to its default value",
-            ).command(
+            )
+            .command(
                 "resetall",
                 |In(args): In<Box<[String]>>, mut registry: ResMut<Registry>| -> ExecResult {
                     if !args.is_empty() {
-                        return  "usage: resetall".into();
+                        return "usage: resetall".into();
                     }
 
-                    let all_cvars = registry.cvar_names().map(ToString::to_string).collect::<Vec<_>>();
+                    let all_cvars = registry
+                        .cvar_names()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>();
                     for arg in all_cvars {
                         registry.reset_cvar(arg).unwrap();
                     }

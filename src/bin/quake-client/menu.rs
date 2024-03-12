@@ -22,12 +22,11 @@ use bevy::{
     app::AppExit,
     ecs::{
         event::{EventWriter, Events},
-        system::{In, Query, ResMut},
+        system::ResMut,
     },
     log::warn,
-    render::view::ColorGrading,
 };
-use richter::{
+use seismon::{
     client::menu::{Menu, MenuBodyView, MenuBuilder, MenuView},
     common::console::{Registry, RunCmd},
 };
