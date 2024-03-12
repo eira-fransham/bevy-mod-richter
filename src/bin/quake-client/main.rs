@@ -60,7 +60,7 @@ struct Opt {
 const EXPOSURE_CURVE: &[[f32; 2]] = &[[-16., -8.], [0., 0.]];
 
 fn cmd_exposure(In(val): In<Value>, mut exposures: Query<&mut Exposure>) {
-    let new_exposure = match val.as_str() {
+    let new_exposure = match val.as_str().or(val.as_symbol()) {
         Some("indoor") => Exposure::INDOOR,
         Some("blender") => Exposure::BLENDER,
         Some("sunlight") => Exposure::SUNLIGHT,
@@ -112,7 +112,7 @@ fn cmd_autoexposure(
     mut commands: Commands,
     mut cameras: Query<(Entity, Option<&AutoExposure>), With<Camera3d>>,
 ) {
-    let enabled: bool = match autoexposure.as_str() {
+    let enabled: bool = match autoexposure.as_str().or(autoexposure.as_symbol()) {
         Some("on") => true,
         Some("off") => false,
         _ => match serde_lexpr::from_value(&autoexposure) {
@@ -145,7 +145,7 @@ fn cmd_autoexposure(
 }
 
 fn cmd_tonemapping(In(new_tonemapping): In<Value>, mut tonemapping: Query<&mut Tonemapping>) {
-    let new_tonemapping = match new_tonemapping.as_str() {
+    let new_tonemapping = match new_tonemapping.as_str().or(new_tonemapping.as_symbol()) {
         Some("tmmf") => Tonemapping::TonyMcMapface,
         Some("aces") => Tonemapping::AcesFitted,
         Some("blender") => Tonemapping::BlenderFilmic,
@@ -180,7 +180,6 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<ConsoleInput>, EventWriter<R
                     exposure: 2.,
                     ..default()
                 },
-                tonemapping: Tonemapping::TonyMcMapface,
                 ..default()
             },
             BloomSettings::default(),
@@ -245,10 +244,7 @@ fn main() -> ExitCode {
                     maximize: false,
                     ..Default::default()
                 },
-                // This will spawn an invisible window
-                // The window will be made visible in the make_visible() system after 3 frames.
-                // This is useful when you want to avoid the white window that shows up before the GPU is ready to render the app.
-                // visible: false,
+                visible: false,
                 ..Default::default()
             }),
             ..Default::default()
@@ -275,7 +271,7 @@ fn main() -> ExitCode {
         "r_exposure",
         "indoor",
         cmd_exposure,
-        "Set the physically-based exposure of the screen: indoor, sunny, overcast, blender, or a specific ev100 value",
+        "Set the physically-based exposure of the screen: indoor, sunlight, overcast, blender, or a specific ev100 value",
     )
     .cvar_on_set(
         "r_gamma",
