@@ -16,7 +16,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use std::{
-    fmt, mem::{self, size_of}, ops::{Deref, Not}
+    fmt,
+    mem::{self, size_of},
+    ops::{Deref, Not},
 };
 
 use beef::Cow;
@@ -53,7 +55,9 @@ pub type QString = QStr<'static>;
 
 impl Default for QStr<'_> {
     fn default() -> Self {
-        Self { raw: Cow::borrowed(&[]) }
+        Self {
+            raw: Cow::borrowed(&[]),
+        }
     }
 }
 
@@ -135,7 +139,9 @@ impl<'a> QStr<'a> {
     }
 
     pub fn lines(&self) -> impl Iterator<Item = QStr<'_>> + '_ {
-        self.raw.chunk_by(|_, b| *b != b'\n').map(|bytes| QStr { raw: Cow::borrowed(bytes) })
+        self.raw.chunk_by(|_, b| *b != b'\n').map(|bytes| QStr {
+            raw: Cow::borrowed(bytes.strip_prefix(&b"\n"[..]).unwrap_or(bytes)),
+        })
     }
 
     pub fn clear(&mut self) {

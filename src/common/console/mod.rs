@@ -49,7 +49,12 @@ use crate::client::{
     render::{Palette, TextureData},
 };
 
-use super::{parse, util::{QStr, QString}, vfs::Vfs, wad::Wad};
+use super::{
+    parse,
+    util::{QStr, QString},
+    vfs::Vfs,
+    wad::Wad,
+};
 
 pub struct RichterConsolePlugin;
 

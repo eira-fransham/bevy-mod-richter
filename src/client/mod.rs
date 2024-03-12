@@ -49,12 +49,18 @@ use crate::{
         view::{IdleVars, KickVars, MouseVars, RollVars},
     },
     common::{
-        self, console::{ConsoleError, ConsoleOutput, RichterConsolePlugin}, engine, model::{Model, ModelError}, net::{
+        self,
+        console::{ConsoleError, ConsoleOutput, RichterConsolePlugin},
+        engine,
+        model::{Model, ModelError},
+        net::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
             BlockingMode, ClientCmd, ClientStat, EntityEffects, EntityState, GameType, NetError,
             PlayerColor, QSocket, ServerCmd, SignOnStage,
-        }, util::QString, vfs::{Vfs, VfsError}
+        },
+        util::QString,
+        vfs::{Vfs, VfsError},
     },
 };
 use fxhash::FxHashMap;
@@ -1046,7 +1052,9 @@ where
         }
 
         // our request was rejected.
-        Response::Reject(reject) => Err(ClientError::ConnectionRejected(reject.message.into_string()))?,
+        Response::Reject(reject) => Err(ClientError::ConnectionRejected(
+            reject.message.into_string(),
+        ))?,
 
         // the server sent back a response that doesn't make sense here (i.e. something other
         // than an Accept or Reject).

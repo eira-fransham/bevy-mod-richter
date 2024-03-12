@@ -133,13 +133,13 @@ fn adjust_exposure(
     }
 }
 
-fn cmd_exposure(
-    In(args): In<Box<[String]>>,
-    mut gradings: Query<&mut ColorGrading>,
-) -> ExecResult {
+fn cmd_exposure(In(args): In<Box<[String]>>, mut gradings: Query<&mut ColorGrading>) -> ExecResult {
     let exposure = match &*args {
         [] => {
-            let exposures = gradings.iter().map(|g| format!("{} ", g.exposure)).collect::<String>();
+            let exposures = gradings
+                .iter()
+                .map(|g| format!("{} ", g.exposure))
+                .collect::<String>();
             return format!("exposure: {}", exposures).into();
         }
         [new_exposure] => new_exposure,
@@ -164,7 +164,10 @@ fn cmd_saturation(
 ) -> ExecResult {
     let saturation = match &*args {
         [] => {
-            let saturations = gradings.iter().map(|g| format!("{} ", g.exposure)).collect::<String>();
+            let saturations = gradings
+                .iter()
+                .map(|g| format!("{} ", g.exposure))
+                .collect::<String>();
             return format!("saturation: {}", saturations).into();
         }
         [new_exposure] => new_exposure,
@@ -178,6 +181,34 @@ fn cmd_saturation(
 
     for mut grading in &mut gradings {
         grading.pre_saturation = saturation;
+    }
+
+    default()
+}
+
+fn cmd_autoexposure(
+    In(args): In<Box<[String]>>,
+    mut gradings: Query<&mut ColorGrading>,
+) -> ExecResult {
+    let exposure = match &*args {
+        [] => {
+            let exposures = gradings
+                .iter()
+                .map(|g| format!("{} ", g.exposure))
+                .collect::<String>();
+            return format!("autoexposure: {}", exposures).into();
+        }
+        [new_exposure] => new_exposure,
+        _ => return "usage: r_exposure [EXPOSURE]".into(),
+    };
+
+    let exposure: f32 = match exposure.parse() {
+        Ok(exposure) => exposure,
+        Err(e) => return format!("couldn't parse exposure: {}", e).into(),
+    };
+
+    for mut grading in &mut gradings {
+        grading.exposure = exposure;
     }
 
     default()
@@ -221,11 +252,7 @@ fn startup(opt: Opt) -> impl FnMut(Commands, EventWriter<RunCmd<'static>>) {
                 tonemapping: Tonemapping::TonyMcMapface,
                 ..default()
             },
-            AutoExposure {
-                min: -16.0,
-                max: 0.0,
-                ..default()
-            },
+            AutoExposure::default(),
             BloomSettings::default(),
             DepthPrepass,
             NormalPrepass,
