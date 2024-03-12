@@ -23,7 +23,7 @@
 mod capture;
 mod menu;
 
-use std::{fs, net::SocketAddr, path::PathBuf, process::ExitCode};
+use std::{fs, path::PathBuf, process::ExitCode};
 
 use bevy::{
     audio::AudioPlugin,
@@ -41,7 +41,7 @@ use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
 use capture::CapturePlugin;
 use richter::{
     client::RichterPlugin,
-    common::console::{CommandImpl, ConsoleInput, RegisterCmdExt as _, RunCmd},
+    common::console::{ConsoleInput, RegisterCmdExt as _, RunCmd},
 };
 use serde_lexpr::Value;
 use structopt::StructOpt;
@@ -49,19 +49,7 @@ use structopt::StructOpt;
 #[derive(StructOpt, Debug)]
 struct Opt {
     #[structopt(long)]
-    connect: Option<SocketAddr>,
-
-    #[structopt(long)]
-    demo: Option<String>,
-
-    #[structopt(long)]
-    demos: Vec<String>,
-
-    #[structopt(long)]
     base_dir: Option<PathBuf>,
-
-    #[structopt(long)]
-    tonemapping: Option<String>,
 
     #[structopt(long)]
     game: Option<String>,
@@ -115,7 +103,7 @@ fn cmd_gamma(In(gamma): In<Value>, mut gradings: Query<&mut ColorGrading>) {
     };
 
     for mut grading in &mut gradings {
-        grading.gamma = gamma;
+        grading.gamma = 1. / gamma;
     }
 }
 
@@ -202,22 +190,6 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<ConsoleInput>, EventWriter<R
 
         console_cmds.send(RunCmd::parse("exec quake.rc").unwrap());
 
-        if let Some(server) = opt.connect {
-            console_cmds.send(format!("connect {}", server).parse().unwrap());
-        } else if let Some(demo) = &opt.demo {
-            console_cmds.send(format!("playdemo {}", demo).parse().unwrap());
-        } else if !opt.demos.is_empty() {
-            console_cmds.send(
-                format!("startdemos {}", opt.demos.join(" "))
-                    .parse()
-                    .unwrap(),
-            );
-        }
-
-        if let Some(tonemapping) = &opt.tonemapping {
-            console_cmds.send(format!("r_tonemapping {}", tonemapping).parse().unwrap());
-        }
-
         let mut commands = opt.commands.iter();
         let mut next = commands.next();
         while let Some(cur) = next {
@@ -303,19 +275,19 @@ fn main() -> ExitCode {
         "r_exposure",
         "indoor",
         cmd_exposure,
-        "Adjust the exposure of the screen by a factor and an optional offset",
+        "Set the physically-based exposure of the screen: indoor, sunny, overcast, blender, or a specific ev100 value",
     )
     .cvar_on_set(
         "r_gamma",
         "1",
         cmd_gamma,
-        "Adjust the exposure of the screen by a factor and an optional offset",
+        "Adjust the gamma of the screen",
     )
     .cvar_on_set(
         "r_saturation",
         "1",
         cmd_saturation,
-        "Adjust the color saturation of the screen (applied before tonemapping)",
+        "Adjust the color saturation of the screen",
     )
     .cvar_on_set(
         "r_tonemapping",

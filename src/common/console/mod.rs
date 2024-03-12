@@ -119,6 +119,32 @@ impl Plugin for RichterConsolePlugin {
                     }
                 },
                 "Run the commands from the input arguments",
+            ).command(
+                "help",
+                |In(mut args): In<Box<[String]>>, registry: Res<Registry>| -> ExecResult {
+                    if args.is_empty() {
+                        args = registry.all_names().map(ToString::to_string).collect();
+                    }
+
+                    let mut out = String::new();
+
+                    for arg in args.iter() {
+                        let Some(CommandImpl { help, .. }) = registry.get(arg) else {
+                            out.push_str("Unknown command: ");
+                            out.push_str(arg);
+                            out.push('\n');
+                            continue;
+                        };
+
+                        out.push_str(arg);
+                        out.push_str(": ");
+                        out.push_str(help);
+                        out.push('\n');
+                    }
+
+                    out.into()
+                },
+                "Run the commands from the input arguments",
             );
     }
 }

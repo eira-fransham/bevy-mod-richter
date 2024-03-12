@@ -145,7 +145,7 @@ fn build_menu_options(builder: MenuBuilder) -> Result<Menu, Error> {
         })
         .add_slider("Render scale", 0.25, 1.0, 2, 0, "r_renderscale")?
         .add_slider("Screen Size", 0.0, 1.0, 10, 9, "r_screensize")?
-        .add_slider("Brightness", 3., 0.1, 10, 5, "r_gamma")?
+        .add_slider("Brightness", 0.5, 1.5, 10, 5, "r_gamma")?
         .add_slider("Mouse Speed", 0.0, 1.0, 10, 9, "cl_sensitivity")?
         .add_slider("CD music volume", 0.0, 1.0, 10, 9, "bgmvolume")?
         .add_slider("Sound volume", 0.0, 1.0, 10, 9, "volume")?
