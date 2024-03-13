@@ -33,6 +33,7 @@ use bevy::{
         system::{Commands, Query, Res, ResMut, Resource},
     },
 };
+use fundsp::snoop::{Snoop, SnoopBackend};
 
 use bevy_mod_dynamicaudio::{
     audio::{AudioSink, Mixer},
@@ -132,8 +133,11 @@ where
 
 type ReverbNode = impl fundsp::audionode::AudioNode<Sample = f32> + Send + Sync + 'static;
 
-fn create_mixer() -> ReverbNode {
+fn create_mixer(sender_l: SnoopBackend<f32>, sender_r: SnoopBackend<f32>) -> ReverbNode {
     use fundsp::hacker32::*;
+
+    let sender_l = An(sender_l);
+    let sender_r = An(sender_r);
 
     let delay_time = 0.15;
     let delay = feedback(
@@ -141,14 +145,24 @@ fn create_mixer() -> ReverbNode {
             >> (moog_hz(1500., 0.) | moog_hz(1500., 0.))),
     );
 
-    ((multipass() & 0.3 * reverb_stereo(20.0, 0.8) & 0.2 * delay) >> limiter_stereo(0.05)).0
+    ((multipass() & 0.3 * reverb_stereo(20.0, 0.8) & 0.2 * delay)
+        >> limiter_stereo(0.05)
+        >> (sender_l | sender_r))
+        .0
 }
 
 pub struct SeismonSoundPlugin;
 
 impl Plugin for SeismonSoundPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
-        let mixer = create_mixer();
+        let (snoop_l, send_l) = Snoop::new(1024);
+        let (snoop_r, send_r) = Snoop::new(1024);
+        let mixer = create_mixer(send_l, send_r);
+
+        let global_audio = GetGlobalAudio {
+            left: snoop_l,
+            right: snoop_r,
+        };
 
         app.add_audio_mixer::<ReverbNode>();
         let mixer_id = app
@@ -157,9 +171,9 @@ impl Plugin for SeismonSoundPlugin {
                 processor: Some(mixer),
             })
             .id();
-        app.insert_resource(GlobalMixer { mixer: mixer_id });
-
-        app.init_resource::<MusicPlayer>()
+        app.insert_resource(GlobalMixer { mixer: mixer_id })
+            .insert_resource(global_audio)
+            .init_resource::<MusicPlayer>()
             .init_resource::<Listener>()
             .add_event::<MixerEvent>()
             .add_systems(
@@ -168,6 +182,7 @@ impl Plugin for SeismonSoundPlugin {
                     systems::update_entities,
                     systems::update_mixer,
                     systems::update_listener,
+                    systems::write_audio,
                 ),
             );
     }
@@ -345,6 +360,12 @@ pub enum MixerEvent {
     StopMusic,
 }
 
+#[derive(Resource)]
+pub struct GetGlobalAudio {
+    pub left: Snoop<f32>,
+    pub right: Snoop<f32>,
+}
+
 mod systems {
     use bevy_mod_dynamicaudio::audio::AudioTarget;
 
@@ -467,5 +488,11 @@ mod systems {
         if let Some(new_listener) = conn.and_then(|conn| conn.state.update_listener()) {
             *listener = new_listener;
         }
+    }
+
+    // TODO: Use this for `startvideo`
+    pub fn write_audio(mut global_audio: ResMut<GetGlobalAudio>) {
+        global_audio.left.update();
+        global_audio.right.update();
     }
 }

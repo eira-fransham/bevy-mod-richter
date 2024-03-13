@@ -30,7 +30,7 @@ use arrayvec::ArrayVec;
 use bevy::prelude::*;
 use cgmath::{Angle as _, Deg, InnerSpace as _, Matrix4, Vector3, Zero as _};
 use chrono::Duration;
-use fxhash::FxHashMap;
+use fxhash::{FxBuildHasher, FxHashMap};
 use lazy_static::lazy_static;
 use net::{ClientCmd, ClientStat, EntityState, EntityUpdate, PlayerColor};
 use rand::{
@@ -91,7 +91,7 @@ pub struct ClientState {
     // visible entities, rebuilt per-frame
     pub visible_entity_ids: im::Vector<usize>,
 
-    pub light_styles: FxHashMap<u8, String>,
+    pub light_styles: im::HashMap<u8, String, FxBuildHasher>,
 
     // various values relevant to the player and level (see common::net::ClientStat)
     pub stats: [i32; MAX_STATS],

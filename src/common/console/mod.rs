@@ -94,8 +94,8 @@ impl Plugin for SeismonConsolePlugin {
                 Update,
                 (
                     systems::update_render_console,
+                    systems::write_alert,
                     (
-                        systems::write_alert,
                         systems::write_console_out,
                         systems::write_center_print,
                     )

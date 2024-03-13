@@ -140,6 +140,11 @@ pub mod systems {
                 logical_key, state, ..
             } = key;
 
+            if AnyInput::from(logical_key.clone()) == AnyInput::ESCAPE {
+                run_cmds.send("toggleconsole".into());
+                return;
+            }
+
             if let Ok(Some(Binding {
                 commands,
                 valid: BindingValidState::Any,
@@ -209,14 +214,19 @@ pub mod systems {
         mut menu: ResMut<Menu>,
         input: Res<GameInput>,
     ) {
+        // TODO: Use a thread_local vector instead of reallocating
         for key in reader.reader.read(&keyboard_events) {
+            let KeyboardInput {
+                logical_key, state, ..
+            } = key;
+
             if let Ok(Some(Binding {
-                valid: BindingValidState::Any,
                 commands,
-            })) = input.binding(key.logical_key.clone())
+                valid: BindingValidState::Any,
+            })) = input.binding(logical_key.clone())
             {
                 run_cmds.send_batch(commands.iter().filter_map(|cmd| {
-                    match (cmd.0.trigger, key.state) {
+                    match (cmd.0.trigger, state) {
                         (Some(Trigger::Positive) | None, ButtonState::Pressed) => Some(cmd.clone()),
                         (Some(Trigger::Positive) | None, ButtonState::Released) => {
                             cmd.clone().invert()
@@ -226,6 +236,8 @@ pub mod systems {
                         ),
                     }
                 }));
+
+                continue;
             }
 
             let KeyboardInput {

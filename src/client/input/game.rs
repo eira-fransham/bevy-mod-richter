@@ -545,8 +545,8 @@ impl GameInput {
         self.bind("RIGHTARROW", "+right").unwrap();
         self.bind("CTRL", "+attack").unwrap();
         self.bind("E", "+use").unwrap();
-        self.bind("`", "*toggleconsole").unwrap();
-        self.bind("ESCAPE", "*togglemenu").unwrap();
+        self.bind("`", "toggleconsole").unwrap();
+        self.bind("ESCAPE", "togglemenu").unwrap();
         self.bind("1", "impulse 1").unwrap();
         self.bind("2", "impulse 2").unwrap();
         self.bind("3", "impulse 3").unwrap();
