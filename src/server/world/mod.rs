@@ -18,7 +18,7 @@
 mod entity;
 pub mod phys;
 
-use std::{collections::HashSet, iter};
+use std::{collections::HashSet, iter, ops::RangeBounds, slice::SliceIndex};
 
 use self::{
     entity::Entity,
@@ -234,7 +234,7 @@ impl Entities {
         }
     }
 
-    pub fn try_entity(&self, entity_id: EntityId) -> Result<&Entity, ProgsError> {
+    pub fn try_get(&self, entity_id: EntityId) -> Result<&Entity, ProgsError> {
         if entity_id.0 > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({})",
@@ -278,6 +278,28 @@ impl Entities {
                 list.push(EntityId(id));
             }
         }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.range(..)
+    }
+
+    pub fn range<'a, R>(&'a self, range: R) -> impl Iterator<Item = EntityId> + 'a
+    where
+        R: SliceIndex<[AreaEntitySlot]>,
+        R::Output: AsRef<[AreaEntitySlot]> + 'a,
+    {
+        self.slots[range]
+            .as_ref()
+            .iter()
+            .enumerate()
+            .filter_map(|(id, slot)| {
+                if let &AreaEntitySlot::Occupied(_) = slot {
+                    Some(EntityId(id))
+                } else {
+                    None
+                }
+            })
     }
 
     fn find_vacant_slot(&self) -> Result<usize, ()> {
@@ -605,13 +627,19 @@ impl World {
         ent_id: EntityId,
         area_id: usize,
     ) -> Result<(), ProgsError> {
+        // if this entity has been removed or freed, do nothing
+        if let AreaEntitySlot::Vacant = self.entities.slots[ent_id.0] {
+            return Ok(());
+        }
+
+        let ent = self.entities.get(ent_id);
+
         'next_trigger: for trigger_id in self.area_nodes[area_id].triggers.iter().copied() {
             if trigger_id == ent_id {
                 // Don't trigger self.
                 continue;
             }
 
-            let ent = self.entities.get(ent_id);
             let trigger = self.entities.get(trigger_id);
 
             let trigger_touch = trigger.load(&self.type_def, FieldAddrFunctionId::Touch)?;
@@ -725,7 +753,7 @@ impl World {
             let model_index = ent.get_float(&self.type_def, FieldAddrFloat::ModelIndex as i16)?;
             if model_index != 0.0 {
                 // TODO: SV_FindTouchedLeafs
-                todo!("SV_FindTouchedLeafs");
+                error!("TODO: SV_FindTouchedLeafs");
             }
 
             solid = ent.solid(&self.type_def)?;

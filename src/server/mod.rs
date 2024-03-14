@@ -15,6 +15,8 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+mod commands;
+mod cvars;
 pub mod precache;
 pub mod progs;
 pub mod world;
@@ -38,8 +40,8 @@ use self::{
     precache::Precache,
     progs::{
         globals::{
-            GLOBAL_ADDR_ARG_0, GLOBAL_ADDR_ARG_1, GLOBAL_ADDR_ARG_2, GLOBAL_ADDR_ARG_3,
-            GLOBAL_ADDR_RETURN,
+            GlobalAddr as _, GLOBAL_ADDR_ARG_0, GLOBAL_ADDR_ARG_1, GLOBAL_ADDR_ARG_2,
+            GLOBAL_ADDR_ARG_3, GLOBAL_ADDR_RETURN,
         },
         EntityFieldAddr, EntityId, ExecutionContext, FunctionId, GlobalAddrEntity, GlobalAddrFloat,
         Globals, LoadProgs, Opcode, ProgsError, StringId, StringTable,
@@ -53,9 +55,10 @@ use self::{
 use arrayvec::ArrayVec;
 use bevy::prelude::*;
 use bitflags::bitflags;
-use cgmath::{InnerSpace, Vector3, Zero};
+use cgmath::{Deg, InnerSpace, Matrix3, Vector3, Zero};
 use chrono::Duration;
 use hashbrown::HashMap;
+use num::FromPrimitive;
 use serde::Deserialize;
 
 const MAX_DATAGRAM: usize = 1024;
@@ -65,7 +68,20 @@ const MAX_LIGHTSTYLES: usize = 64;
 pub struct SeismonServerPlugin;
 
 impl Plugin for SeismonServerPlugin {
-    fn build(&self, app: &mut App) {}
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            FixedUpdate,
+            (
+                systems::recv_client_messages,
+                systems::server_spawn,
+                systems::server_update,
+            )
+                .run_if(resource_exists::<Session>),
+        );
+
+        commands::register_commands(app);
+        cvars::register_cvars(app);
+    }
 }
 
 /// The state of a client's connection to the server.
@@ -110,6 +126,10 @@ impl ClientSlots {
         slots.resize_with(limit, || None);
 
         ClientSlots { slots }
+    }
+
+    pub fn connected_clients(&self) -> impl Iterator<Item = &ClientState> {
+        self.slots.iter().filter_map(|v| v.as_ref())
     }
 
     /// Returns a reference to the client in a slot.
@@ -157,57 +177,10 @@ pub enum SessionState {
     ///
     /// Certain operations, such as precaching, are only permitted while the
     /// server is loading a level.
-    Loading(SessionLoading),
+    Loading,
 
     /// The server is active (in-game).
-    Active(SessionActive),
-}
-
-/// Contains the state of the server during level load.
-pub struct SessionLoading {
-    level: LevelState,
-}
-
-impl SessionLoading {
-    pub fn new(
-        registry: Mut<Registry>,
-        vfs: &Vfs,
-        progs: LoadProgs,
-        models: Vec<Model>,
-        entmap: String,
-    ) -> SessionLoading {
-        SessionLoading {
-            level: LevelState::new(progs, models, entmap, registry, vfs),
-        }
-    }
-
-    /// Adds a name to the sound precache.
-    ///
-    /// If the sound already exists in the precache, this has no effect.
-    #[inline]
-    pub fn precache_sound(&mut self, name_id: StringId) {
-        self.level.precache_sound(name_id)
-    }
-
-    /// Adds a name to the model precache.
-    ///
-    /// If the model already exists in the precache, this has no effect.
-    #[inline]
-    pub fn precache_model(&mut self, name_id: StringId) {
-        self.level.precache_model(name_id)
-    }
-
-    /// Completes the loading process.
-    ///
-    /// This consumes the `ServerLoading` and returns a `ServerActive`.
-    pub fn finish(self) -> SessionActive {
-        SessionActive { level: self.level }
-    }
-}
-
-/// State specific to an active (in-game) server.
-pub struct SessionActive {
-    level: LevelState,
+    Active,
 }
 
 /// A server instance.
@@ -215,6 +188,7 @@ pub struct SessionActive {
 pub struct Session {
     persist: SessionPersistent,
     state: SessionState,
+    level: LevelState,
 }
 
 impl Session {
@@ -228,9 +202,8 @@ impl Session {
     ) -> Session {
         Session {
             persist: SessionPersistent::new(max_clients),
-            state: SessionState::Loading(SessionLoading {
-                level: LevelState::new(progs, models, entmap, registry, vfs),
-            }),
+            state: SessionState::Loading,
+            level: LevelState::new(progs, models, entmap, registry, vfs),
         }
     }
 
@@ -245,35 +218,37 @@ impl Session {
     }
 
     pub fn precache_sound(&mut self, name_id: StringId) {
-        if let SessionState::Loading(ref mut loading) = self.state {
-            loading.precache_sound(name_id);
+        if let SessionState::Loading = self.state {
+            self.level.precache_sound(name_id);
         } else {
             panic!("Sounds cannot be precached after loading");
         }
     }
 
     pub fn precache_model(&mut self, name_id: StringId) {
-        if let SessionState::Loading(ref mut loading) = self.state {
-            loading.precache_model(name_id);
+        if let SessionState::Loading = self.state {
+            self.level.precache_model(name_id);
         } else {
             panic!("Models cannot be precached after loading");
         }
     }
 
-    #[inline]
-    fn level(&self) -> &LevelState {
-        match self.state {
-            SessionState::Loading(ref loading) => &loading.level,
-            SessionState::Active(ref active) => &active.level,
+    pub fn loading(&self) -> bool {
+        if let SessionState::Loading = self.state {
+            true
+        } else {
+            false
         }
     }
 
     #[inline]
+    fn level(&self) -> &LevelState {
+        &self.level
+    }
+
+    #[inline]
     fn level_mut(&mut self) -> &mut LevelState {
-        match self.state {
-            SessionState::Loading(ref mut loading) => &mut loading.level,
-            SessionState::Active(ref mut active) => &mut active.level,
-        }
+        &mut self.level
     }
 
     #[inline]
@@ -295,8 +270,8 @@ impl Session {
     #[inline]
     pub fn time(&self) -> Option<Duration> {
         match self.state {
-            SessionState::Loading(_) => None,
-            SessionState::Active(ref active) => Some(active.level.time),
+            SessionState::Loading => None,
+            SessionState::Active => Some(self.level.time),
         }
     }
 }
@@ -513,22 +488,22 @@ impl LevelState {
                             Spawn => self.builtin_spawn(registry.reborrow(), vfs)?,
                             Remove => self.builtin_remove()?,
                             TraceLine => unimplemented!(),
-                            CheckClient => unimplemented!(),
-                            Find => unimplemented!(),
+                            CheckClient => self.builtin_check_client()?,
+                            Find => self.builtin_find()?,
                             PrecacheSound => self.builtin_precache_sound()?,
                             PrecacheModel => self.builtin_precache_model(vfs)?,
                             StuffCmd => unimplemented!(),
                             FindRadius => unimplemented!(),
-                            BPrint => unimplemented!(),
-                            SPrint => unimplemented!(),
+                            BPrint => self.builtin_bprint()?,
+                            SPrint => self.builtin_sprint()?,
                             DPrint => self.builtin_dprint()?,
                             FToS => unimplemented!(),
-                            VToS => unimplemented!(),
+                            VToS => self.builtin_vtos()?,
                             CoreDump => unimplemented!(),
                             TraceOn => unimplemented!(),
                             TraceOff => unimplemented!(),
                             EPrint => unimplemented!(),
-                            WalkMove => unimplemented!(),
+                            WalkMove => self.builtin_walk_move(registry.reborrow(), vfs)?,
 
                             DropToFloor => self.builtin_drop_to_floor(registry.reborrow(), vfs)?,
                             LightStyle => self.builtin_light_style()?,
@@ -872,8 +847,9 @@ impl LevelState {
             }
         }
 
-        // TODO: increase sv.time by host_frametime
-        unimplemented!();
+        self.time += frame_time;
+
+        Ok(())
     }
 
     // TODO: rename arguments when implementing
@@ -1051,7 +1027,7 @@ impl LevelState {
 
         self.think(ent_id, frame_time, registry, vfs)?;
 
-        todo!("SV_CheckWaterTransition");
+        error!("TODO: SV_CheckWaterTransition");
 
         Ok(())
     }
@@ -1621,7 +1597,7 @@ impl LevelState {
         unused: i16,
     ) -> Result<(), ProgsError> {
         if unused != 0 {
-            return Err(ProgsError::with_msg("storep_fnc: nonzero arg3"));
+            return Err(ProgsError::with_msg(format!("storep_fnc: nonzero arg3 ({})", unused)));
         }
 
         let f = self.globals.function_id(src_function_id_addr)?;
@@ -1643,9 +1619,11 @@ impl LevelState {
         unused_c: i16,
     ) -> Result<(), ProgsError> {
         if unused_b != 0 {
-            return Err(ProgsError::with_msg("storep_fnc: nonzero arg2"));
+            error!("state: nonzero arg2 ({})", unused_b);
+            // return Err(ProgsError::with_msg(format!("state: nonzero arg2 ({})", unused_b)));
         } else if unused_c != 0 {
-            return Err(ProgsError::with_msg("storep_fnc: nonzero arg3"));
+            error!("state: nonzero arg3 ({})", unused_c);
+            // return Err(ProgsError::with_msg(format!("state: nonzero arg3 ({})", unused_c)));
         }
 
         let self_id = self.globals.entity_id(GlobalAddrEntity::Self_ as i16)?;
@@ -1748,11 +1726,43 @@ impl LevelState {
         Ok(())
     }
 
+    pub fn builtin_bprint(&mut self) -> Result<(), ProgsError> {
+        let strs = &self.string_table;
+        let s_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
+        let string = strs.get(s_id).unwrap();
+        debug!("BPRINT: {}", &*string);
+
+        // TODO: Broadcast to all clients
+
+        Ok(())
+    }
+
+    pub fn builtin_sprint(&mut self) -> Result<(), ProgsError> {
+        let strs = &self.string_table;
+        let _client_id = self.globals.entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
+        let s_id = self.globals.string_id(GLOBAL_ADDR_ARG_1 as i16)?;
+        let string = strs.get(s_id).unwrap();
+        debug!("SPRINT: {}", &*string);
+
+        // TODO: Send print to client
+
+        Ok(())
+    }
+
     pub fn builtin_dprint(&mut self) -> Result<(), ProgsError> {
         let strs = &self.string_table;
         let s_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
         let string = strs.get(s_id).unwrap();
         debug!("DPRINT: {}", &*string);
+
+        Ok(())
+    }
+
+    pub fn builtin_vtos(&mut self) -> Result<(), ProgsError> {
+        let vec = self.globals.get_vector(GLOBAL_ADDR_ARG_0 as i16)?;
+        let out = self.string_table.insert(&format!("{:5.1} {:5.1} {:5.1}", vec[0], vec[1], vec[2]));
+
+        self.globals.put_string_id(out, GLOBAL_ADDR_RETURN as i16)?;
 
         Ok(())
     }
@@ -1818,10 +1828,203 @@ impl LevelState {
         // TODO: write to server signon packet
         Ok(())
     }
+
+    pub fn builtin_find(&mut self) -> Result<(), ProgsError> {
+        let entity = self.globals.entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
+        let field = self.globals.get_field_addr(GLOBAL_ADDR_ARG_1 as i16)?;
+        let match_str = self.globals.string_id(GLOBAL_ADDR_ARG_2 as i16)?;
+
+        let Some(match_str) = self.string_table.get(match_str) else {
+            return Err(ProgsError::Other("Failed to find match string".to_owned()));
+        };
+
+        let field = FieldAddrStringId::from_usize(field.0).unwrap();
+
+        for ent in self.world.entities.range(entity.0..) {
+            let Ok(field) = self
+                .world
+                .entities
+                .get(ent)
+                .load(&self.world.type_def, field)
+            else {
+                continue;
+            };
+
+            let Some(s) = self.string_table.get(field) else {
+                continue;
+            };
+
+            if s == match_str {
+                self.globals.put_entity_id(ent, GLOBAL_ADDR_RETURN as i16)?;
+                return Ok(());
+            }
+        }
+
+        self.globals
+            .put_entity_id(EntityId(0), GLOBAL_ADDR_RETURN as i16)?;
+        Ok(())
+    }
+
+    pub fn builtin_walk_move(
+        &mut self,
+        registry: Mut<Registry>,
+        vfs: &Vfs,
+    ) -> Result<(), ProgsError> {
+        let yaw = self.globals.get_float(GLOBAL_ADDR_ARG_0 as i16)?;
+        let dist = self.globals.get_float(GLOBAL_ADDR_ARG_1 as i16)?;
+
+        let this = GlobalAddrEntity::Self_.load(&self.globals).unwrap();
+
+        let old_vel = self
+            .world
+            .entities
+            .get(this)
+            .velocity(&self.world.type_def)
+            .unwrap();
+        self.world.entities.get_mut(this).unwrap().set_velocity(
+            &self.world.type_def,
+            Matrix3::from_angle_y(Deg(yaw)) * Vector3::unit_x() * dist,
+        )?;
+        self.physics_step(this, Duration::try_seconds(1).unwrap(), vfs, registry)?;
+        self.world
+            .entities
+            .get_mut(this)
+            .unwrap()
+            .set_velocity(&self.world.type_def, old_vel)?;
+
+        self.globals
+            .put_entity_id(EntityId(0), GLOBAL_ADDR_RETURN as i16)?;
+        Ok(())
+    }
+
+    pub fn builtin_check_client(&mut self) -> Result<(), ProgsError> {
+        error!("TODO: PF_checkclient");
+        self.globals
+            .put_entity_id(EntityId(0), GLOBAL_ADDR_RETURN as i16)?;
+
+        Ok(())
+    }
 }
 
 pub mod systems {
+    use crate::{
+        client::{Connection, ConnectionState},
+        common::net::{
+            self, ClientCmd, ClientMessage, GameType, ServerCmd, ServerMessage, SignOnStage,
+        },
+    };
+
     use super::*;
 
-    pub fn server_update(server: ResMut<Session>) {}
+    pub fn recv_client_messages(
+        mut server: ResMut<Session>,
+        mut client_msgs: EventReader<ClientMessage>,
+    ) {
+        for msg in client_msgs.read() {
+            let parsed = ClientCmd::deserialize(&mut &msg.packet[..]).unwrap();
+            dbg!(parsed);
+        }
+    }
+
+    pub fn server_spawn(
+        mut server: ResMut<Session>,
+        mut registry: ResMut<Registry>,
+        mut server_messages: EventWriter<ServerMessage>,
+        time: Res<Time<Virtual>>,
+        vfs: Res<Vfs>,
+    ) {
+        if !server.loading() {
+            return;
+        }
+
+        let start_frame = server
+            .level
+            .globals
+            .function_id(GlobalAddrFunction::StartFrame as i16)
+            .unwrap();
+        server
+            .level
+            .execute_program(start_frame, registry.reborrow(), &*vfs)
+            .unwrap();
+
+        // In `sv_init.c` there is a comment saying to run physics twice before starting the server
+        // properly to "allow everything to settle".
+        for _ in 0..2 {
+            let server = &mut *server;
+            server
+                .level
+                .physics(
+                    &server.persist.client_slots,
+                    Duration::from_std(time.elapsed()).unwrap(),
+                    registry.reborrow(),
+                    &*vfs,
+                )
+                .unwrap();
+        }
+
+        server.state = SessionState::Active;
+
+        let teamplay = registry.read_cvar::<u8>("teamplay").unwrap();
+
+        let game_type = match teamplay {
+            0 => GameType::Deathmatch,
+            1 | 2 => GameType::CoOp,
+            // Invalid game type, default to DM
+            _ => GameType::Deathmatch,
+        };
+
+        let mut packet = Vec::new();
+        ServerCmd::ServerInfo {
+            protocol_version: net::PROTOCOL_VERSION as _,
+            max_clients: server.max_clients() as _,
+            game_type,
+            message: "Hello, world!".into(),
+            model_precache: server
+                .level
+                .model_precache
+                .iter()
+                .map(ToOwned::to_owned)
+                .collect(),
+            sound_precache: server
+                .level
+                .sound_precache
+                .iter()
+                .map(ToOwned::to_owned)
+                .collect(),
+        }
+        .serialize(&mut packet)
+        .unwrap();
+        server_messages.send(ServerMessage(packet));
+    }
+
+    pub fn server_update(
+        mut server: ResMut<Session>,
+        time: Res<Time<Virtual>>,
+        mut registry: ResMut<Registry>,
+        vfs: Res<Vfs>,
+    ) {
+        if registry.read_cvar::<u8>("sv_paused").unwrap() != 0
+            || server.persist.client_slots.connected_clients().count() == 0
+        {
+            return;
+        }
+
+        match &mut *server {
+            Session {
+                persist,
+                state: SessionState::Active,
+                level,
+            } => {
+                level
+                    .physics(
+                        &persist.client_slots,
+                        Duration::from_std(time.elapsed()).unwrap(),
+                        registry.reborrow(),
+                        &*vfs,
+                    )
+                    .unwrap();
+            }
+            _ => {}
+        }
+    }
 }

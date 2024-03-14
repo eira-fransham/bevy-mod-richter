@@ -3,10 +3,13 @@ use std::{collections::VecDeque, io::Read as _};
 use beef::Cow;
 use bevy::prelude::*;
 
-use crate::common::{
-    console::{AliasInfo, ExecResult, RegisterCmdExt as _, Registry, RunCmd},
-    net::{ColorShift, QSocket, SignOnStage},
-    vfs::Vfs,
+use crate::{
+    common::{
+        console::{AliasInfo, ExecResult, RegisterCmdExt as _, Registry, RunCmd},
+        net::{ColorShift, QSocket, SignOnStage},
+        vfs::Vfs,
+    },
+    server::Session,
 };
 
 use super::{
@@ -333,6 +336,7 @@ pub fn cmd_startdemos(
     vfs: Res<Vfs>,
     mut focus: ResMut<InputFocus>,
     mut conn_state: ResMut<ConnectionState>,
+    server: Option<Res<Session>>,
 ) -> ExecResult {
     if args.len() == 0 {
         return "usage: startdemos [DEMOS]".into();
@@ -342,43 +346,47 @@ pub fn cmd_startdemos(
         .into_iter()
         .map(|s| s.to_string())
         .collect::<VecDeque<_>>();
-    let (new_conn, new_state) = match demo_queue.pop_front() {
-        Some(demo) => {
-            let mut demo_file = match vfs
-                .open(format!("{}.dem", demo))
-                .or_else(|_| vfs.open(format!("demos/{}.dem", demo)))
-            {
-                Ok(f) => f,
-                Err(e) => {
-                    // log the error, dump the demo queue and disconnect
-                    return format!("{}", e).into();
-                }
-            };
 
-            match DemoServer::new(&mut demo_file) {
-                Ok(d) => (
-                    Connection {
-                        kind: ConnectionKind::Demo(d),
-                        state: ClientState::new(),
-                    },
-                    ConnectionState::SignOn(SignOnStage::Prespawn),
-                ),
-                Err(e) => {
-                    return format!("{}", e).into();
+    // Only actually start playing the demos if we aren't already running a server
+    // (this appears to be Quake's expected behaviour?)
+    if server.is_none() {
+        let (new_conn, new_state) = match demo_queue.pop_front() {
+            Some(demo) => {
+                let mut demo_file = match vfs
+                    .open(format!("{}.dem", demo))
+                    .or_else(|_| vfs.open(format!("demos/{}.dem", demo)))
+                {
+                    Ok(f) => f,
+                    Err(e) => {
+                        // log the error, dump the demo queue and disconnect
+                        return format!("{}", e).into();
+                    }
+                };
+
+                match DemoServer::new(&mut demo_file) {
+                    Ok(d) => (
+                        Connection {
+                            kind: ConnectionKind::Demo(d),
+                            state: ClientState::new(),
+                        },
+                        ConnectionState::SignOn(SignOnStage::Prespawn),
+                    ),
+                    Err(e) => {
+                        return format!("{}", e).into();
+                    }
                 }
             }
-        }
 
-        // if there are no more demos in the queue, disconnect
-        None => return "usage: startdemos [DEMOS]".into(),
-    };
+            // if there are no more demos in the queue, disconnect
+            None => return "usage: startdemos [DEMOS]".into(),
+        };
+
+        commands.insert_resource(new_conn);
+        *conn_state = new_state;
+        *focus = InputFocus::Game;
+    }
 
     commands.insert_resource(DemoQueue(demo_queue));
-    *focus = InputFocus::Game;
-
-    commands.insert_resource(new_conn);
-    *conn_state = new_state;
-
     default()
 }
 

@@ -35,14 +35,15 @@ use bevy::{
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
     render::{camera::Exposure, view::ColorGrading},
-    window::{PresentMode, WindowTheme},
+    window::{PresentMode, PrimaryWindow, WindowTheme},
 };
 #[cfg(feature = "auto-exposure")]
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
 use capture::CapturePlugin;
 use seismon::{
-    client::SeismonPlugin,
+    client::SeismonClientPlugin,
     common::console::{ConsoleInput, RegisterCmdExt as _, RunCmd},
+    server::SeismonServerPlugin,
 };
 use serde_lexpr::Value;
 use structopt::StructOpt;
@@ -59,7 +60,7 @@ struct Opt {
 }
 
 fn cmd_exposure(In(val): In<Value>, mut exposures: Query<&mut Exposure>) {
-    let new_exposure = match val.as_str().or(val.as_symbol()) {
+    let new_exposure = match val.as_name() {
         Some("indoor") => Exposure::INDOOR,
         Some("blender") => Exposure::BLENDER,
         Some("sunlight") => Exposure::SUNLIGHT,
@@ -127,7 +128,7 @@ fn cmd_autoexposure(
     assets: Res<AssetServer>,
     mut cameras: Query<(Entity, Option<&mut AutoExposure>), With<Camera3d>>,
 ) {
-    let enabled: bool = match autoexposure.as_str().or(autoexposure.as_symbol()) {
+    let enabled: bool = match autoexposure.as_name() {
         Some("on") => true,
         Some("off") => false,
         _ => match serde_lexpr::from_value(&autoexposure) {
@@ -161,7 +162,7 @@ fn cmd_autoexposure(
 }
 
 fn cmd_tonemapping(In(new_tonemapping): In<Value>, mut tonemapping: Query<&mut Tonemapping>) {
-    let new_tonemapping = match new_tonemapping.as_str().or(new_tonemapping.as_symbol()) {
+    let new_tonemapping = match new_tonemapping.as_name() {
         Some("tmmf") => Tonemapping::TonyMcMapface,
         Some("aces") => Tonemapping::AcesFitted,
         Some("blender") => Tonemapping::BlenderFilmic,
@@ -175,6 +176,12 @@ fn cmd_tonemapping(In(new_tonemapping): In<Value>, mut tonemapping: Query<&mut T
 
     for mut tonemapping in &mut tonemapping {
         *tonemapping = new_tonemapping;
+    }
+}
+
+fn cmd_gametitle(In(new_name): In<Value>, mut window: Query<&mut Window, With<PrimaryWindow>>) {
+    if let (Some(new_name), Ok(mut window)) = (new_name.as_name(), window.get_single_mut()) {
+        window.title = new_name.to_owned();
     }
 }
 
@@ -249,20 +256,15 @@ fn main() -> ExitCode {
     let default_plugins = DefaultPlugins
         .set(WindowPlugin {
             primary_window: Some(bevy::window::Window {
-                title: "Seismon client".into(),
-                name: Some("Seismon client".into()),
+                title: "Seismon".into(),
+                name: Some("seismon-engine".into()),
                 resolution: (1366., 768.).into(),
                 present_mode: PresentMode::AutoVsync,
                 // Tells wasm not to override default event handling, like F5, Ctrl+R etc.
                 prevent_default_event_handling: false,
-                window_theme: Some(WindowTheme::Dark),
-                enabled_buttons: bevy::window::EnabledButtons {
-                    maximize: false,
-                    ..Default::default()
-                },
-                ..Default::default()
+                ..default()
             }),
-            ..Default::default()
+            ..default()
         })
         .set(ImagePlugin::default_nearest());
 
@@ -273,12 +275,19 @@ fn main() -> ExitCode {
     app.add_plugins(default_plugins).insert_resource(Msaa::Off);
 
     app
-    .add_plugins(SeismonPlugin {
+    .add_plugins(SeismonClientPlugin{
         base_dir: opt.base_dir.clone(),
         game: opt.game.clone(),
         main_menu: menu::build_main_menu,
     })
+    .add_plugins(SeismonServerPlugin)
     .add_plugins(CapturePlugin)
+    .cvar_on_set(
+        "cl_title",
+        "Quake",
+        cmd_gametitle,
+        "Set the title of the window",
+    )
     .cvar_on_set(
         "r_exposure",
         "indoor",

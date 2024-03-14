@@ -13,6 +13,7 @@ use crate::{
 };
 
 use bevy::render::{
+    render_phase::TrackedRenderPass,
     render_resource::{
         BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
         TextureView,
@@ -364,7 +365,7 @@ impl GlyphRenderer {
         &'a self,
         state: &'a GraphicsState,
         queue: &RenderQueue,
-        pass: &mut wgpu::RenderPass<'a>,
+        pass: &mut TrackedRenderPass<'a>,
         target_size: Extent2d,
         commands: &[GlyphRendererCommand],
     ) {
@@ -372,9 +373,9 @@ impl GlyphRenderer {
         queue.write_buffer(state.glyph_pipeline().instance_buffer(), 0, unsafe {
             any_slice_as_bytes(&instances)
         });
-        pass.set_pipeline(state.glyph_pipeline().pipeline());
-        pass.set_vertex_buffer(0, *state.quad_pipeline().vertex_buffer().slice(..));
-        pass.set_vertex_buffer(1, *state.glyph_pipeline().instance_buffer().slice(..));
+        pass.set_render_pipeline(state.glyph_pipeline().pipeline());
+        pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
+        pass.set_vertex_buffer(1, state.glyph_pipeline().instance_buffer().slice(..));
         pass.set_bind_group(0, &self.const_bind_group, &[]);
         pass.draw(0..6, 0..instances.len() as u32);
     }

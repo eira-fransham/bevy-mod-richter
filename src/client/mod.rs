@@ -64,7 +64,6 @@ use crate::{
     },
 };
 use cgmath::{Deg, Vector3};
-use hashbrown::HashMap;
 
 use bevy::{
     asset::AssetServer,
@@ -103,7 +102,7 @@ const CONSOLE_DIVIDER: &str = "\
 \n\n";
 
 #[derive(Default)]
-pub struct SeismonPlugin<
+pub struct SeismonClientPlugin<
     F = Box<dyn Fn(MenuBuilder) -> Result<Menu, failure::Error> + Send + Sync + 'static>,
 > {
     pub base_dir: Option<PathBuf>,
@@ -121,7 +120,7 @@ fn build_default(builder: MenuBuilder) -> Result<Menu, failure::Error> {
     }))
 }
 
-impl SeismonPlugin {
+impl SeismonClientPlugin {
     pub fn new() -> Self {
         Self {
             base_dir: None,
@@ -137,7 +136,7 @@ pub struct SeismonGameSettings {
     pub game: Option<String>,
 }
 
-impl<F> Plugin for SeismonPlugin<F>
+impl<F> Plugin for SeismonClientPlugin<F>
 where
     F: Fn(MenuBuilder) -> Result<Menu, failure::Error> + Clone + Send + Sync + 'static,
 {
@@ -517,13 +516,13 @@ impl Connection {
                             }
                             .serialize(compose)?;
                         }
-                        SignOnStage::Begin => {
+                        Begin => {
                             ClientCmd::StringCmd {
                                 cmd: String::from("begin"),
                             }
                             .serialize(compose)?;
                         }
-                        SignOnStage::Done => {
+                        Done => {
                             debug!("SignOn complete");
                             // TODO: end load screen
                             self.state.start_time = self.state.time;
@@ -1148,11 +1147,17 @@ mod systems {
     pub fn handle_input(
         // mut console: ResMut<Console>,
         registry: ResMut<Registry>,
+        conn_state: Option<Res<ConnectionState>>,
         mut conn: Option<ResMut<Connection>>,
         frame_time: Res<Time<Virtual>>,
         mut client_events: EventWriter<ClientMessage>,
         mut impulses: EventReader<Impulse>,
     ) -> Result<(), ClientError> {
+        match conn_state.as_deref() {
+            None | Some(ConnectionState::SignOn(_)) => return Ok(()),
+            _ => {}
+        }
+
         // TODO: Error handling
         let move_vars: MoveVars = registry.read_cvars().unwrap();
         let mouse_vars: MouseVars = registry.read_cvars().unwrap();

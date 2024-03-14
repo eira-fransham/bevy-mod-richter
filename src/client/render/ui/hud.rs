@@ -11,6 +11,7 @@ use crate::{
         IntermissionKind,
     },
     common::{
+        console::Registry,
         net::{ClientStat, ItemFlags},
         vfs::Vfs,
         wad::QPic,
@@ -19,12 +20,16 @@ use crate::{
 
 use bevy::{
     prelude::*,
-    render::renderer::{RenderDevice, RenderQueue},
+    render::{
+        extract_resource::ExtractResource,
+        renderer::{RenderDevice, RenderQueue},
+    },
 };
 use chrono::Duration;
 use hashbrown::HashMap;
 use num::FromPrimitive as _;
 use num_derive::FromPrimitive;
+use serde::Deserialize;
 use strum::IntoEnumIterator as _;
 use strum_macros::EnumIter;
 
@@ -187,6 +192,25 @@ impl std::fmt::Display for FaceId {
             InvisibleInvulnerable => write!(f, "FACE_INV2"),
             QuadDamage => write!(f, "FACE_QUAD"),
         }
+    }
+}
+
+#[derive(Resource, Deserialize)]
+pub struct HudVars {
+    pub crosshair: u8,
+}
+
+impl Default for HudVars {
+    fn default() -> Self {
+        Self { crosshair: 1 }
+    }
+}
+
+impl ExtractResource for HudVars {
+    type Source = Registry;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        source.read_cvars().unwrap_or_default()
     }
 }
 
@@ -384,6 +408,7 @@ impl HudRenderer {
         stats: &'a [i32],
         face_anim_time: Duration,
         scale: f32,
+        hud_cvars: &HudVars,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
     ) {
@@ -542,12 +567,14 @@ impl HudRenderer {
         self.cmd_sbar_quad(Face { id: face }, 112, 0, scale, quad_cmds);
 
         // crosshair
-        glyph_cmds.push(GlyphRendererCommand::Glyph {
-            glyph_id: '+' as u8,
-            position: ScreenPosition::Absolute(Anchor::CENTER),
-            anchor: Anchor::TOP_LEFT,
-            scale,
-        });
+        if hud_cvars.crosshair != 0 {
+            glyph_cmds.push(GlyphRendererCommand::Glyph {
+                glyph_id: '+' as u8,
+                position: ScreenPosition::Absolute(Anchor::CENTER),
+                anchor: Anchor::TOP_LEFT,
+                scale,
+            });
+        }
     }
 
     // Draw a quad on the intermission overlay.
@@ -649,6 +676,7 @@ impl HudRenderer {
         &'a self,
         hud_state: &HudState<'a>,
         time: Duration,
+        hud_cvars: &HudVars,
         quad_cmds: &mut Vec<QuadRendererCommand<'a>>,
         glyph_cmds: &mut Vec<GlyphRendererCommand>,
     ) {
@@ -669,6 +697,7 @@ impl HudRenderer {
                     stats,
                     *face_anim_time,
                     scale,
+                    hud_cvars,
                     quad_cmds,
                     glyph_cmds,
                 );

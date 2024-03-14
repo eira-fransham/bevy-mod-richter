@@ -822,6 +822,14 @@ impl Entity {
             .into())
     }
 
+    pub fn set_velocity(
+        &mut self,
+        type_def: &EntityTypeDef,
+        velocity: Vector3<f32>,
+    ) -> Result<(), EntityError> {
+        Ok(self.store(type_def, FieldAddrVector::Velocity, velocity.into())?)
+    }
+
     /// Applies gravity to the entity.
     ///
     /// The effect depends on the provided value of the `sv_gravity` cvar, the

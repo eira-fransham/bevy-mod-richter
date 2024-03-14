@@ -17,6 +17,7 @@ use crate::{
 };
 
 use bevy::render::{
+    render_phase::TrackedRenderPass,
     render_resource::{
         BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, Texture,
         TextureView,
@@ -447,11 +448,11 @@ impl QuadRenderer {
     pub fn record_draw<'this, 'a>(
         &'this self,
         state: &'this GraphicsState,
-        pass: &'a mut wgpu::RenderPass<'this>,
+        pass: &'a mut TrackedRenderPass<'this>,
         commands: &'a [QuadRendererCommand<'this>],
     ) {
-        pass.set_pipeline(state.quad_pipeline().pipeline());
-        pass.set_vertex_buffer(0, *state.quad_pipeline().vertex_buffer().slice(..));
+        pass.set_render_pipeline(state.quad_pipeline().pipeline());
+        pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
         pass.set_bind_group(0, &self.sampler_bind_group, &[]);
         for (cmd, block) in commands
             .iter()

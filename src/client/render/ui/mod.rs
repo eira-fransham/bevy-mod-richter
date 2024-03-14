@@ -25,12 +25,15 @@ use bevy::{
     prelude::*,
     render::{
         render_graph::{RenderLabel, ViewNode},
+        render_phase::TrackedRenderPass,
         renderer::{RenderDevice, RenderQueue},
         view::ViewTarget,
     },
 };
 use cgmath::{Matrix4, Vector2};
 use chrono::Duration;
+
+use self::hud::HudVars;
 
 use super::{RenderResolution, RenderState};
 
@@ -117,10 +120,11 @@ impl UiRenderer {
         &'this self,
         state: &'this GraphicsState,
         queue: &'a RenderQueue,
-        pass: &'a mut wgpu::RenderPass<'this>,
+        pass: &'a mut TrackedRenderPass<'this>,
         target_size: Extent2d,
         time: Duration,
         ui_state: &'a UiState<'this>,
+        hud_cvars: &'a HudVars,
         quad_commands: &'a mut Vec<QuadRendererCommand<'this>>,
         glyph_commands: &'a mut Vec<GlyphRendererCommand>,
     ) {
@@ -130,8 +134,13 @@ impl UiRenderer {
         };
 
         if let Some(hstate) = hud_state {
-            self.hud_renderer
-                .generate_commands(hstate, time, quad_commands, glyph_commands);
+            self.hud_renderer.generate_commands(
+                hstate,
+                time,
+                hud_cvars,
+                quad_commands,
+                glyph_commands,
+            );
         }
 
         if let Some(menu) = overlay {
@@ -165,8 +174,10 @@ impl ViewNode for UiPass {
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let gfx_state = world.resource::<GraphicsState>();
         let ui_renderer = world.resource::<UiRenderer>();
+        let hud_cvars = world.resource::<HudVars>();
         let conn = world.get_resource::<RenderState>();
         let queue = world.resource::<RenderQueue>();
+        let device = world.resource::<RenderDevice>();
         let Some(&RenderResolution(width, height)) = world.get_resource::<RenderResolution>()
         else {
             return Ok(());
@@ -181,12 +192,14 @@ impl ViewNode for UiPass {
         let diffuse_target = view_target.get_unsampled_color_attachment();
 
         {
-            let mut final_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let final_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Ui pass"),
                 color_attachments: &[Some(diffuse_target)],
                 depth_stencil_attachment: None,
                 ..default()
             });
+
+            let mut final_pass = TrackedRenderPass::new(device, final_pass);
 
             if let Some(RenderState { .. }) = conn {
                 let ui_state = match conn {
@@ -234,6 +247,7 @@ impl ViewNode for UiPass {
                     // use client time when in game, renderer time otherwise
                     elapsed,
                     &ui_state,
+                    hud_cvars,
                     &mut quad_commands,
                     &mut glyph_commands,
                 );

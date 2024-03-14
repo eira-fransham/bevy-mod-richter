@@ -116,6 +116,8 @@ pub fn register_cvars(app: &mut App) {
         "90",
         "sets the camera's field of view angle (in degrees)",
     );
+    // TODO: What is the difference between this and `cl_skipCrosshair`?
+    app.cvar("crosshair", "1", "Whether to draw the crosshair");
     app.cvar(
         "m_pitch",
         Cvar::new("0.022").archive(),

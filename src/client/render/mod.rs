@@ -101,7 +101,7 @@ use crate::{
         input::InputFocus,
         menu::Menu,
         render::{
-            ui::{glyph::GlyphPipeline, quad::QuadPipeline},
+            ui::{glyph::GlyphPipeline, hud::HudVars, quad::QuadPipeline},
             uniform::DynamicUniformBuffer,
             world::{
                 alias::AliasPipeline,
@@ -150,6 +150,7 @@ impl Plugin for SeismonRenderPlugin {
             ExtractResourcePlugin::<RenderState>::default(),
             ExtractResourcePlugin::<InputFocus>::default(),
             ExtractResourcePlugin::<RenderVars>::default(),
+            ExtractResourcePlugin::<HudVars>::default(),
             ExtractResourcePlugin::<ConnectionState>::default(),
             // TODO: Do all loading on the main thread (this is currently just for the palette and gfx wad)
             ExtractResourcePlugin::<Vfs>::default(),
