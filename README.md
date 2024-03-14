@@ -24,7 +24,7 @@ Based on [Richter](https://github.com/cormac-obrien/richter) by Cormac O'Brien, 
 be at feature parity with Richter but as refactoring work is ongoing some things may be broken temporarily. Started as a quick
 project to make Richter run on macOS, but ended up with 10,000 lines added and 7500 lines removed.
 
-![alt tag](content/bevy-mod-richter-rogue.gif)
+![alt tag](content/preview.gif)
 
 ### Goals
 
