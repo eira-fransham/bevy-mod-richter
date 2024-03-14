@@ -125,10 +125,8 @@ fn cmd_autoexposure(
     In(autoexposure): In<Value>,
     mut commands: Commands,
     assets: Res<AssetServer>,
-    mut cameras: Query<(Entity, Option<&AutoExposure>), With<Camera3d>>,
+    mut cameras: Query<(Entity, Option<&mut AutoExposure>), With<Camera3d>>,
 ) {
-    const EXPOSURE_CURVE: &[[f32; 2]] = &[[-8., -4.], [8., 4.]];
-
     let enabled: bool = match autoexposure.as_str().or(autoexposure.as_symbol()) {
         Some("on") => true,
         Some("off") => false,
@@ -142,20 +140,20 @@ fn cmd_autoexposure(
     };
 
     for (e, autoexposure) in &mut cameras {
-        match (autoexposure.is_some(), enabled) {
-            (true, false) => {
-                commands.entity(e).remove::<AutoExposure>();
+        match (autoexposure, enabled) {
+            (Some(mut autoexposure), false) => {
+                autoexposure.min = 0.;
+                autoexposure.max = 0.;
             }
-            (false, true) => {
+            (None, true) => {
                 commands.entity(e).insert(AutoExposure {
-                    compensation_curve: EXPOSURE_CURVE
-                        .iter()
-                        .copied()
-                        .map(|vals| vals.into())
-                        .collect(),
                     metering_mask: assets.load("autoexposure-mask.png"),
                     ..default()
                 });
+            }
+            (Some(mut autoexposure), true) => {
+                autoexposure.min = -8.;
+                autoexposure.max = 8.;
             }
             _ => {}
         }
