@@ -92,6 +92,20 @@ fn cmd_saturation(In(saturation): In<Value>, mut gradings: Query<&mut ColorGradi
     }
 }
 
+fn cmd_postsaturation(In(saturation): In<Value>, mut gradings: Query<&mut ColorGrading>) {
+    let saturation: f32 = match serde_lexpr::from_value(&saturation) {
+        Ok(saturation) => saturation,
+        Err(_) => {
+            // TODO: Error handling
+            return;
+        }
+    };
+
+    for mut grading in &mut gradings {
+        grading.post_saturation = saturation;
+    }
+}
+
 fn cmd_gamma(In(gamma): In<Value>, mut gradings: Query<&mut ColorGrading>) {
     let gamma: f32 = match serde_lexpr::from_value(&gamma) {
         Ok(gamma) => gamma,
@@ -110,9 +124,10 @@ fn cmd_gamma(In(gamma): In<Value>, mut gradings: Query<&mut ColorGrading>) {
 fn cmd_autoexposure(
     In(autoexposure): In<Value>,
     mut commands: Commands,
+    assets: Res<AssetServer>,
     mut cameras: Query<(Entity, Option<&AutoExposure>), With<Camera3d>>,
 ) {
-    const EXPOSURE_CURVE: &[[f32; 2]] = &[[-16., -8.], [0., 0.]];
+    const EXPOSURE_CURVE: &[[f32; 2]] = &[[-8., -4.], [8., 4.]];
 
     let enabled: bool = match autoexposure.as_str().or(autoexposure.as_symbol()) {
         Some("on") => true,
@@ -138,6 +153,7 @@ fn cmd_autoexposure(
                         .copied()
                         .map(|vals| vals.into())
                         .collect(),
+                    metering_mask: assets.load("autoexposure-mask.png"),
                     ..default()
                 });
             }
@@ -265,7 +281,6 @@ fn main() -> ExitCode {
         main_menu: menu::build_main_menu,
     })
     .add_plugins(CapturePlugin)
-    // TODO: Make these into cvars - should we allow cvars to access arbitrary parts of the world on get/set?
     .cvar_on_set(
         "r_exposure",
         "indoor",
@@ -285,6 +300,12 @@ fn main() -> ExitCode {
         "Adjust the color saturation of the screen",
     )
     .cvar_on_set(
+        "r_postsaturation",
+        "1",
+        cmd_postsaturation,
+        "Adjust the color saturation of the screen (applied after tonemapping)",
+    )
+    .cvar_on_set(
         "r_tonemapping",
         "blender",
         cmd_tonemapping,
@@ -295,7 +316,7 @@ fn main() -> ExitCode {
     #[cfg(feature = "auto-exposure")]
     app.add_plugins(AutoExposurePlugin).cvar_on_set(
         "r_autoexposure",
-        "off",
+        "on",
         cmd_autoexposure,
         "Enable/disable automatic exposure compensation",
     );

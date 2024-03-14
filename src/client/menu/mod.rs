@@ -62,7 +62,7 @@ pub enum MenuBodyView {
 #[derive(Default, Debug, Clone)]
 pub struct MenuView {
     pub draw_plaque: bool,
-    pub title_path: String,
+    pub title_path: imstr::ImString,
     pub body: MenuBodyView,
 }
 

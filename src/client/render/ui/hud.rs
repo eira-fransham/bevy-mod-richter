@@ -22,7 +22,7 @@ use bevy::{
     render::renderer::{RenderDevice, RenderQueue},
 };
 use chrono::Duration;
-use fxhash::FxHashMap;
+use hashbrown::HashMap;
 use num::FromPrimitive as _;
 use num_derive::FromPrimitive;
 use strum::IntoEnumIterator as _;
@@ -191,7 +191,7 @@ impl std::fmt::Display for FaceId {
 }
 
 pub struct HudRenderer {
-    textures: FxHashMap<HudTextureId, QuadTexture>,
+    textures: HashMap<HudTextureId, QuadTexture>,
 }
 
 impl HudRenderer {
@@ -253,7 +253,7 @@ impl HudRenderer {
         // unit variants
         ids.extend(vec![Colon, Slash, StatusBar, InvBar, ScoreBar].into_iter());
 
-        let mut textures = FxHashMap::default();
+        let mut textures = HashMap::default();
         for id in ids.into_iter() {
             debug!("Opening {}", id);
             let qpic = state.gfx_wad().open_qpic(id.to_string()).unwrap();

@@ -19,7 +19,7 @@
 // SOFTWARE.
 
 use std::{
-    collections::{hash_map::Entry, BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet},
     fmt::{self, Write},
     io, mem,
     str::FromStr,
@@ -35,7 +35,7 @@ use bevy::{
     render::render_asset::RenderAssetUsages,
 };
 use chrono::Duration;
-use fxhash::FxHashMap;
+use hashbrown::{hash_map::Entry, HashMap};
 use liner::{Editor, EditorContext, Emacs, Key, KeyBindings, KeyMap as _, Prompt, Tty};
 use serde::{
     de::{value::StrDeserializer, MapAccess},
@@ -95,10 +95,7 @@ impl Plugin for SeismonConsolePlugin {
                 (
                     systems::update_render_console,
                     systems::write_alert,
-                    (
-                        systems::write_console_out,
-                        systems::write_center_print,
-                    )
+                    (systems::write_console_out, systems::write_center_print)
                         .run_if(resource_changed::<RenderConsoleOutput>),
                     systems::write_console_in.run_if(resource_changed::<RenderConsoleInput>),
                     systems::update_console_visibility.run_if(resource_changed::<InputFocus>),
@@ -582,8 +579,8 @@ impl<T> Eq for EqHack<T> where T: PartialEq {}
 pub struct Registry {
     // We store a history so that we can remove functions and see the previously-defined ones
     // TODO: Implement a compression pass (e.g. after a removal)
-    commands: FxHashMap<CName, (CommandImpl, Vec<CommandImpl>)>,
-    changed_cvars: FxHashMap<EqHack<SystemId<Value>>, Value>,
+    commands: HashMap<CName, (CommandImpl, Vec<CommandImpl>)>,
+    changed_cvars: HashMap<EqHack<SystemId<Value>>, Value>,
     names: BTreeSet<CName>,
 }
 
@@ -1489,6 +1486,11 @@ impl ConsoleInput {
             {
                 Ok(true) => {
                     let out = self.editor.take_exec_buffer();
+
+                    if let Err(e) = self.editor.move_to_end_of_history() {
+                        warn!("{}", e);
+                    }
+
                     Some(
                         self.editor
                             .context_mut()

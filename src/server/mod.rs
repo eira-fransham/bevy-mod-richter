@@ -15,13 +15,9 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#![allow(unused, unreachable_code)]
-
 pub mod precache;
 pub mod progs;
 pub mod world;
-
-use std::rc::Rc;
 
 use crate::{
     common::{
@@ -59,11 +55,18 @@ use bevy::prelude::*;
 use bitflags::bitflags;
 use cgmath::{InnerSpace, Vector3, Zero};
 use chrono::Duration;
-use fxhash::FxHashMap;
+use hashbrown::HashMap;
 use serde::Deserialize;
 
 const MAX_DATAGRAM: usize = 1024;
 const MAX_LIGHTSTYLES: usize = 64;
+
+#[derive(Default, Copy, Clone)]
+pub struct SeismonServerPlugin;
+
+impl Plugin for SeismonServerPlugin {
+    fn build(&self, app: &mut App) {}
+}
 
 /// The state of a client's connection to the server.
 pub enum ClientState {
@@ -166,9 +169,15 @@ pub struct SessionLoading {
 }
 
 impl SessionLoading {
-    pub fn new(vfs: &Vfs, progs: LoadProgs, models: Vec<Model>, entmap: String) -> SessionLoading {
+    pub fn new(
+        registry: Mut<Registry>,
+        vfs: &Vfs,
+        progs: LoadProgs,
+        models: Vec<Model>,
+        entmap: String,
+    ) -> SessionLoading {
         SessionLoading {
-            level: LevelState::new(progs, models, entmap, vfs),
+            level: LevelState::new(progs, models, entmap, registry, vfs),
         }
     }
 
@@ -202,6 +211,7 @@ pub struct SessionActive {
 }
 
 /// A server instance.
+#[derive(Resource)]
 pub struct Session {
     persist: SessionPersistent,
     state: SessionState,
@@ -210,6 +220,7 @@ pub struct Session {
 impl Session {
     pub fn new(
         max_clients: usize,
+        registry: Mut<Registry>,
         vfs: &Vfs,
         progs: LoadProgs,
         models: Vec<Model>,
@@ -218,7 +229,7 @@ impl Session {
         Session {
             persist: SessionPersistent::new(max_clients),
             state: SessionState::Loading(SessionLoading {
-                level: LevelState::new(progs, models, entmap, vfs),
+                level: LevelState::new(progs, models, entmap, registry, vfs),
             }),
         }
     }
@@ -301,7 +312,7 @@ pub struct ServerVars {
 /// Server-side level state.
 #[derive(Debug)]
 pub struct LevelState {
-    string_table: Rc<StringTable>,
+    string_table: StringTable,
     sound_precache: Precache,
     model_precache: Precache,
     lightstyles: [StringId; MAX_LIGHTSTYLES],
@@ -326,12 +337,18 @@ pub struct LevelState {
 }
 
 impl LevelState {
-    pub fn new(progs: LoadProgs, models: Vec<Model>, entmap: String, vfs: &Vfs) -> LevelState {
+    pub fn new(
+        progs: LoadProgs,
+        models: Vec<Model>,
+        entmap: String,
+        mut registry: Mut<Registry>,
+        vfs: &Vfs,
+    ) -> LevelState {
         let LoadProgs {
             cx,
             globals,
             entity_def,
-            string_table,
+            mut string_table,
         } = progs;
 
         let mut sound_precache = Precache::new();
@@ -345,7 +362,7 @@ impl LevelState {
             model_precache.precache(&*string_table.get(model_name).unwrap());
         }
 
-        let world = World::create(models, entity_def.clone(), string_table.clone()).unwrap();
+        let world = World::create(models, entity_def, &mut string_table).unwrap();
         let entity_list = parse::entities(&entmap).unwrap();
 
         let mut level = LevelState {
@@ -363,7 +380,9 @@ impl LevelState {
         };
 
         for entity in entity_list {
-            level.spawn_entity_from_map(entity, vfs).unwrap();
+            level
+                .spawn_entity_from_map(entity, registry.reborrow(), vfs)
+                .unwrap();
         }
 
         level
@@ -399,12 +418,18 @@ impl LevelState {
     }
 
     /// Execute a QuakeC function in the VM.
-    pub fn execute_program(&mut self, f: FunctionId, vfs: &Vfs) -> Result<(), ProgsError> {
+    pub fn execute_program(
+        &mut self,
+        f: FunctionId,
+        mut registry: Mut<Registry>,
+        vfs: &Vfs,
+    ) -> Result<(), ProgsError> {
         let mut runaway = 100000;
 
         let exit_depth = self.cx.call_stack_depth();
 
-        self.cx.enter_function(&mut self.globals, f)?;
+        self.cx
+            .enter_function(&self.string_table, &mut self.globals, f)?;
 
         while self.cx.call_stack_depth() != exit_depth {
             runaway -= 1;
@@ -474,7 +499,7 @@ impl LevelState {
                         use progs::functions::BuiltinFunctionId::*;
                         match b {
                             MakeVectors => self.globals.make_vectors()?,
-                            SetOrigin => self.builtin_set_origin(vfs)?,
+                            SetOrigin => self.builtin_set_origin(registry.reborrow(), vfs)?,
                             SetModel => self.builtin_set_model()?,
                             SetSize => self.builtin_set_size()?,
                             Break => unimplemented!(),
@@ -485,7 +510,7 @@ impl LevelState {
                             ObjError => unimplemented!(),
                             VLen => self.globals.builtin_v_len()?,
                             VecToYaw => self.globals.builtin_vec_to_yaw()?,
-                            Spawn => self.builtin_spawn(vfs)?,
+                            Spawn => self.builtin_spawn(registry.reborrow(), vfs)?,
                             Remove => self.builtin_remove()?,
                             TraceLine => unimplemented!(),
                             CheckClient => unimplemented!(),
@@ -505,7 +530,7 @@ impl LevelState {
                             EPrint => unimplemented!(),
                             WalkMove => unimplemented!(),
 
-                            DropToFloor => self.builtin_drop_to_floor(vfs)?,
+                            DropToFloor => self.builtin_drop_to_floor(registry.reborrow(), vfs)?,
                             LightStyle => self.builtin_light_style()?,
                             RInt => self.globals.builtin_r_int()?,
                             Floor => self.globals.builtin_floor()?,
@@ -514,7 +539,7 @@ impl LevelState {
                             PointContents => unimplemented!(),
                             FAbs => self.globals.builtin_f_abs()?,
                             Aim => unimplemented!(),
-                            Cvar => self.builtin_cvar()?,
+                            Cvar => self.builtin_cvar(&*registry)?,
                             LocalCmd => unimplemented!(),
                             NextEnt => unimplemented!(),
                             Particle => unimplemented!(),
@@ -532,7 +557,7 @@ impl LevelState {
                             PrecacheFile => unimplemented!(),
                             MakeStatic => unimplemented!(),
                             ChangeLevel => unimplemented!(),
-                            CvarSet => self.builtin_cvar_set()?,
+                            CvarSet => self.builtin_cvar_set(registry.reborrow())?,
                             CenterPrint => unimplemented!(),
                             AmbientSound => self.builtin_ambient_sound()?,
                             PrecacheModel2 => unimplemented!(),
@@ -542,7 +567,8 @@ impl LevelState {
                         }
                         debug!("Returning from built-in function {}", name);
                     } else {
-                        self.cx.enter_function(&mut self.globals, f_to_call)?;
+                        self.cx
+                            .enter_function(&self.string_table, &mut self.globals, f_to_call)?;
                         continue;
                     }
                 }
@@ -611,12 +637,17 @@ impl LevelState {
         Ok(())
     }
 
-    pub fn execute_program_by_name<S>(&mut self, name: S, vfs: &Vfs) -> Result<(), ProgsError>
+    pub fn execute_program_by_name<S>(
+        &mut self,
+        name: S,
+        registry: Mut<Registry>,
+        vfs: &Vfs,
+    ) -> Result<(), ProgsError>
     where
         S: AsRef<str>,
     {
-        let func_id = self.cx.find_function_by_name(name)?;
-        self.execute_program(func_id, vfs)?;
+        let func_id = self.cx.find_function_by_name(&self.string_table, name)?;
+        self.execute_program(func_id, registry, vfs)?;
         Ok(())
     }
 
@@ -628,28 +659,35 @@ impl LevelState {
         &mut self,
         ent_id: EntityId,
         touch_triggers: bool,
+
+        registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
         self.world.link_entity(ent_id)?;
 
         if touch_triggers {
-            self.touch_triggers(ent_id, vfs)?;
+            self.touch_triggers(ent_id, registry, vfs)?;
         }
 
         Ok(())
     }
 
-    pub fn spawn_entity(&mut self, vfs: &Vfs) -> Result<EntityId, ProgsError> {
+    pub fn spawn_entity(
+        &mut self,
+        registry: Mut<Registry>,
+        vfs: &Vfs,
+    ) -> Result<EntityId, ProgsError> {
         let ent_id = self.world.alloc_uninitialized()?;
 
-        self.link_entity(ent_id, false, vfs)?;
+        self.link_entity(ent_id, false, registry, vfs)?;
 
         Ok(ent_id)
     }
 
     pub fn spawn_entity_from_map(
         &mut self,
-        map: FxHashMap<&str, &str>,
+        map: HashMap<&str, &str>,
+        mut registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<EntityId, ProgsError> {
         let classname = match map.get("classname") {
@@ -657,7 +695,7 @@ impl LevelState {
             None => return Err(ProgsError::with_msg("No classname for entity")),
         };
 
-        let ent_id = self.world.alloc_from_map(map)?;
+        let ent_id = self.world.alloc_from_map(&mut self.string_table, map)?;
 
         // TODO: set origin, mins and maxs here if needed
 
@@ -665,9 +703,9 @@ impl LevelState {
         self.globals
             .put_entity_id(ent_id, GlobalAddrEntity::Self_ as i16)?;
 
-        self.execute_program_by_name(classname, vfs)?;
+        self.execute_program_by_name(classname, registry.reborrow(), vfs)?;
 
-        self.link_entity(ent_id, true, vfs)?;
+        self.link_entity(ent_id, true, registry, vfs)?;
 
         Ok(ent_id)
     }
@@ -676,12 +714,15 @@ impl LevelState {
         &mut self,
         ent_id: EntityId,
         origin: Vector3<f32>,
+        registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
-        self.world
-            .entity_mut(ent_id)?
-            .store(FieldAddrVector::Origin, origin.into())?;
-        self.link_entity(ent_id, false, vfs)?;
+        self.world.entities.get_mut(ent_id)?.store(
+            &self.world.type_def,
+            FieldAddrVector::Origin,
+            origin.into(),
+        )?;
+        self.link_entity(ent_id, false, registry, vfs)?;
 
         Ok(())
     }
@@ -692,9 +733,13 @@ impl LevelState {
         model_name_id: StringId,
     ) -> Result<(), ProgsError> {
         let model_id = {
-            let ent = self.world.entity_mut(ent_id)?;
+            let ent = self.world.entities.get_mut(ent_id)?;
 
-            ent.put_string_id(model_name_id, FieldAddrStringId::ModelName as i16)?;
+            ent.put_string_id(
+                &self.world.type_def,
+                model_name_id,
+                FieldAddrStringId::ModelName as i16,
+            )?;
 
             let model_id = match self.string_table.get(model_name_id) {
                 Some(name) => match self.model_precache.find(&*name) {
@@ -704,7 +749,11 @@ impl LevelState {
                 None => return Err(ProgsError::with_msg("invalid StringId")),
             };
 
-            ent.put_float(model_id as f32, FieldAddrFloat::ModelIndex as i16)?;
+            ent.put_float(
+                &self.world.type_def,
+                model_id as f32,
+                FieldAddrFloat::ModelIndex as i16,
+            )?;
 
             model_id
         };
@@ -718,10 +767,12 @@ impl LevelState {
         &mut self,
         ent_id: EntityId,
         frame_time: Duration,
+        registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
-        let ent = self.world.entity_mut(ent_id)?;
-        let think_time = duration_from_f32(ent.load(FieldAddrFloat::NextThink)?);
+        let ent = self.world.entities.get_mut(ent_id)?;
+        let think_time =
+            duration_from_f32(ent.load(&self.world.type_def, FieldAddrFloat::NextThink)?);
 
         if think_time <= Duration::zero() || think_time > self.time + frame_time {
             // Think either already happened or isn't due yet.
@@ -729,15 +780,15 @@ impl LevelState {
         }
 
         // Deschedule next think.
-        ent.store(FieldAddrFloat::NextThink, 0.0)?;
+        ent.store(&self.world.type_def, FieldAddrFloat::NextThink, 0.0)?;
 
         // Call entity's think function.
-        let think = ent.load(FieldAddrFunctionId::Think)?;
+        let think = ent.load(&self.world.type_def, FieldAddrFunctionId::Think)?;
         self.globals
             .store(GlobalAddrFloat::Time, duration_to_f32(think_time))?;
         self.globals.store(GlobalAddrEntity::Self_, ent_id)?;
         self.globals.store(GlobalAddrEntity::Other, EntityId(0))?;
-        self.execute_program(think, vfs)?;
+        self.execute_program(think, registry, vfs)?;
 
         Ok(())
     }
@@ -746,8 +797,8 @@ impl LevelState {
         &mut self,
         clients: &ClientSlots,
         frame_time: Duration,
+        mut registry: Mut<Registry>,
         vfs: &Vfs,
-        server_vars: &ServerVars,
     ) -> Result<(), ProgsError> {
         self.globals.store(GlobalAddrEntity::Self_, EntityId(0))?;
         self.globals.store(GlobalAddrEntity::Other, EntityId(0))?;
@@ -757,12 +808,16 @@ impl LevelState {
         let start_frame = self
             .globals
             .function_id(GlobalAddrFunction::StartFrame as i16)?;
-        self.execute_program(start_frame, vfs)?;
+        self.execute_program(start_frame, registry.reborrow(), vfs)?;
 
         // TODO: don't alloc
         let mut ent_ids = Vec::new();
 
-        self.world.list_entities(&mut ent_ids);
+        self.world.entities.list(&mut ent_ids);
+
+        let server_vars = registry
+            .read_cvars::<ServerVars>()
+            .ok_or_else(|| ProgsError::Other(format!("Failed to read server cvars")))?;
 
         for ent_id in ent_ids {
             if self.globals.load(GlobalAddrFloat::ForceRetouch)? != 0.0 {
@@ -777,23 +832,34 @@ impl LevelState {
                 // Quake solves this by using a linked list and always spawning
                 // at the end so that newly spawned entities always have physics
                 // run this frame.
-                self.link_entity(ent_id, true, vfs)?;
+                self.link_entity(ent_id, true, registry.reborrow(), vfs)?;
             }
 
             let max_clients = clients.limit();
             if ent_id.0 != 0 && ent_id.0 < max_clients {
-                self.physics_player(clients, ent_id, server_vars)?;
+                self.physics_player(clients, ent_id, &server_vars)?;
             } else {
-                match self.world.entity(ent_id).move_kind()? {
+                match self
+                    .world
+                    .entities
+                    .get(ent_id)
+                    .move_kind(&self.world.type_def)?
+                {
                     MoveKind::Walk => {
                         todo!("MoveKind::Walk");
                     }
 
-                    MoveKind::Push => self.physics_push(ent_id, frame_time, vfs)?,
+                    MoveKind::Push => {
+                        self.physics_push(ent_id, frame_time, registry.reborrow(), vfs)?
+                    }
                     // No actual physics for this entity, but still let it think.
-                    MoveKind::None => self.think(ent_id, frame_time, vfs)?,
-                    MoveKind::NoClip => self.physics_noclip(ent_id, frame_time, vfs)?,
-                    MoveKind::Step => self.physics_step(ent_id, frame_time, vfs, server_vars)?,
+                    MoveKind::None => self.think(ent_id, frame_time, registry.reborrow(), vfs)?,
+                    MoveKind::NoClip => {
+                        self.physics_noclip(ent_id, frame_time, registry.reborrow(), vfs)?
+                    }
+                    MoveKind::Step => {
+                        self.physics_step(ent_id, frame_time, vfs, registry.reborrow())?
+                    }
 
                     // all airborne entities have the same physics
                     _ => unimplemented!(),
@@ -826,8 +892,8 @@ impl LevelState {
             return Ok(());
         }
 
-        let ent = self.world.entity_mut(ent_id)?;
-        ent.limit_velocity(server_vars.max_velocity)?;
+        let ent = self.world.entities.get_mut(ent_id)?;
+        ent.limit_velocity(&self.world.type_def, server_vars.max_velocity)?;
         unimplemented!();
     }
 
@@ -835,12 +901,15 @@ impl LevelState {
         &mut self,
         ent_id: EntityId,
         frame_time: Duration,
+        registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
-        let ent = self.world.entity_mut(ent_id)?;
+        let ent = self.world.entities.get_mut(ent_id)?;
 
-        let local_time = duration_from_f32(ent.load(FieldAddrFloat::LocalTime)?);
-        let next_think = duration_from_f32(ent.load(FieldAddrFloat::NextThink)?);
+        let local_time =
+            duration_from_f32(ent.load(&self.world.type_def, FieldAddrFloat::LocalTime)?);
+        let next_think =
+            duration_from_f32(ent.load(&self.world.type_def, FieldAddrFloat::NextThink)?);
 
         let move_time = if local_time + frame_time > next_think {
             (next_think - local_time).max(Duration::zero())
@@ -852,15 +921,16 @@ impl LevelState {
             self.move_push(ent_id, frame_time, move_time)?;
         }
 
-        let ent = self.world.entity_mut(ent_id)?;
+        let ent = self.world.entities.get_mut(ent_id)?;
 
         let old_local_time = local_time;
-        let new_local_time = duration_from_f32(ent.load(FieldAddrFloat::LocalTime)?);
+        let new_local_time =
+            duration_from_f32(ent.load(&self.world.type_def, FieldAddrFloat::LocalTime)?);
 
         // Let the entity think if it needs to.
         if old_local_time < next_think && next_think <= new_local_time {
             // Deschedule thinking.
-            ent.store(FieldAddrFloat::NextThink, 0.0)?;
+            ent.store(&self.world.type_def, FieldAddrFloat::NextThink, 0.0)?;
 
             self.globals
                 .put_float(duration_to_f32(self.time), GlobalAddrFloat::Time as i16)?;
@@ -869,8 +939,8 @@ impl LevelState {
             self.globals
                 .put_entity_id(EntityId(0), GlobalAddrEntity::Other as i16)?;
 
-            let think = ent.function_id(FieldAddrFunctionId::Think as i16)?;
-            self.execute_program(think, vfs)?;
+            let think = ent.function_id(&self.world.type_def, FieldAddrFunctionId::Think as i16)?;
+            self.execute_program(think, registry, vfs)?;
         }
 
         Ok(())
@@ -880,23 +950,40 @@ impl LevelState {
         &mut self,
         ent_id: EntityId,
         frame_time: Duration,
+        registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
         // Let entity think, then move if it didn't remove itself.
-        self.think(ent_id, frame_time, vfs)?;
+        self.think(ent_id, frame_time, registry, vfs)?;
 
-        if let Ok(ent) = self.world.entity_mut(ent_id) {
+        if let Ok(ent) = self.world.entities.get_mut(ent_id) {
             let frame_time_f = duration_to_f32(frame_time);
 
-            let angles: Vector3<f32> = ent.load(FieldAddrVector::Angles)?.into();
-            let angle_vel: Vector3<f32> = ent.load(FieldAddrVector::AngularVelocity)?.into();
+            let angles: Vector3<f32> = ent
+                .load(&self.world.type_def, FieldAddrVector::Angles)?
+                .into();
+            let angle_vel: Vector3<f32> = ent
+                .load(&self.world.type_def, FieldAddrVector::AngularVelocity)?
+                .into();
             let new_angles = angles + frame_time_f * angle_vel;
-            ent.store(FieldAddrVector::Angles, new_angles.into())?;
+            ent.store(
+                &self.world.type_def,
+                FieldAddrVector::Angles,
+                new_angles.into(),
+            )?;
 
-            let orig: Vector3<f32> = ent.load(FieldAddrVector::Origin)?.into();
-            let vel: Vector3<f32> = ent.load(FieldAddrVector::Velocity)?.into();
+            let orig: Vector3<f32> = ent
+                .load(&self.world.type_def, FieldAddrVector::Origin)?
+                .into();
+            let vel: Vector3<f32> = ent
+                .load(&self.world.type_def, FieldAddrVector::Velocity)?
+                .into();
             let new_orig = orig + frame_time_f * vel;
-            ent.store(FieldAddrVector::Origin, new_orig.into())?;
+            ent.store(
+                &self.world.type_def,
+                FieldAddrVector::Origin,
+                new_orig.into(),
+            )?;
         }
 
         Ok(())
@@ -907,50 +994,62 @@ impl LevelState {
         ent_id: EntityId,
         frame_time: Duration,
         vfs: &Vfs,
-        server_vars: &ServerVars,
+        mut registry: Mut<Registry>,
     ) -> Result<(), ProgsError> {
         let ServerVars {
             gravity,
             max_velocity,
-        } = *server_vars;
+        } = registry
+            .read_cvars()
+            .ok_or_else(|| ProgsError::Other(format!("Couldn't read server vars")))?;
 
         let in_freefall = !self
             .world
-            .entity(ent_id)
-            .flags()?
+            .entities
+            .get(ent_id)
+            .flags(&self.world.type_def)?
             .intersects(EntityFlags::ON_GROUND | EntityFlags::FLY | EntityFlags::IN_WATER);
 
         if in_freefall {
             let vel: Vector3<f32> = self
                 .world
-                .entity(ent_id)
-                .load(FieldAddrVector::Velocity)?
+                .entities
+                .get(ent_id)
+                .load(&self.world.type_def, FieldAddrVector::Velocity)?
                 .into();
 
             // If true, play an impact sound when the entity hits the ground.
             let hit_sound = vel.z < -0.1 * gravity;
 
-            self.world
-                .entity_mut(ent_id)?
-                .apply_gravity(gravity, frame_time)?;
+            self.world.entities.get_mut(ent_id)?.apply_gravity(
+                &self.world.type_def,
+                &self.string_table,
+                gravity,
+                frame_time,
+            )?;
 
             self.world
-                .entity_mut(ent_id)?
-                .limit_velocity(max_velocity)?;
+                .entities
+                .get_mut(ent_id)?
+                .limit_velocity(&self.world.type_def, max_velocity)?;
 
             // Move the entity and relink it.
-            self.move_ballistic(frame_time, ent_id, vfs)?;
-            self.link_entity(ent_id, true, vfs)?;
+            self.move_ballistic(frame_time, ent_id, registry.reborrow(), vfs)?;
+            self.link_entity(ent_id, true, registry.reborrow(), vfs)?;
 
-            let ent = self.world.entity_mut(ent_id)?;
+            let ent = self.world.entities.get_mut(ent_id)?;
 
-            if ent.flags()?.contains(EntityFlags::ON_GROUND) && hit_sound {
+            if ent
+                .flags(&self.world.type_def)?
+                .contains(EntityFlags::ON_GROUND)
+                && hit_sound
+            {
                 // Entity hit the ground this frame.
                 todo!("SV_StartSound(demon/dland2.wav)");
             }
         }
 
-        self.think(ent_id, frame_time, vfs)?;
+        self.think(ent_id, frame_time, registry, vfs)?;
 
         todo!("SV_CheckWaterTransition");
 
@@ -963,14 +1062,20 @@ impl LevelState {
         frame_time: Duration,
         move_time: Duration,
     ) -> Result<(), ProgsError> {
-        let ent = self.world.entity_mut(ent_id)?;
+        let ent = self.world.entities.get_mut(ent_id)?;
 
-        let vel: Vector3<f32> = ent.load(FieldAddrVector::Velocity)?.into();
+        let vel: Vector3<f32> = ent
+            .load(&self.world.type_def, FieldAddrVector::Velocity)?
+            .into();
         if vel.is_zero() {
             // Entity doesn't need to move.
-            let local_time = ent.load(FieldAddrFloat::LocalTime)?;
+            let local_time = ent.load(&self.world.type_def, FieldAddrFloat::LocalTime)?;
             let new_local_time = local_time + duration_to_f32(move_time);
-            ent.store(FieldAddrFloat::LocalTime, new_local_time)?;
+            ent.store(
+                &self.world.type_def,
+                FieldAddrFloat::LocalTime,
+                new_local_time,
+            )?;
             return Ok(());
         }
 
@@ -987,6 +1092,7 @@ impl LevelState {
         &mut self,
         sim_time: Duration,
         ent_id: EntityId,
+        mut registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(CollisionFlags, Option<Trace>), ProgsError> {
         let mut sim_time_f = duration_to_f32(sim_time);
@@ -995,24 +1101,36 @@ impl LevelState {
         let mut flags = CollisionFlags::empty();
         let mut touching_planes: ArrayVec<Hyperplane, 5> = ArrayVec::new();
 
-        let init_velocity = self.world.entity(ent_id).velocity()?;
+        let init_velocity = self
+            .world
+            .entities
+            .get(ent_id)
+            .velocity(&self.world.type_def)?;
         let mut trace_velocity = init_velocity;
 
         // Even when the entity collides with something along its path, it may
         // continue moving. This may occur when bouncing or sliding off a solid
         // object, or when moving between media (e.g. from air to water).
         for _ in 0..Self::MAX_BALLISTIC_COLLISIONS {
-            let velocity = self.world.entity(ent_id).velocity()?;
+            let velocity = self
+                .world
+                .entities
+                .get(ent_id)
+                .velocity(&self.world.type_def)?;
 
             if velocity.is_zero() {
                 // Not moving.
                 break;
             }
 
-            let orig = self.world.entity(ent_id).origin()?;
+            let orig = self
+                .world
+                .entities
+                .get(ent_id)
+                .origin(&self.world.type_def)?;
             let end = orig + sim_time_f * velocity;
-            let min = self.world.entity(ent_id).min()?;
-            let max = self.world.entity(ent_id).max()?;
+            let min = self.world.entities.get(ent_id).min(&self.world.type_def)?;
+            let max = self.world.entities.get(ent_id).max(&self.world.type_def)?;
 
             let (trace, hit_entity) =
                 self.world
@@ -1020,21 +1138,29 @@ impl LevelState {
 
             if trace.all_solid() {
                 // Entity is stuck in a wall.
-                self.world
-                    .entity_mut(ent_id)?
-                    .store(FieldAddrVector::Velocity, Vector3::zero().into())?;
+                self.world.entities.get_mut(ent_id)?.store(
+                    &self.world.type_def,
+                    FieldAddrVector::Velocity,
+                    Vector3::zero().into(),
+                )?;
 
                 return Ok((CollisionFlags::HORIZONTAL | CollisionFlags::VERTICAL, None));
             }
 
             if trace.ratio() > 0.0 {
                 // If the entity moved at all, update its position.
-                self.world
-                    .entity_mut(ent_id)?
-                    .store(FieldAddrVector::Origin, trace.end_point().into())?;
+                self.world.entities.get_mut(ent_id)?.store(
+                    &self.world.type_def,
+                    FieldAddrVector::Origin,
+                    trace.end_point().into(),
+                )?;
                 touching_planes.clear();
 
-                trace_velocity = self.world.entity(ent_id).velocity()?;
+                trace_velocity = self
+                    .world
+                    .entities
+                    .get(ent_id)
+                    .velocity(&self.world.type_def)?;
             }
 
             // Find the plane the entity hit, if any.
@@ -1054,21 +1180,30 @@ impl LevelState {
             // TODO: magic constant
             if boundary.plane.normal().z > 0.7 {
                 flags |= CollisionFlags::HORIZONTAL;
-                if self.world.entity(hit_entity).solid()? == EntitySolid::Bsp {
+                if self
+                    .world
+                    .entities
+                    .get(hit_entity)
+                    .solid(&self.world.type_def)?
+                    == EntitySolid::Bsp
+                {
                     self.world
-                        .entity_mut(ent_id)?
-                        .add_flags(EntityFlags::ON_GROUND)?;
-                    self.world
-                        .entity_mut(ent_id)?
-                        .store(FieldAddrEntityId::Ground, hit_entity)?;
+                        .entities
+                        .get_mut(ent_id)?
+                        .add_flags(&self.world.type_def, EntityFlags::ON_GROUND)?;
+                    self.world.entities.get_mut(ent_id)?.store(
+                        &self.world.type_def,
+                        FieldAddrEntityId::Ground,
+                        hit_entity,
+                    )?;
                 }
             } else if boundary.plane.normal().z == 0.0 {
                 flags |= CollisionFlags::VERTICAL;
                 out_trace = Some(trace.clone());
             }
 
-            self.impact_entities(ent_id, hit_entity, vfs)?;
-            if !self.world.entity_exists(ent_id) {
+            self.impact_entities(ent_id, hit_entity, registry.reborrow(), vfs)?;
+            if !self.world.entities.exists(ent_id) {
                 // Entity removed by touch function.
                 break;
             }
@@ -1077,9 +1212,11 @@ impl LevelState {
 
             if touching_planes.try_push(boundary.plane.clone()).is_err() {
                 // Touching too many planes to make much sense of, so stop.
-                self.world
-                    .entity_mut(ent_id)?
-                    .store(FieldAddrVector::Velocity, Vector3::zero().into())?;
+                self.world.entities.get_mut(ent_id)?.store(
+                    &self.world.type_def,
+                    FieldAddrVector::Velocity,
+                    Vector3::zero().into(),
+                )?;
                 return Ok((CollisionFlags::HORIZONTAL | CollisionFlags::VERTICAL, None));
             }
 
@@ -1088,9 +1225,11 @@ impl LevelState {
                     Some(v) => v,
                     None => {
                         // Entity is wedged in a corner, so it simply stops.
-                        self.world
-                            .entity_mut(ent_id)?
-                            .store(FieldAddrVector::Velocity, Vector3::zero().into())?;
+                        self.world.entities.get_mut(ent_id)?.store(
+                            &self.world.type_def,
+                            FieldAddrVector::Velocity,
+                            Vector3::zero().into(),
+                        )?;
 
                         return Ok((
                             CollisionFlags::HORIZONTAL
@@ -1103,15 +1242,19 @@ impl LevelState {
 
             if init_velocity.dot(end_velocity) <= 0.0 {
                 // Avoid bouncing the entity at a sharp angle.
-                self.world
-                    .entity_mut(ent_id)?
-                    .store(FieldAddrVector::Velocity, Vector3::zero().into())?;
+                self.world.entities.get_mut(ent_id)?.store(
+                    &self.world.type_def,
+                    FieldAddrVector::Velocity,
+                    Vector3::zero().into(),
+                )?;
                 return Ok((flags, out_trace));
             }
 
-            self.world
-                .entity_mut(ent_id)?
-                .store(FieldAddrVector::Velocity, end_velocity.into())?;
+            self.world.entities.get_mut(ent_id)?.store(
+                &self.world.type_def,
+                FieldAddrVector::Velocity,
+                end_velocity.into(),
+            )?;
         }
 
         Ok((flags, out_trace))
@@ -1129,14 +1272,19 @@ impl LevelState {
     pub fn drop_entity_to_floor(
         &mut self,
         ent_id: EntityId,
+        registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<bool, ProgsError> {
         debug!("Finding floor for entity with ID {}", ent_id.0);
-        let origin = self.world.entity(ent_id).origin()?;
+        let origin = self
+            .world
+            .entities
+            .get(ent_id)
+            .origin(&self.world.type_def)?;
 
         let end = Vector3::new(origin.x, origin.y, origin.z - Self::DROP_TO_FLOOR_DIST);
-        let min = self.world.entity(ent_id).min()?;
-        let max = self.world.entity(ent_id).max()?;
+        let min = self.world.entities.get(ent_id).min(&self.world.type_def)?;
+        let max = self.world.entities.get(ent_id).max(&self.world.type_def)?;
 
         let (trace, collide_entity) =
             self.world
@@ -1151,22 +1299,32 @@ impl LevelState {
             Ok(false)
         } else {
             // Entity hit the floor. Update origin, relink and set ON_GROUND flag.
+            self.world.entities.get_mut(ent_id)?.put_vector(
+                &self.world.type_def,
+                trace.end_point().into(),
+                FieldAddrVector::Origin as i16,
+            )?;
+            self.link_entity(ent_id, false, registry, vfs)?;
             self.world
-                .entity_mut(ent_id)?
-                .put_vector(trace.end_point().into(), FieldAddrVector::Origin as i16)?;
-            self.link_entity(ent_id, false, vfs)?;
-            self.world
-                .entity_mut(ent_id)?
-                .add_flags(EntityFlags::ON_GROUND)?;
-            self.world
-                .entity_mut(ent_id)?
-                .put_entity_id(collide_entity.unwrap(), FieldAddrEntityId::Ground as i16)?;
+                .entities
+                .get_mut(ent_id)?
+                .add_flags(&self.world.type_def, EntityFlags::ON_GROUND)?;
+            self.world.entities.get_mut(ent_id)?.put_entity_id(
+                &self.world.type_def,
+                collide_entity.unwrap(),
+                FieldAddrEntityId::Ground as i16,
+            )?;
 
             Ok(true)
         }
     }
 
-    pub fn touch_triggers(&mut self, ent_id: EntityId, vfs: &Vfs) -> Result<(), ProgsError> {
+    pub fn touch_triggers(
+        &mut self,
+        ent_id: EntityId,
+        mut registry: Mut<Registry>,
+        vfs: &Vfs,
+    ) -> Result<(), ProgsError> {
         // TODO: alloc once
         let mut touched = Vec::new();
         self.world.list_touched_triggers(&mut touched, ent_id, 0)?;
@@ -1179,12 +1337,13 @@ impl LevelState {
         for trigger_id in touched {
             let trigger_touch = self
                 .world
-                .entity(trigger_id)
-                .load(FieldAddrFunctionId::Touch)?;
+                .entities
+                .get(trigger_id)
+                .load(&self.world.type_def, FieldAddrFunctionId::Touch)?;
 
             self.globals.store(GlobalAddrEntity::Self_, trigger_id)?;
             self.globals.store(GlobalAddrEntity::Other, ent_id)?;
-            self.execute_program(trigger_touch, vfs)?;
+            self.execute_program(trigger_touch, registry.reborrow(), vfs)?;
         }
 
         // Restore state.
@@ -1199,6 +1358,7 @@ impl LevelState {
         &mut self,
         ent_a: EntityId,
         ent_b: EntityId,
+        mut registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
         let restore_self = self.globals.load(GlobalAddrEntity::Self_)?;
@@ -1208,21 +1368,29 @@ impl LevelState {
             .store(GlobalAddrFloat::Time, duration_to_f32(self.time))?;
 
         // Set up and run Entity A's touch function.
-        let touch_a = self.world.entity(ent_a).load(FieldAddrFunctionId::Touch)?;
-        let solid_a = self.world.entity(ent_a).solid()?;
+        let touch_a = self
+            .world
+            .entities
+            .get(ent_a)
+            .load(&self.world.type_def, FieldAddrFunctionId::Touch)?;
+        let solid_a = self.world.entities.get(ent_a).solid(&self.world.type_def)?;
         if touch_a.0 != 0 && solid_a != EntitySolid::Not {
             self.globals.store(GlobalAddrEntity::Self_, ent_a)?;
             self.globals.store(GlobalAddrEntity::Other, ent_b)?;
-            self.execute_program(touch_a, vfs)?;
+            self.execute_program(touch_a, registry.reborrow(), vfs)?;
         }
 
         // Set up and run Entity B's touch function.
-        let touch_b = self.world.entity(ent_b).load(FieldAddrFunctionId::Touch)?;
-        let solid_b = self.world.entity(ent_b).solid()?;
+        let touch_b = self
+            .world
+            .entities
+            .get(ent_b)
+            .load(&self.world.type_def, FieldAddrFunctionId::Touch)?;
+        let solid_b = self.world.entities.get(ent_b).solid(&self.world.type_def)?;
         if touch_b.0 != 0 && solid_b != EntitySolid::Not {
             self.globals.store(GlobalAddrEntity::Self_, ent_b)?;
             self.globals.store(GlobalAddrEntity::Other, ent_a)?;
-            self.execute_program(touch_b, vfs)?;
+            self.execute_program(touch_b, registry.reborrow(), vfs)?;
         }
 
         self.globals.store(GlobalAddrEntity::Self_, restore_self)?;
@@ -1244,7 +1412,8 @@ impl LevelState {
         self.globals
             .put_bytes(val3, GLOBAL_ADDR_RETURN as i16 + 2)?;
 
-        self.cx.leave_function(&mut self.globals)?;
+        self.cx
+            .leave_function(&self.string_table, &mut self.globals)?;
 
         Ok(())
     }
@@ -1255,7 +1424,11 @@ impl LevelState {
 
         let fld_ofs = self.globals.get_field_addr(e_f)?;
 
-        let f = self.world.entity(ent_id).get_float(fld_ofs.0 as i16)?;
+        let f = self
+            .world
+            .entities
+            .get(ent_id)
+            .get_float(&self.world.type_def, fld_ofs.0 as i16)?;
         self.globals.put_float(f, dest_ofs)?;
 
         Ok(())
@@ -1270,7 +1443,11 @@ impl LevelState {
     ) -> Result<(), ProgsError> {
         let ent_id = self.globals.entity_id(ent_id_addr)?;
         let ent_vector = self.globals.get_field_addr(ent_vector_addr)?;
-        let v = self.world.entity(ent_id).get_vector(ent_vector.0 as i16)?;
+        let v = self
+            .world
+            .entities
+            .get(ent_id)
+            .get_vector(&self.world.type_def, ent_vector.0 as i16)?;
         self.globals.put_vector(v, dest_addr)?;
 
         Ok(())
@@ -1286,8 +1463,9 @@ impl LevelState {
         let ent_string_id = self.globals.get_field_addr(ent_string_id_addr)?;
         let s = self
             .world
-            .entity(ent_id)
-            .string_id(ent_string_id.0 as i16)?;
+            .entities
+            .get(ent_id)
+            .string_id(&self.world.type_def, ent_string_id.0 as i16)?;
         self.globals.put_string_id(s, dest_addr)?;
 
         Ok(())
@@ -1303,8 +1481,9 @@ impl LevelState {
         let ent_entity_id = self.globals.get_field_addr(ent_entity_id_addr)?;
         let e = self
             .world
-            .entity(ent_id)
-            .entity_id(ent_entity_id.0 as i16)?;
+            .entities
+            .get(ent_id)
+            .entity_id(&self.world.type_def, ent_entity_id.0 as i16)?;
         self.globals.put_entity_id(e, dest_addr)?;
 
         Ok(())
@@ -1320,8 +1499,9 @@ impl LevelState {
         let fnc_function_id = self.globals.get_field_addr(ent_function_id_addr)?;
         let f = self
             .world
-            .entity(ent_id)
-            .function_id(fnc_function_id.0 as i16)?;
+            .entities
+            .get(ent_id)
+            .function_id(&self.world.type_def, fnc_function_id.0 as i16)?;
         self.globals.put_function_id(f, dest_addr)?;
 
         Ok(())
@@ -1361,8 +1541,9 @@ impl LevelState {
             .world
             .ent_fld_addr_from_i32(self.globals.get_entity_field(dst_ent_fld_addr)?);
         self.world
-            .entity_mut(ent_fld_addr.entity_id)?
-            .put_float(f, ent_fld_addr.field_addr.0 as i16)?;
+            .entities
+            .get_mut(ent_fld_addr.entity_id)?
+            .put_float(&self.world.type_def, f, ent_fld_addr.field_addr.0 as i16)?;
 
         Ok(())
     }
@@ -1382,8 +1563,9 @@ impl LevelState {
             .world
             .ent_fld_addr_from_i32(self.globals.get_entity_field(dst_ent_fld_addr)?);
         self.world
-            .entity_mut(ent_fld_addr.entity_id)?
-            .put_vector(v, ent_fld_addr.field_addr.0 as i16)?;
+            .entities
+            .get_mut(ent_fld_addr.entity_id)?
+            .put_vector(&self.world.type_def, v, ent_fld_addr.field_addr.0 as i16)?;
 
         Ok(())
     }
@@ -1403,8 +1585,9 @@ impl LevelState {
             .world
             .ent_fld_addr_from_i32(self.globals.get_entity_field(dst_ent_fld_addr)?);
         self.world
-            .entity_mut(ent_fld_addr.entity_id)?
-            .put_string_id(s, ent_fld_addr.field_addr.0 as i16)?;
+            .entities
+            .get_mut(ent_fld_addr.entity_id)?
+            .put_string_id(&self.world.type_def, s, ent_fld_addr.field_addr.0 as i16)?;
 
         Ok(())
     }
@@ -1424,8 +1607,9 @@ impl LevelState {
             .world
             .ent_fld_addr_from_i32(self.globals.get_entity_field(dst_ent_fld_addr)?);
         self.world
-            .entity_mut(ent_fld_addr.entity_id)?
-            .put_entity_id(e, ent_fld_addr.field_addr.0 as i16)?;
+            .entities
+            .get_mut(ent_fld_addr.entity_id)?
+            .put_entity_id(&self.world.type_def, e, ent_fld_addr.field_addr.0 as i16)?;
 
         Ok(())
     }
@@ -1445,8 +1629,9 @@ impl LevelState {
             .world
             .ent_fld_addr_from_i32(self.globals.get_entity_field(dst_ent_fld_addr)?);
         self.world
-            .entity_mut(ent_fld_addr.entity_id)?
-            .put_function_id(f, ent_fld_addr.field_addr.0 as i16)?;
+            .entities
+            .get_mut(ent_fld_addr.entity_id)?
+            .put_function_id(&self.world.type_def, f, ent_fld_addr.field_addr.0 as i16)?;
 
         Ok(())
     }
@@ -1464,23 +1649,35 @@ impl LevelState {
         }
 
         let self_id = self.globals.entity_id(GlobalAddrEntity::Self_ as i16)?;
-        let self_ent = self.world.entity_mut(self_id)?;
+        let self_ent = self.world.entities.get_mut(self_id)?;
         let next_think_time = self.globals.get_float(GlobalAddrFloat::Time as i16)? + 0.1;
 
-        self_ent.put_float(next_think_time, FieldAddrFloat::NextThink as i16)?;
+        self_ent.put_float(
+            &self.world.type_def,
+            next_think_time,
+            FieldAddrFloat::NextThink as i16,
+        )?;
 
         let frame_id = self.globals.get_float(frame_id_addr)?;
-        self_ent.put_float(frame_id, FieldAddrFloat::FrameId as i16)?;
+        self_ent.put_float(
+            &self.world.type_def,
+            frame_id,
+            FieldAddrFloat::FrameId as i16,
+        )?;
 
         Ok(())
     }
 
     // QuakeC built-in functions ==============================================
 
-    pub fn builtin_set_origin(&mut self, vfs: &Vfs) -> Result<(), ProgsError> {
+    pub fn builtin_set_origin(
+        &mut self,
+        registry: Mut<Registry>,
+        vfs: &Vfs,
+    ) -> Result<(), ProgsError> {
         let e_id = self.globals.entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
         let origin = self.globals.get_vector(GLOBAL_ADDR_ARG_1 as i16)?;
-        self.set_entity_origin(e_id, Vector3::from(origin), vfs)?;
+        self.set_entity_origin(e_id, Vector3::from(origin), registry, vfs)?;
 
         Ok(())
     }
@@ -1510,8 +1707,8 @@ impl LevelState {
         Ok(())
     }
 
-    pub fn builtin_spawn(&mut self, vfs: &Vfs) -> Result<(), ProgsError> {
-        let ent_id = self.spawn_entity(vfs)?;
+    pub fn builtin_spawn(&mut self, registry: Mut<Registry>, vfs: &Vfs) -> Result<(), ProgsError> {
+        let ent_id = self.spawn_entity(registry, vfs)?;
         self.globals
             .put_entity_id(ent_id, GLOBAL_ADDR_RETURN as i16)?;
 
@@ -1542,7 +1739,7 @@ impl LevelState {
         let s_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
         if self.model_id(s_id).is_none() {
             self.precache_model(s_id);
-            self.world.add_model(vfs, s_id)?;
+            self.world.add_model(vfs, &self.string_table, s_id)?;
         }
 
         self.globals
@@ -1560,9 +1757,13 @@ impl LevelState {
         Ok(())
     }
 
-    pub fn builtin_drop_to_floor(&mut self, vfs: &Vfs) -> Result<(), ProgsError> {
+    pub fn builtin_drop_to_floor(
+        &mut self,
+        registry: Mut<Registry>,
+        vfs: &Vfs,
+    ) -> Result<(), ProgsError> {
         let ent_id = self.globals.entity_id(GlobalAddrEntity::Self_ as i16)?;
-        let hit_floor = self.drop_entity_to_floor(ent_id, vfs)?;
+        let hit_floor = self.drop_entity_to_floor(ent_id, registry, vfs)?;
         self.globals
             .put_float(hit_floor as u32 as f32, GLOBAL_ADDR_RETURN as i16)?;
 
@@ -1580,17 +1781,17 @@ impl LevelState {
         Ok(())
     }
 
-    pub fn builtin_cvar(&mut self) -> Result<(), ProgsError> {
+    pub fn builtin_cvar(&mut self, registry: &Registry) -> Result<(), ProgsError> {
         let s_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
         let strs = &self.string_table;
         let s = strs.get(s_id).unwrap();
-        let f = todo!(); // registry.read_cvar(&*s).unwrap();
+        let f = registry.read_cvar(&*s).unwrap();
         self.globals.put_float(f, GLOBAL_ADDR_RETURN as i16)?;
 
         Ok(())
     }
 
-    pub fn builtin_cvar_set(&mut self) -> Result<(), ProgsError> {
+    pub fn builtin_cvar_set(&mut self, mut registry: Mut<Registry>) -> Result<(), ProgsError> {
         let strs = &self.string_table;
 
         let var_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
@@ -1598,9 +1799,7 @@ impl LevelState {
         let val_id = self.globals.string_id(GLOBAL_ADDR_ARG_1 as i16)?;
         let val = strs.get(val_id).unwrap();
 
-        // TODO: Re-implement server-side cvar functionality
-        todo!();
-        // registry.(&*var, &*val).unwrap();
+        registry.set_cvar(&*var, &*val).unwrap();
 
         Ok(())
     }
@@ -1619,4 +1818,10 @@ impl LevelState {
         // TODO: write to server signon packet
         Ok(())
     }
+}
+
+pub mod systems {
+    use super::*;
+
+    pub fn server_update(server: ResMut<Session>) {}
 }

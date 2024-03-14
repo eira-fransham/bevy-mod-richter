@@ -66,6 +66,22 @@ pub const MAX_ITEMS: usize = 32;
 
 pub const DEFAULT_VIEWHEIGHT: f32 = 22.0;
 
+#[derive(Event)]
+pub struct ServerMessage(pub Vec<u8>);
+
+#[derive(PartialEq, Eq, Copy, Clone, Hash, Default)]
+pub enum ClientMessageKind {
+    #[default]
+    Reliable,
+    Unreliable,
+}
+
+#[derive(Event, Default, Clone)]
+pub struct ClientMessage {
+    pub packet: Vec<u8>,
+    pub kind: ClientMessageKind,
+}
+
 #[derive(Debug)]
 pub enum NetError {
     Io(::std::io::Error),
@@ -1985,6 +2001,7 @@ pub enum BlockingMode {
     Timeout(Duration),
 }
 
+#[derive(Resource)]
 pub struct QSocket {
     socket: UdpSocket,
     remote: SocketAddr,

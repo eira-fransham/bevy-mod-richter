@@ -5,7 +5,6 @@ use crate::{
 use std::str::FromStr as _;
 
 use bevy::prelude::*;
-use fxhash::FxHashMap;
 
 use super::game::GameInput;
 
@@ -72,7 +71,7 @@ fn cmd_bind(In(args): In<Box<[String]>>, mut game_input: ResMut<GameInput>) -> E
 fn cmd_unbindall(In(args): In<Box<[String]>>, mut game_input: ResMut<GameInput>) -> ExecResult {
     match args.len() {
         0 => {
-            game_input.bindings = FxHashMap::default();
+            game_input.bindings = default();
             default()
         }
         _ => "unbindall: delete all keybindings".into(),

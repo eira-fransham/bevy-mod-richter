@@ -12,6 +12,7 @@ void main() {
   if (color.a == 0) {
     discard;
   } else {
-    color_attachment = color;
+    // Hard-coded 2x gamma since that's what is expected for Quake's UI
+    color_attachment = color * 2.;
   }
 }

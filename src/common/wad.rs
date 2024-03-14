@@ -31,7 +31,7 @@ use crate::common::util;
 use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use failure::{bail, Backtrace, Context, Error, Fail};
-use fxhash::FxHashMap;
+use hashbrown::HashMap;
 
 use super::util::QString;
 
@@ -154,7 +154,7 @@ struct LumpInfo {
 }
 
 pub struct Wad {
-    files: FxHashMap<String, Box<[u8]>>,
+    files: HashMap<String, Box<[u8]>>,
 }
 
 impl Wad {
@@ -193,7 +193,7 @@ impl Wad {
             lump_infos.push(LumpInfo { offset, size, name });
         }
 
-        let mut files = FxHashMap::default();
+        let mut files = HashMap::default();
 
         for lump_info in lump_infos {
             let mut data = Vec::with_capacity(lump_info.size as usize);

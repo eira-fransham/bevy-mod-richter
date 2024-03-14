@@ -38,7 +38,7 @@ use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use cgmath::{InnerSpace, Vector3};
 use failure::{bail, ensure, ResultExt as _};
-use fxhash::FxHashMap;
+use hashbrown::HashMap;
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 use thiserror::Error;
@@ -521,7 +521,7 @@ where
     // maps animated texture names to primary and alternate animations
     // e.g., for textures of the form +#slip, maps "slip" to the ids of
     // [+0slip, +1slip, ...] and [+aslip, +bslip, ...]
-    let mut anim_file_textures = FxHashMap::<String, BspFileTextureAnimations>::default();
+    let mut anim_file_textures = HashMap::<String, BspFileTextureAnimations>::new();
 
     // final texture array
     let mut textures = Vec::new();
@@ -529,8 +529,8 @@ where
     let mut texture_ids = Vec::new();
 
     // map file texture ids to actual texture ids
-    let mut static_texture_ids = FxHashMap::default();
-    let mut animated_texture_ids = FxHashMap::default();
+    let mut static_texture_ids = HashMap::new();
+    let mut animated_texture_ids = HashMap::new();
 
     debug!("Sequencing textures");
     for (file_texture_id, file_texture) in file_textures.into_iter().enumerate() {

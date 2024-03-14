@@ -24,7 +24,7 @@ use bevy::{
     prelude::*,
 };
 use failure::{bail, format_err, Error};
-use fxhash::FxHashMap;
+use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use smol_str::SmolStr;
 use strum_macros::EnumIter;
@@ -77,12 +77,12 @@ impl PartialEq for UppercaseStr<'_> {
 }
 
 lazy_static! {
-    static ref KEYMAP: FxHashMap<UppercaseStr<'static>, AnyInput> = KEYBOARD_NAMES
+    static ref KEYMAP: HashMap<UppercaseStr<'static>, AnyInput> = KEYBOARD_NAMES
         .into_iter()
         .chain(MOUSE_NAMES)
         .map(|(n, i)| (UppercaseStr(n), i.clone()))
         .collect();
-    static ref INVERSE_KEYMAP: FxHashMap<AnyInput, UppercaseStr<'static>> = KEYBOARD_NAMES
+    static ref INVERSE_KEYMAP: HashMap<AnyInput, UppercaseStr<'static>> = KEYBOARD_NAMES
         .into_iter()
         .chain(MOUSE_NAMES)
         .map(|(n, i)| (i.clone(), UppercaseStr(n)))
@@ -506,7 +506,7 @@ impl Display for Binding<'_> {
 
 #[derive(Debug, Clone, Resource)]
 pub struct GameInput {
-    pub bindings: FxHashMap<AnyInput, Binding<'static>>,
+    pub bindings: HashMap<AnyInput, Binding<'static>>,
     pub mouse_delta: (f64, f64),
 }
 

@@ -1,26 +1,22 @@
-use im::HashMap;
-use imstr::string::{ImString, Local};
-use std::{
-    cell::{Ref, RefCell},
-    ops::Deref,
-};
+use parking_lot::RwLock;
 
 use crate::server::progs::{ProgsError, StringId};
+use dashmap::DashMap;
 
 #[derive(Debug)]
 pub struct StringTable {
     /// Interned string data.
-    data: RefCell<ImString<Local>>,
+    data: String,
 
     /// Caches string lengths for faster lookup.
-    lengths: RefCell<HashMap<StringId, usize>>,
+    lengths: DashMap<StringId, usize>,
 }
 
 impl StringTable {
     pub fn new(data: Vec<u8>) -> StringTable {
         StringTable {
-            data: ImString::from_utf8(data).unwrap().into(),
-            lengths: RefCell::new(HashMap::new()),
+            data: String::from_utf8(data).unwrap().into(),
+            lengths: Default::default(),
         }
     }
 
@@ -31,7 +27,7 @@ impl StringTable {
 
         let id = StringId(value as usize);
 
-        if id.0 < self.data.borrow().len() {
+        if id.0 < self.data.len() {
             Ok(id)
         } else {
             Err(ProgsError::with_msg(format!("no string with ID {}", value)))
@@ -44,7 +40,7 @@ impl StringTable {
     {
         let target = target.as_ref();
         for (ofs, _) in target.char_indices() {
-            let sub = &self.data.borrow()[ofs..];
+            let sub = &self.data[ofs..];
             if !sub.starts_with(target) {
                 continue;
             }
@@ -63,34 +59,34 @@ impl StringTable {
         None
     }
 
-    pub fn get(&self, id: StringId) -> Option<impl Deref<Target = str> + '_> {
+    pub fn get(&self, id: StringId) -> Option<&str> {
         let start = id.0;
 
-        if start >= self.data.borrow().len() {
+        if start >= self.data.len() {
             return None;
         }
 
-        if let Some(len) = self.lengths.borrow().get(&id) {
-            let end = start + len;
-            return Some(Ref::map(self.data.borrow(), |this| &this[start..end]));
+        if let Some(len) = self.lengths.get(&id) {
+            let end = start + *len;
+            return Some(&self.data[start..end]);
         }
 
-        match self.data.borrow()[start..]
+        match self.data[start..]
             .chars()
             .take(1024 * 1024)
             .enumerate()
             .find(|&(_i, c)| c == '\0')
         {
             Some((len, _)) => {
-                self.lengths.borrow_mut().insert(id, len);
+                self.lengths.insert(id, len);
                 let end = start + len;
-                Some(Ref::map(self.data.borrow(), |this| &this[start..end]))
+                Some(&self.data[start..end])
             }
             None => panic!("string data not NUL-terminated!"),
         }
     }
 
-    pub fn insert<S>(&self, s: S) -> StringId
+    pub fn insert<S>(&mut self, s: S) -> StringId
     where
         S: AsRef<str>,
     {
@@ -98,13 +94,13 @@ impl StringTable {
 
         assert!(!s.contains('\0'));
 
-        let id = StringId(self.data.borrow().len());
-        self.data.borrow_mut().push_str(s);
-        self.lengths.borrow_mut().insert(id, s.len());
+        let id = StringId(self.data.len());
+        self.data.push_str(s);
+        self.lengths.insert(id, s.len());
         id
     }
 
-    pub fn find_or_insert<S>(&self, target: S) -> StringId
+    pub fn find_or_insert<S>(&mut self, target: S) -> StringId
     where
         S: AsRef<str>,
     {
@@ -114,14 +110,9 @@ impl StringTable {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = impl Deref<Target = str>> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = &str> + '_ {
         // TODO: Make this work properly with the refcell - since the inner data
         //       is cheaply clonable this should be relatively easy.
-        self.data
-            .borrow()
-            .split('\0')
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .into_iter()
+        self.data.split('\0')
     }
 }

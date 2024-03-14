@@ -37,7 +37,7 @@ use self::{
     sound::{MixerEvent, SeismonSoundPlugin},
 };
 
-use std::{collections::VecDeque, io::BufReader, net::ToSocketAddrs, path::PathBuf};
+use std::{collections::VecDeque, io::BufReader, mem, net::ToSocketAddrs, path::PathBuf};
 
 use crate::{
     client::{
@@ -56,19 +56,20 @@ use crate::{
         net::{
             self,
             connect::{ConnectSocket, Request, Response, CONNECT_PROTOCOL_VERSION},
-            BlockingMode, ClientCmd, ClientStat, EntityEffects, EntityState, GameType, NetError,
-            PlayerColor, QSocket, ServerCmd, SignOnStage,
+            BlockingMode, ClientCmd, ClientMessage, ClientStat, EntityEffects, EntityState,
+            GameType, NetError, PlayerColor, QSocket, ServerCmd, ServerMessage, SignOnStage,
         },
         util::QString,
         vfs::{Vfs, VfsError},
     },
 };
-use fxhash::FxHashMap;
+use cgmath::{Deg, Vector3};
+use hashbrown::HashMap;
 
 use bevy::{
     asset::AssetServer,
     ecs::{
-        event::EventWriter,
+        event::{EventWriter, ManualEventReader},
         system::{Res, ResMut, Resource},
     },
     prelude::*,
@@ -157,6 +158,8 @@ where
             .init_resource::<MusicPlayer>()
             .init_resource::<DemoQueue>()
             .add_event::<Impulse>()
+            .add_event::<ClientMessage>()
+            .add_event::<ServerMessage>()
             // TODO: Use bevy's state system
             .insert_resource(ConnectionState::SignOn(SignOnStage::Not))
             .add_systems(
@@ -175,6 +178,14 @@ where
                             error!("Error handling frame: {}", e);
                         }
                     }),
+                    systems::process_network_messages
+                        .pipe(|In(res)| {
+                            // TODO: Error handling
+                            if let Err(e) = res {
+                                error!("Error handling frame: {}", e);
+                            }
+                        })
+                        .run_if(resource_exists::<QSocket>),
                 ),
             )
             .add_plugins(SeismonConsolePlugin)
@@ -320,8 +331,8 @@ pub enum ConnectionState {
 enum ConnectionKind {
     /// A regular Quake server.
     Server {
-        /// The [`QSocket`](crate::net::QSocket) used to communicate with the server.
-        qsock: QSocket,
+        /// The socket used to communicate with the server.
+        reader: ManualEventReader<ServerMessage>,
 
         /// The client's packet composition buffer.
         compose: Vec<u8>,
@@ -331,6 +342,73 @@ enum ConnectionKind {
     Demo(DemoServer),
 }
 
+struct ServerUpdate {
+    message: Vec<u8>,
+    angles: Option<Vector3<Deg<f32>>>,
+    track_override: Option<u32>,
+}
+
+impl Default for ServerUpdate {
+    fn default() -> Self {
+        Self {
+            message: (&[][..]).into(),
+            angles: None,
+            track_override: None,
+        }
+    }
+}
+
+impl ConnectionKind {
+    fn recv(
+        &mut self,
+        events: &Events<ServerMessage>,
+    ) -> Result<Option<ServerUpdate>, ClientError> {
+        match self {
+            Self::Server { reader, .. } => {
+                let mut out = Vec::new();
+                for ServerMessage(msg) in reader.read(events) {
+                    out.extend(msg);
+                }
+
+                Ok(Some(ServerUpdate {
+                    message: out,
+                    ..default()
+                }))
+            }
+            Self::Demo(demo_srv) => {
+                let track_override = demo_srv.track_override();
+                let msg_view = match demo_srv.next() {
+                    Some(v) => v,
+                    None => {
+                        // if there are no commands left in the demo, play
+                        // the next demo if there is one
+                        return Ok(None);
+                    }
+                };
+
+                let mut view_angles = msg_view.view_angles();
+                // invert entity angles to get the camera direction right.
+                // yaw is already inverted.
+                view_angles.z = -view_angles.z;
+
+                // TODO: we shouldn't have to copy the message here
+                Ok(Some(ServerUpdate {
+                    message: msg_view.message().into(),
+                    angles: Some(view_angles),
+                    track_override,
+                }))
+            }
+        }
+    }
+
+    fn is_demo(&self) -> bool {
+        match self {
+            Self::Demo(_) => true,
+            Self::Server { .. } => false,
+        }
+    }
+}
+
 /// A connection to a game server of some kind.
 ///
 /// The exact nature of the connected server is specified by [`ConnectionKind`].
@@ -338,6 +416,18 @@ enum ConnectionKind {
 pub struct Connection {
     state: ClientState,
     kind: ConnectionKind,
+}
+
+impl Connection {
+    pub fn new_server() -> Self {
+        Self {
+            state: default(),
+            kind: ConnectionKind::Server {
+                reader: default(),
+                compose: default(),
+            },
+        }
+    }
 }
 
 impl Connection {
@@ -356,7 +446,7 @@ impl Connection {
             ],
             time_ms: self.state.time.num_milliseconds(),
             lerp_factor: self.state.lerp_factor,
-            entities: FxHashMap::default(),
+            entities: default(),
         };
 
         for id in entity_ids.into_iter() {
@@ -468,6 +558,7 @@ impl Connection {
         time: Time,
         vfs: &Vfs,
         asset_server: &AssetServer,
+        server_events: &Events<ServerMessage>,
         mixer_events: &mut EventWriter<MixerEvent>,
         mut console_output: Mut<ConsoleOutput>,
         kick_vars: KickVars,
@@ -476,67 +567,40 @@ impl Connection {
 
         let time = Duration::from_std(time.elapsed()).unwrap();
 
-        let (msg, demo_view_angles, track_override) = match self.kind {
-            ConnectionKind::Server { ref mut qsock, .. } => {
-                let msg = qsock.recv_msg(match &*state {
-                    // if we're in the game, don't block waiting for messages
-                    ConnectionState::Connected(_) => BlockingMode::NonBlocking,
-
-                    // otherwise, give the server some time to respond
-                    // TODO: might make sense to make this a future or something
-                    ConnectionState::SignOn(_) => {
-                        BlockingMode::Timeout(Duration::try_seconds(5).unwrap())
-                    }
-                })?;
-
-                (msg, None, None)
-            }
-
-            ConnectionKind::Demo(ref mut demo_srv) => {
-                // only get the next update once we've made it all the way to
-                // the previous one
-                if self.state.time >= self.state.msg_times[0] {
-                    let msg_view = match demo_srv.next() {
-                        Some(v) => v,
-                        None => {
-                            // if there are no commands left in the demo, play
-                            // the next demo if there is one
-                            return Ok(NextDemo);
-                        }
-                    };
-
-                    let mut view_angles = msg_view.view_angles();
-                    // invert entity angles to get the camera direction right.
-                    // yaw is already inverted.
-                    view_angles.z = -view_angles.z;
-
-                    // TODO: we shouldn't have to copy the message here
-                    (
-                        msg_view.message().to_owned(),
-                        Some(view_angles),
-                        demo_srv.track_override(),
-                    )
-                } else {
-                    (Vec::new(), None, demo_srv.track_override())
-                }
-            }
-        };
-
-        // no data available at this time
-        if msg.is_empty() {
+        if self.state.time < self.state.msg_times[0] {
             return Ok(Maintain);
         }
 
-        let mut reader = BufReader::new(msg.as_slice());
+        let Some(ServerUpdate {
+            message,
+            angles: demo_view_angles,
+            track_override,
+        }) = self.kind.recv(server_events)?
+        else {
+            return if self.kind.is_demo() {
+                Ok(NextDemo)
+            } else {
+                Ok(Maintain)
+            };
+        };
+
+        // no data available at this time
+        if message.is_empty() {
+            return Ok(Maintain);
+        }
+
+        let mut reader = BufReader::new(message.as_slice());
 
         while let Some(cmd) = ServerCmd::deserialize(&mut reader)? {
             match cmd {
                 // TODO: have an error for this instead of panicking
                 // once all other commands have placeholder handlers, just error
                 // in the wildcard branch
-                ServerCmd::Bad => {} // panic!("Invalid command from server"),
+                ServerCmd::Bad => {
+                    warn!("Invalid command from server")
+                }
 
-                ServerCmd::NoOp => (),
+                ServerCmd::NoOp => {}
 
                 ServerCmd::CdTrack { track, .. } => {
                     mixer_events.send(MixerEvent::StartMusic(Some(sound::MusicSource::TrackId(
@@ -908,6 +972,8 @@ impl Connection {
         time: Time,
         vfs: &Vfs,
         asset_server: &AssetServer,
+        from_server: &Events<ServerMessage>,
+        to_server: &mut EventWriter<ClientMessage>,
         mixer_events: &mut EventWriter<MixerEvent>,
         mut console: Mut<ConsoleOutput>,
         idle_vars: IdleVars,
@@ -928,6 +994,7 @@ impl Connection {
             time,
             vfs,
             asset_server,
+            from_server,
             mixer_events,
             console.reborrow(),
             kick_vars,
@@ -953,15 +1020,13 @@ impl Connection {
             .particles
             .update(self.state.time, frame_time, sv_gravity);
 
-        if let ConnectionKind::Server {
-            ref mut qsock,
-            ref mut compose,
-        } = self.kind
-        {
+        if let ConnectionKind::Server { compose, .. } = &mut self.kind {
             // respond to the server
-            if qsock.can_send() && !compose.is_empty() {
-                qsock.begin_send_msg(&compose)?;
-                compose.clear();
+            if !compose.is_empty() {
+                to_server.send(ClientMessage {
+                    packet: mem::take(compose),
+                    ..default()
+                });
             }
         }
 
@@ -991,7 +1056,7 @@ impl Connection {
 #[derive(Resource, ExtractResource, Clone, Default)]
 pub struct DemoQueue(pub VecDeque<String>);
 
-fn connect<A>(server_addrs: A) -> Result<(Connection, ConnectionState), ClientError>
+fn connect<A>(server_addrs: A) -> Result<(QSocket, ConnectionState), ClientError>
 where
     A: ToSocketAddrs,
 {
@@ -1066,22 +1131,14 @@ where
     // we're done with the connection socket, so turn it into a QSocket with the new address
     let qsock = con_sock.into_qsocket(new_addr);
 
-    Ok((
-        Connection {
-            state: ClientState::new(),
-            kind: ConnectionKind::Server {
-                qsock,
-                compose: Vec::new(),
-            },
-        },
-        ConnectionState::SignOn(SignOnStage::Prespawn),
-    ))
+    Ok((qsock, ConnectionState::SignOn(SignOnStage::Prespawn)))
 }
 
 #[derive(Event)]
 pub struct Impulse(pub u8);
 
 mod systems {
+    use common::net::ClientMessageKind;
     use serde::Deserialize;
 
     use self::common::console::Registry;
@@ -1093,6 +1150,7 @@ mod systems {
         registry: ResMut<Registry>,
         mut conn: Option<ResMut<Connection>>,
         frame_time: Res<Time<Virtual>>,
+        mut client_events: EventWriter<ClientMessage>,
         mut impulses: EventReader<Impulse>,
     ) -> Result<(), ClientError> {
         // TODO: Error handling
@@ -1106,7 +1164,7 @@ mod systems {
         match conn.as_deref_mut() {
             Some(Connection {
                 ref mut state,
-                kind: ConnectionKind::Server { ref mut qsock, .. },
+                kind: ConnectionKind::Server { .. },
                 ..
             }) => {
                 let move_cmd = state.handle_input(
@@ -1118,7 +1176,10 @@ mod systems {
                 );
                 let mut msg = Vec::new();
                 move_cmd.serialize(&mut msg)?;
-                qsock.send_msg_unreliable(&msg)?;
+                client_events.send(ClientMessage {
+                    packet: msg,
+                    kind: ClientMessageKind::Unreliable,
+                });
 
                 // TODO: Refresh input (e.g. mouse movement)
             }
@@ -1144,6 +1205,8 @@ mod systems {
         time: Res<Time<Virtual>>,
         asset_server: Res<AssetServer>,
         mut mixer_events: EventWriter<MixerEvent>,
+        from_server: Res<Events<ServerMessage>>,
+        mut to_server: EventWriter<ClientMessage>,
         mut console: ResMut<ConsoleOutput>,
         mut demo_queue: ResMut<DemoQueue>,
         mut focus: ResMut<InputFocus>,
@@ -1175,6 +1238,8 @@ mod systems {
                 time.as_generic(),
                 &*vfs,
                 &*asset_server,
+                &*from_server,
+                &mut to_server,
                 &mut mixer_events,
                 console.reborrow(),
                 idle_vars,
@@ -1277,5 +1342,32 @@ mod systems {
         if *target_resource != res {
             *target_resource = res;
         }
+    }
+
+    pub fn process_network_messages(
+        state: Res<ConnectionState>,
+        mut qsock: ResMut<QSocket>,
+        mut server_events: EventWriter<ServerMessage>,
+        mut client_events: EventReader<ClientMessage>,
+    ) -> Result<(), NetError> {
+        let blocking_mode = match &*state {
+            // if we're in the game, don't block waiting for messages
+            ConnectionState::Connected(_) => BlockingMode::NonBlocking,
+
+            // otherwise, give the server some time to respond
+            // TODO: might make sense to make this a future or something
+            ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::try_seconds(5).unwrap()),
+        };
+
+        server_events.send(ServerMessage(qsock.recv_msg(blocking_mode)?));
+
+        for event in client_events.read() {
+            match event.kind {
+                ClientMessageKind::Unreliable => qsock.send_msg_unreliable(&event.packet)?,
+                ClientMessageKind::Reliable => qsock.begin_send_msg(&event.packet)?,
+            }
+        }
+
+        Ok(())
     }
 }

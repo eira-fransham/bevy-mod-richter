@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use crate::common::{
     console::{AliasInfo, ExecResult, RegisterCmdExt as _, Registry, RunCmd},
-    net::{ColorShift, SignOnStage},
+    net::{ColorShift, QSocket, SignOnStage},
     vfs::Vfs,
 };
 
@@ -243,6 +243,7 @@ pub fn cmd_connect(
         Ok((new_conn, new_state)) => {
             *focus = InputFocus::Game;
             commands.insert_resource(new_conn);
+            commands.insert_resource(Connection::new_server());
             commands.insert_resource(new_state);
             default()
         }
@@ -275,6 +276,7 @@ pub fn cmd_disconnect(
 ) -> ExecResult {
     if conn.is_some() {
         commands.remove_resource::<Connection>();
+        commands.remove_resource::<QSocket>();
         *focus = InputFocus::Console;
         default()
     } else {

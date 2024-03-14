@@ -61,7 +61,7 @@ use bumpalo::Bump;
 use cgmath::{InnerSpace as _, Matrix4, Vector3};
 use chrono::Duration;
 use failure::Error;
-use fxhash::FxHashMap;
+use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use num::Zero;
 
@@ -367,7 +367,7 @@ pub struct BrushRendererBuilder {
 
     vertices: Vec<BrushVertex>,
     faces: Vec<BrushFace>,
-    texture_chains: FxHashMap<usize, Vec<usize>>,
+    texture_chains: HashMap<usize, Vec<usize>>,
     textures: Vec<BrushTexture>,
     lightmaps: Vec<Texture>,
     //lightmap_views: Vec<TextureView>,
@@ -392,7 +392,7 @@ impl BrushRendererBuilder {
             per_face_bind_groups: Vec::new(),
             vertices: Vec::new(),
             faces: Vec::new(),
-            texture_chains: FxHashMap::default(),
+            texture_chains: HashMap::default(),
             textures: Vec::new(),
             lightmaps: Vec::new(),
             //lightmap_views: Vec::new(),
@@ -775,7 +775,7 @@ pub struct BrushRenderer {
 
     // faces are grouped by texture to reduce the number of texture rebinds
     // texture_chains maps texture ids to face ids
-    texture_chains: FxHashMap<usize, Vec<usize>>,
+    texture_chains: HashMap<usize, Vec<usize>>,
     faces: Vec<BrushFace>,
     textures: Vec<BrushTexture>,
     _lightmaps: Vec<Texture>,

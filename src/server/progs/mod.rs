@@ -293,8 +293,8 @@ pub struct FieldDef {
 pub struct LoadProgs {
     pub cx: ExecutionContext,
     pub globals: Globals,
-    pub entity_def: Rc<EntityTypeDef>,
-    pub string_table: Rc<StringTable>,
+    pub entity_def: EntityTypeDef,
+    pub string_table: StringTable,
 }
 
 /// Loads all data from a `progs.dat` file.
@@ -332,7 +332,7 @@ where
     (&mut src)
         .take(string_lump.count as u64)
         .read_to_end(&mut strings)?;
-    let string_table = Rc::new(StringTable::new(strings));
+    let string_table = StringTable::new(strings);
 
     assert_eq!(
         src.stream_position()?,
@@ -418,7 +418,6 @@ where
     );
 
     let functions = Functions {
-        string_table: string_table.clone(),
         defs: function_defs.into_boxed_slice(),
         statements: statements.into_boxed_slice(),
     };
@@ -497,21 +496,11 @@ where
         ))?
     );
 
-    let functions_rc = Rc::new(functions);
+    let cx = ExecutionContext::create(functions);
 
-    let cx = ExecutionContext::create(string_table.clone(), functions_rc.clone());
+    let globals = Globals::new(globaldefs.into_boxed_slice(), addrs.into_boxed_slice());
 
-    let globals = Globals::new(
-        string_table.clone(),
-        globaldefs.into_boxed_slice(),
-        addrs.into_boxed_slice(),
-    );
-
-    let entity_def = Rc::new(EntityTypeDef::new(
-        string_table.clone(),
-        ent_addr_count,
-        field_defs.into_boxed_slice(),
-    )?);
+    let entity_def = EntityTypeDef::new(ent_addr_count, field_defs.into_boxed_slice().into())?;
 
     Ok(LoadProgs {
         cx,
@@ -530,8 +519,7 @@ struct StackFrame {
 /// A QuakeC VM context.
 #[derive(Debug)]
 pub struct ExecutionContext {
-    string_table: Rc<StringTable>,
-    functions: Rc<Functions>,
+    functions: Functions,
     pc: usize,
     current_function: FunctionId,
     call_stack: Vec<StackFrame>,
@@ -539,9 +527,8 @@ pub struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    pub fn create(string_table: Rc<StringTable>, functions: Rc<Functions>) -> ExecutionContext {
+    pub fn create(functions: Functions) -> ExecutionContext {
         ExecutionContext {
-            string_table,
             functions,
             pc: 0,
             current_function: FunctionId(0),
@@ -556,9 +543,10 @@ impl ExecutionContext {
 
     pub fn find_function_by_name<S: AsRef<str>>(
         &mut self,
+        string_table: &StringTable,
         name: S,
     ) -> Result<FunctionId, ProgsError> {
-        self.functions.find_function_by_name(name)
+        self.functions.find_function_by_name(string_table, name)
     }
 
     pub fn function_def(&self, id: FunctionId) -> Result<&FunctionDef, ProgsError> {
@@ -567,13 +555,14 @@ impl ExecutionContext {
 
     pub fn enter_function(
         &mut self,
+        string_table: &StringTable,
         globals: &mut Globals,
         f: FunctionId,
     ) -> Result<(), ProgsError> {
         let def = self.functions.get_def(f)?;
         debug!(
             "Calling QuakeC function {}",
-            &*self.string_table.get(def.name_id).unwrap()
+            &*string_table.get(def.name_id).unwrap()
         );
 
         // save stack frame
@@ -617,11 +606,15 @@ impl ExecutionContext {
         Ok(())
     }
 
-    pub fn leave_function(&mut self, globals: &mut Globals) -> Result<(), ProgsError> {
+    pub fn leave_function(
+        &mut self,
+        string_table: &StringTable,
+        globals: &mut Globals,
+    ) -> Result<(), ProgsError> {
         let def = self.functions.get_def(self.current_function)?;
         debug!(
             "Returning from QuakeC function {}",
-            &*self.string_table.get(def.name_id).unwrap()
+            &*string_table.get(def.name_id).unwrap()
         );
 
         for i in (0..def.locals).rev() {

@@ -18,7 +18,7 @@ use bevy::{
     render::renderer::{RenderDevice, RenderQueue},
 };
 use chrono::Duration;
-use fxhash::FxHashMap;
+use hashbrown::HashMap;
 
 // original minimum Quake resolution
 const MENU_WIDTH: i32 = 320;
@@ -53,7 +53,7 @@ impl Align {
 }
 
 pub struct MenuRenderer {
-    textures: FxHashMap<String, QuadTexture>,
+    textures: HashMap<String, QuadTexture>,
 }
 
 impl MenuRenderer {

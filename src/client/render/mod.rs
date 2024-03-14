@@ -72,6 +72,7 @@ use bevy::{
         view::ViewTarget,
         Render, RenderApp, RenderSet,
     },
+    ui::graph::NodeUi,
     window::PrimaryWindow,
 };
 pub use cvars::register_cvars;
@@ -198,10 +199,10 @@ impl Plugin for SeismonRenderPlugin {
                     Node3d::MainOpaquePass,
                     InitPassLabel,
                     DeferredPassLabel,
-                    UiPassLabel,
                     Node3d::EndMainPass,
                 ),
-            );
+            )
+            .add_render_graph_edges(Core3d, (NodeUi::UiPass, UiPassLabel, Node3d::Upscaling));
     }
 }
 

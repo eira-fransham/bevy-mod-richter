@@ -230,23 +230,14 @@ pub enum GlobalAddrFunction {
 
 #[derive(Debug)]
 pub struct Globals {
-    string_table: Rc<StringTable>,
     defs: Box<[GlobalDef]>,
     addrs: Box<[[u8; 4]]>,
 }
 
 impl Globals {
     /// Constructs a new `Globals` object.
-    pub fn new(
-        string_table: Rc<StringTable>,
-        defs: Box<[GlobalDef]>,
-        addrs: Box<[[u8; 4]]>,
-    ) -> Globals {
-        Globals {
-            string_table,
-            defs,
-            addrs,
-        }
+    pub fn new(defs: Box<[GlobalDef]>, addrs: Box<[[u8; 4]]>) -> Globals {
+        Globals { defs, addrs }
     }
 
     /// Performs a type check at `addr` with type `type_`.

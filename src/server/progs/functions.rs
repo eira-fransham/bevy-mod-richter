@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
@@ -161,7 +161,6 @@ pub struct FunctionDef {
 
 #[derive(Debug)]
 pub struct Functions {
-    pub string_table: Rc<StringTable>,
     pub defs: Box<[FunctionDef]>,
     pub statements: Box<[Statement]>,
 }
@@ -193,12 +192,15 @@ impl Functions {
         }
     }
 
-    pub fn find_function_by_name<S>(&self, name: S) -> Result<FunctionId, ProgsError>
+    pub fn find_function_by_name<S>(
+        &self,
+        strs: &StringTable,
+        name: S,
+    ) -> Result<FunctionId, ProgsError>
     where
         S: AsRef<str>,
     {
         for (i, def) in self.defs.iter().enumerate() {
-            let strs = &self.string_table;
             let f_name = strs.get(def.name_id).ok_or_else(|| {
                 ProgsError::with_msg(format!("No string with ID {:?}", def.name_id))
             })?;
