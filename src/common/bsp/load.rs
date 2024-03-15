@@ -209,11 +209,11 @@ impl BspFileTable {
         S: Seek,
     {
         let section = self.section(section_id);
-        ensure!(
-            seeker.seek(SeekFrom::Current(0))?
-                == seeker.seek(SeekFrom::Start(section.offset + section.size as u64))?,
-            "BSP read misaligned"
-        );
+        if seeker.seek(SeekFrom::Current(0))?
+            != seeker.seek(SeekFrom::Start(section.offset + section.size as u64))?
+        {
+            warn!("BSP read misaligned");
+        }
 
         Ok(())
     }

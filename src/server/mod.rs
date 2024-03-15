@@ -1597,7 +1597,10 @@ impl LevelState {
         unused: i16,
     ) -> Result<(), ProgsError> {
         if unused != 0 {
-            return Err(ProgsError::with_msg(format!("storep_fnc: nonzero arg3 ({})", unused)));
+            return Err(ProgsError::with_msg(format!(
+                "storep_fnc: nonzero arg3 ({})",
+                unused
+            )));
         }
 
         let f = self.globals.function_id(src_function_id_addr)?;
@@ -1760,7 +1763,9 @@ impl LevelState {
 
     pub fn builtin_vtos(&mut self) -> Result<(), ProgsError> {
         let vec = self.globals.get_vector(GLOBAL_ADDR_ARG_0 as i16)?;
-        let out = self.string_table.insert(&format!("{:5.1} {:5.1} {:5.1}", vec[0], vec[1], vec[2]));
+        let out = self
+            .string_table
+            .insert(&format!("{:5.1} {:5.1} {:5.1}", vec[0], vec[1], vec[2]));
 
         self.globals.put_string_id(out, GLOBAL_ADDR_RETURN as i16)?;
 

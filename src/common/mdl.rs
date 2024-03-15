@@ -574,7 +574,7 @@ where
         .collect::<Result<_, MdlFileError>>()?;
 
     if reader.seek(SeekFrom::Current(0))? != reader.seek(SeekFrom::End(0))? {
-        panic!("Misaligned read on MDL file");
+        warn!("Misaligned read on MDL file");
     }
 
     Ok(AliasModel {
