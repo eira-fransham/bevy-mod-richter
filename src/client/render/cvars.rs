@@ -28,11 +28,21 @@ pub fn register_cvars(app: &mut App) {
         "r_lightmap",
         "0",
         "only render the lightmap, and not the main texture",
-    );
+    )
     // TODO: Re-implement MSAA
-    app.cvar(
+    .cvar(
         "r_msaa_samples",
         "1",
         "set the multi-sampled anti-aliasing sample count",
+    )
+    .cvar(
+        "post_blendmode",
+        "overlay",
+        "Sets the blend mode for postprocess color shift",
+    )
+    .cvar(
+        "post_colorspace",
+        "oklab",
+        "Sets the colorspace for postprocess color shift",
     );
 }

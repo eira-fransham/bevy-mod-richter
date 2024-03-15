@@ -1240,7 +1240,11 @@ mod systems {
         let status = match conn.as_deref_mut() {
             Some(ref mut conn) => conn.frame(
                 conn_state.reborrow(),
-                time.as_generic(),
+                if cvars.read_cvar::<u8>("sv_paused").unwrap() != 0 {
+                    default()
+                } else {
+                    time.as_generic()
+                },
                 &*vfs,
                 &*asset_server,
                 &*from_server,

@@ -7,6 +7,7 @@ use bevy::{
     render::{
         camera::ExtractedCamera,
         render_graph::{RenderLabel, ViewNode},
+        render_phase::TrackedRenderPass,
         render_resource::{
             BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, RenderPipeline, TextureView,
         },
@@ -92,7 +93,7 @@ impl DeferredPipeline {
         self.pipeline = pipeline;
     }
 
-    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+    pub fn pipeline(&self) -> &RenderPipeline {
         &self.pipeline
     }
 
@@ -313,12 +314,12 @@ impl DeferredRenderer {
         &'this self,
         state: &'this GraphicsState,
         queue: &'a RenderQueue,
-        pass: &'a mut wgpu::RenderPass<'this>,
+        pass: &'a mut TrackedRenderPass<'this>,
         uniforms: DeferredUniforms,
     ) {
         self.update_uniform_buffers(state, queue, uniforms);
-        pass.set_pipeline(state.deferred_pipeline().pipeline());
-        pass.set_vertex_buffer(0, *state.quad_pipeline().vertex_buffer().slice(..));
+        pass.set_render_pipeline(state.deferred_pipeline().pipeline());
+        pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..6, 0..1);
     }
@@ -360,6 +361,14 @@ impl ViewNode for DeferredPass {
         };
         let render_vars = world.resource::<RenderVars>();
 
+        let Some(RenderState {
+            state: cl_state,
+            kind,
+        }) = conn
+        else {
+            return Ok(());
+        };
+
         let PostProcessWrite {
             source: diffuse_input,
             destination: diffuse_target,
@@ -395,62 +404,57 @@ impl ViewNode for DeferredPass {
 
         let encoder = render_context.command_encoder();
 
-        if let Some(RenderState {
-            state: cl_state,
-            kind,
-        }) = conn
-        {
-            // if client is fully connected, draw world
-            let camera = match kind {
-                RenderConnectionKind::Demo => {
-                    cl_state.demo_camera(width as f32 / height as f32, Deg(render_vars.fov))
-                }
-                RenderConnectionKind::Server => {
-                    cl_state.camera(width as f32 / height as f32, Deg(render_vars.fov))
-                }
-            };
-
-            let mut deferred_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Deferred pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: diffuse_target,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                ..default()
-            });
-
-            let mut lights = [PointLight {
-                origin: [0.; 3],
-                radius: 0.0,
-            }; MAX_LIGHTS];
-
-            let mut light_count = 0;
-            for (light_id, light) in cl_state.iter_lights().enumerate() {
-                light_count += 1;
-                let light_origin = light.origin();
-                let converted_origin =
-                    Vector3::new(-light_origin.y, light_origin.z, -light_origin.x);
-                lights[light_id].origin = (camera.view() * converted_origin.extend(1.0))
-                    .truncate()
-                    .into();
-                lights[light_id].radius = light.radius(cl_state.time());
+        // if client is fully connected, draw world
+        let camera = match kind {
+            RenderConnectionKind::Demo => {
+                cl_state.demo_camera(width as f32 / height as f32, Deg(render_vars.fov))
             }
+            RenderConnectionKind::Server => {
+                cl_state.camera(width as f32 / height as f32, Deg(render_vars.fov))
+            }
+        };
 
-            let uniforms = DeferredUniforms {
-                inv_projection: camera.inverse_projection().into(),
-                light_count,
-                exposure: EXPOSURE_MULTIPLIER * extracted_camera.exposure,
-                _pad: default(),
-                lights,
-            };
+        let deferred_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Deferred pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: diffuse_target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            ..default()
+        });
 
-            deferred_renderer.record_draw(gfx_state, queue, &mut deferred_pass, uniforms);
+        let mut deferred_pass = TrackedRenderPass::new(device, deferred_pass);
+
+        let mut lights = [PointLight {
+            origin: [0.; 3],
+            radius: 0.0,
+        }; MAX_LIGHTS];
+
+        let mut light_count = 0;
+        for (light_id, light) in cl_state.iter_lights().enumerate() {
+            light_count += 1;
+            let light_origin = light.origin();
+            let converted_origin = Vector3::new(-light_origin.y, light_origin.z, -light_origin.x);
+            lights[light_id].origin = (camera.view() * converted_origin.extend(1.0))
+                .truncate()
+                .into();
+            lights[light_id].radius = light.radius(cl_state.time());
         }
+
+        let uniforms = DeferredUniforms {
+            inv_projection: camera.inverse_projection().into(),
+            light_count,
+            exposure: EXPOSURE_MULTIPLIER * extracted_camera.exposure,
+            _pad: default(),
+            lights,
+        };
+
+        deferred_renderer.record_draw(gfx_state, queue, &mut deferred_pass, uniforms);
 
         Ok(())
     }

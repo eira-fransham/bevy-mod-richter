@@ -295,7 +295,7 @@ fn main() -> ExitCode {
         "Set the physically-based exposure of the screen: indoor, sunlight, overcast, blender, or a specific ev100 value",
     )
     .cvar_on_set(
-        "r_gamma",
+        "gamma",
         "1",
         cmd_gamma,
         "Adjust the gamma of the screen",

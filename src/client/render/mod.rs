@@ -108,7 +108,7 @@ use crate::{
                 brush::BrushPipeline,
                 deferred::DeferredPipeline,
                 particle::ParticlePipeline,
-                postprocess::{self, PostProcessPipeline},
+                postprocess::{self, PostProcessPipeline, PostProcessVars},
                 sprite::SpritePipeline,
                 EntityUniforms,
             },
@@ -123,6 +123,7 @@ use self::{
     world::{
         deferred::{DeferredPass, DeferredPassLabel},
         extract_world_renderer,
+        postprocess::{PostProcessPass, PostProcessPassLabel},
     },
 };
 
@@ -151,6 +152,7 @@ impl Plugin for SeismonRenderPlugin {
             ExtractResourcePlugin::<InputFocus>::default(),
             ExtractResourcePlugin::<RenderVars>::default(),
             ExtractResourcePlugin::<HudVars>::default(),
+            ExtractResourcePlugin::<PostProcessVars>::default(),
             ExtractResourcePlugin::<ConnectionState>::default(),
             // TODO: Do all loading on the main thread (this is currently just for the palette and gfx wad)
             ExtractResourcePlugin::<Vfs>::default(),
@@ -193,6 +195,7 @@ impl Plugin for SeismonRenderPlugin {
             )
             .add_render_graph_node::<ViewNodeRunner<InitPass>>(Core3d, InitPassLabel)
             .add_render_graph_node::<ViewNodeRunner<DeferredPass>>(Core3d, DeferredPassLabel)
+            .add_render_graph_node::<ViewNodeRunner<PostProcessPass>>(Core3d, PostProcessPassLabel)
             .add_render_graph_node::<ViewNodeRunner<UiPass>>(Core3d, UiPassLabel)
             .add_render_graph_edges(
                 Core3d,
@@ -200,6 +203,7 @@ impl Plugin for SeismonRenderPlugin {
                     Node3d::MainOpaquePass,
                     InitPassLabel,
                     DeferredPassLabel,
+                    PostProcessPassLabel,
                     Node3d::EndMainPass,
                 ),
             )

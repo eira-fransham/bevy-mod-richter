@@ -48,6 +48,7 @@ use wgpu::{Extent3d, TextureDimension};
 use crate::client::{
     input::{game::Trigger, InputFocus},
     render::{Palette, TextureData},
+    ConnectionState,
 };
 
 use super::{
@@ -93,6 +94,8 @@ impl Plugin for SeismonConsolePlugin {
             .add_systems(
                 Update,
                 (
+                    systems::update_console_size
+                        .run_if(resource_changed_or_removed::<ConnectionState>()),
                     systems::update_render_console,
                     systems::write_alert,
                     (systems::write_console_out, systems::write_center_print)
@@ -749,7 +752,7 @@ impl Registry {
         self.commands.contains_key(name.as_ref())
     }
 
-    fn get_cvar<S: AsRef<str>>(&self, name: S) -> Option<&Cvar> {
+    pub fn get_cvar<S: AsRef<str>>(&self, name: S) -> Option<&Cvar> {
         self.get(name).and_then(|info| match &info.kind {
             CmdKind::Cvar { cvar, .. } => Some(cvar),
             _ => None,
@@ -1875,6 +1878,8 @@ mod systems {
 
     use chrono::TimeDelta;
 
+    use crate::client::{Connection, ConnectionState};
+
     use self::console_text::AtlasText;
 
     use super::*;
@@ -2078,6 +2083,19 @@ mod systems {
         }
     }
 
+    pub fn update_console_size(
+        conn: Option<Res<ConnectionState>>,
+        mut console_ui: Query<&mut Style, With<ConsoleUi>>,
+    ) {
+        for mut style in &mut console_ui {
+            style.height = if matches!(conn.as_deref(), Some(ConnectionState::Connected(_))) {
+                Val::Percent(30.)
+            } else {
+                Val::Percent(100.)
+            };
+        }
+    }
+
     pub fn update_render_console(
         mut console_out: ResMut<ConsoleOutput>,
         mut render_out: ResMut<RenderConsoleOutput>,
@@ -2089,6 +2107,7 @@ mod systems {
         if let Some(center) = console_out.drain_center_print() {
             render_out.center_print = center;
         }
+
         let center_time = registry.read_cvar::<f32>("scr_centertime").unwrap_or(2.);
         if !render_out.center_print.1.is_empty()
             && (time.elapsed().as_millis() as i64)

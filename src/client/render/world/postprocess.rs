@@ -1,29 +1,31 @@
 use std::{mem::size_of, num::NonZeroU64};
 
 use bevy::{
-    ecs::system::Resource,
+    prelude::*,
     render::{
+        extract_resource::ExtractResource,
+        render_graph::{RenderLabel, ViewNode},
+        render_phase::TrackedRenderPass,
         render_resource::{BindGroup, BindGroupLayout, Buffer, RenderPipeline},
         renderer::{RenderDevice, RenderQueue},
+        view::{PostProcessWrite, ViewTarget},
     },
 };
+use serde::Deserialize;
 use wgpu::BindGroupLayoutEntry;
 
 use crate::{
-    client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState},
-    common::util::any_as_bytes,
+    client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, RenderState},
+    common::{console::Registry, net::ColorShift, util::any_as_bytes},
 };
 
 #[repr(C, align(256))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PostProcessUniforms {
-    pub color_shift: [f32; 4],
-    pub brightness: f32,
-    pub inv_gamma: f32,
+    pub color_shift: [[f32; 4]; 4],
+    pub blend_mode: i32,
+    pub color_space: u32,
 }
-
-const BRIGHTNESS: f32 = 2.5;
-const GAMMA: f32 = 1.4;
 
 pub struct PostProcessPipeline {
     pipeline: RenderPipeline,
@@ -43,13 +45,7 @@ impl PostProcessPipeline {
             PostProcessPipeline::create(device, compiler, &[], sample_count, swapchain_format);
         let uniform_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: unsafe {
-                any_as_bytes(&PostProcessUniforms {
-                    color_shift: [0.0; 4],
-                    brightness: BRIGHTNESS,
-                    inv_gamma: GAMMA.recip(),
-                })
-            },
+            contents: unsafe { any_as_bytes(&PostProcessUniforms::default()) },
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -86,7 +82,7 @@ impl PostProcessPipeline {
         self.pipeline = pipeline;
     }
 
-    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+    pub fn pipeline(&self) -> &RenderPipeline {
         &self.pipeline
     }
 
@@ -239,14 +235,16 @@ impl PostProcessRenderer {
         &self,
         state: &GraphicsState,
         queue: &RenderQueue,
-        color_shift: [f32; 4],
+        color_shift: [[f32; 4]; 4],
+        blend_mode: i32,
+        color_space: u32,
     ) {
         // update color shift
         queue.write_buffer(state.postprocess_pipeline().uniform_buffer(), 0, unsafe {
             any_as_bytes(&PostProcessUniforms {
                 color_shift,
-                brightness: BRIGHTNESS,
-                inv_gamma: GAMMA.recip(),
+                blend_mode,
+                color_space,
             })
         });
     }
@@ -254,14 +252,154 @@ impl PostProcessRenderer {
     pub fn record_draw<'this, 'a>(
         &'this self,
         state: &'this GraphicsState,
-        queue: &'a RenderQueue,
-        pass: &'a mut wgpu::RenderPass<'this>,
-        color_shift: [f32; 4],
+        pass: &'a mut TrackedRenderPass<'this>,
     ) {
-        self.update_uniform_buffers(state, queue, color_shift);
-        pass.set_pipeline(state.postprocess_pipeline().pipeline());
-        pass.set_vertex_buffer(0, *state.quad_pipeline().vertex_buffer().slice(..));
+        pass.set_render_pipeline(state.postprocess_pipeline().pipeline());
+        pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..6, 0..1);
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all(deserialize = "lowercase"))]
+enum BlendMode {
+    Add = 1,
+    Average = 2,
+    ColorBurn = 3,
+    ColorDodge = 4,
+    Darken = 5,
+    Difference = 6,
+    Exclusion = 7,
+    Glow = 8,
+    HardLight = 9,
+    HardMix = 10,
+    Lighten = 11,
+    LinearBurn = 12,
+    LinearDodge = 13,
+    LinearLight = 14,
+    Multiply = 15,
+    Negation = 16,
+    #[default]
+    Normal = 17,
+    Overlay = 18,
+    Phoenix = 19,
+    PinLight = 20,
+    Reflect = 21,
+    Screen = 22,
+    SoftLight = 23,
+    Subtract = 24,
+    VividLight = 25,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all(deserialize = "lowercase"))]
+enum ColorSpace {
+    #[default]
+    Rgb = 0,
+    Xyz = 1,
+    XyY = 2,
+    Hsl = 3,
+    Hsv = 4,
+    Srgb = 5,
+    Hcy = 6,
+    Ycbcr = 7,
+    Oklab = 8,
+}
+
+#[derive(Default, Debug, Resource, Deserialize)]
+pub struct PostProcessVars {
+    #[serde(default, rename(deserialize = "post_blendmode"))]
+    blend_mode: BlendMode,
+    #[serde(rename(deserialize = "post_colorspace"))]
+    color_space: ColorSpace,
+}
+
+impl ExtractResource for PostProcessVars {
+    type Source = Registry;
+
+    fn extract_resource(source: &Self::Source) -> Self {
+        source.read_cvars().unwrap_or_default()
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+pub struct PostProcessPassLabel;
+
+#[derive(Default)]
+pub struct PostProcessPass;
+
+impl ViewNode for PostProcessPass {
+    type ViewQuery = &'static ViewTarget;
+
+    fn run<'w>(
+        &self,
+        _graph: &mut bevy::render::render_graph::RenderGraphContext,
+        render_context: &mut bevy::render::renderer::RenderContext<'w>,
+        target: &ViewTarget,
+        world: &'w bevy::prelude::World,
+    ) -> Result<(), bevy::render::render_graph::NodeRunError> {
+        let gfx_state = world.resource::<GraphicsState>();
+        let queue = world.resource::<RenderQueue>();
+        let device = world.resource::<RenderDevice>();
+        let postprocess_vars = world.resource::<PostProcessVars>();
+        let conn = world.get_resource::<RenderState>();
+
+        let Some(conn) = conn else {
+            return Ok(());
+        };
+
+        if conn
+            .state
+            .color_shifts
+            .iter()
+            .all(|ColorShift { percent, .. }| *percent == 0)
+        {
+            return Ok(());
+        }
+
+        let PostProcessWrite {
+            source: diffuse_input,
+            destination: diffuse_target,
+        } = target.post_process_write();
+
+        // TODO: Cache
+        let post_renderer = PostProcessRenderer::new(gfx_state, device, diffuse_input);
+
+        let encoder = render_context.command_encoder();
+        let post_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Deferred pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: diffuse_target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            ..default()
+        });
+
+        let mut post_pass = TrackedRenderPass::new(device, post_pass);
+
+        post_renderer.update_uniform_buffers(
+            gfx_state,
+            queue,
+            conn.state
+                .color_shifts
+                .map(
+                    |ColorShift {
+                         dest_color: [r, g, b],
+                         percent,
+                     }| [r, g, b, ((percent * 256) / 100).min(255) as u8],
+                )
+                .map(|rgba| rgba.map(|v| v as f32 / 255.)),
+            postprocess_vars.blend_mode as _,
+            postprocess_vars.color_space as _,
+        );
+        post_renderer.record_draw(gfx_state, &mut post_pass);
+
+        Ok(())
     }
 }
