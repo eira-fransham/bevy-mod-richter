@@ -37,7 +37,7 @@ pub fn register_cvars(app: &mut App) {
     )
     .cvar(
         "post_blendmode",
-        "overlay",
+        "softlight",
         "Sets the blend mode for postprocess color shift",
     )
     .cvar(

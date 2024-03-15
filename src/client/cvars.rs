@@ -112,6 +112,11 @@ pub fn register_cvars(app: &mut App) {
         "sets the speed that the direction keys change the view angle",
     );
     app.cvar(
+        "cl_hud",
+        "3",
+        "0: no hud, 1: transparent hud, 2: standard hud, 3: standard hud with ammo",
+    );
+    app.cvar(
         "fov",
         "90",
         "sets the camera's field of view angle (in degrees)",

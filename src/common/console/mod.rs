@@ -2230,7 +2230,6 @@ mod systems {
             let mut name = Cow::from(name);
             loop {
                 let (output, output_ty) = match world.resource_mut::<Registry>().get_mut(&*name) {
-                    // TODO: Implement helptext
                     Some(CommandImpl { kind, .. }) => {
                         match (trigger, kind) {
                             (None, CmdKind::Cvar { cvar, on_set }) => match args.split_first() {

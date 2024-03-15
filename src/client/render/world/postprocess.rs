@@ -1,18 +1,23 @@
 use std::{mem::size_of, num::NonZeroU64};
 
 use bevy::{
+    core_pipeline::fullscreen_vertex_shader::fullscreen_shader_vertex_state,
     prelude::*,
     render::{
         extract_resource::ExtractResource,
         render_graph::{RenderLabel, ViewNode},
         render_phase::TrackedRenderPass,
-        render_resource::{BindGroup, BindGroupLayout, Buffer, RenderPipeline},
+        render_resource::{
+            BindGroup, BindGroupLayout, Buffer, CachedRenderPipelineId, FragmentState,
+            PipelineCache, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
+            ShaderDefVal, SpecializedRenderPipeline, SpecializedRenderPipelines,
+        },
         renderer::{RenderDevice, RenderQueue},
         view::{PostProcessWrite, ViewTarget},
     },
 };
 use serde::Deserialize;
-use wgpu::BindGroupLayoutEntry;
+use wgpu::{BindGroupLayoutEntry, BlendState, ColorTargetState, ColorWrites, PrimitiveState};
 
 use crate::{
     client::render::{pipeline::Pipeline, ui::quad::QuadPipeline, GraphicsState, RenderState},
@@ -23,26 +28,26 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PostProcessUniforms {
     pub color_shift: [[f32; 4]; 4],
-    pub blend_mode: i32,
-    pub color_space: u32,
 }
 
+#[derive(Resource)]
 pub struct PostProcessPipeline {
-    pipeline: RenderPipeline,
-    bind_group_layouts: Vec<BindGroupLayout>,
-    swapchain_format: wgpu::TextureFormat,
     uniform_buffer: Buffer,
+    bind_group_layouts: Vec<BindGroupLayout>,
+    shader: Handle<Shader>,
+    sample_count: u32,
 }
 
 impl PostProcessPipeline {
     pub fn new(
         device: &RenderDevice,
-        compiler: &mut shaderc::Compiler,
-        swapchain_format: wgpu::TextureFormat,
+        shader: Handle<Shader>,
         sample_count: u32,
     ) -> PostProcessPipeline {
-        let (pipeline, bind_group_layouts) =
-            PostProcessPipeline::create(device, compiler, &[], sample_count, swapchain_format);
+        let bind_group_layouts = Self::bind_group_layout_descriptors()
+            .into_iter()
+            .map(|desc| device.create_bind_group_layout(Some(Self::name().into()), &*desc))
+            .collect();
         let uniform_buffer = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
             label: None,
             contents: unsafe { any_as_bytes(&PostProcessUniforms::default()) },
@@ -50,44 +55,11 @@ impl PostProcessPipeline {
         });
 
         PostProcessPipeline {
-            pipeline,
-            swapchain_format,
-            bind_group_layouts,
             uniform_buffer,
-        }
-    }
-
-    pub fn set_format(&mut self, format: wgpu::TextureFormat) {
-        self.swapchain_format = format;
-    }
-
-    pub fn format(&self) -> wgpu::TextureFormat {
-        self.swapchain_format
-    }
-
-    pub fn rebuild(
-        &mut self,
-        device: &RenderDevice,
-        compiler: &mut shaderc::Compiler,
-        sample_count: u32,
-    ) {
-        let layout_refs = self.bind_group_layouts.iter();
-        let pipeline = Self::recreate(
-            device,
-            compiler,
-            layout_refs,
+            shader,
+            bind_group_layouts,
             sample_count,
-            self.swapchain_format,
-        );
-        self.pipeline = pipeline;
-    }
-
-    pub fn pipeline(&self) -> &RenderPipeline {
-        &self.pipeline
-    }
-
-    pub fn bind_group_layouts(&self) -> &[BindGroupLayout] {
-        &self.bind_group_layouts
+        }
     }
 
     pub fn uniform_buffer(&self) -> &wgpu::Buffer {
@@ -95,23 +67,67 @@ impl PostProcessPipeline {
     }
 }
 
+impl FromWorld for PostProcessPipeline {
+    fn from_world(world: &mut World) -> Self {
+        let device = world.resource::<RenderDevice>();
+        let shader = world
+            .resource::<AssetServer>()
+            .load("shaders/postprocess.wgsl");
+
+        Self::new(device, shader, 1)
+    }
+}
+
+impl SpecializedRenderPipeline for PostProcessPipeline {
+    type Key = PostProcessVars;
+
+    fn specialize(&self, key: Self::Key) -> RenderPipelineDescriptor {
+        RenderPipelineDescriptor {
+            label: Some(Self::name().into()),
+            layout: self.bind_group_layouts.clone(),
+            push_constant_ranges: Self::push_constant_ranges(),
+            vertex: fullscreen_shader_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: self.shader.clone(),
+                shader_defs: vec![
+                    ShaderDefVal::UInt("COLORSPACE".into(), key.color_space as _),
+                    ShaderDefVal::UInt("BLENDMODE".into(), key.blend_mode as _),
+                ],
+                entry_point: "main".into(),
+                targets: vec![Some(ColorTargetState {
+                    format: ViewTarget::TEXTURE_FORMAT_HDR,
+                    blend: Some(BlendState::REPLACE),
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            primitive: default(),
+            depth_stencil: Self::depth_stencil_state(),
+            multisample: wgpu::MultisampleState {
+                count: self.sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+        }
+    }
+}
+
 const BIND_GROUP_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
-    // sampler
-    wgpu::BindGroupLayoutEntry {
-        binding: 0,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-        count: None,
-    },
     // color buffer
     wgpu::BindGroupLayoutEntry {
-        binding: 1,
+        binding: 0,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             view_dimension: wgpu::TextureViewDimension::D2,
             sample_type: wgpu::TextureSampleType::Float { filterable: true },
             multisampled: false,
         },
+        count: None,
+    },
+    // sampler
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
         count: None,
     },
     // PostProcessUniforms
@@ -174,94 +190,71 @@ impl Pipeline for PostProcessPipeline {
 }
 
 #[derive(Resource)]
-pub struct PostProcessRenderer {
+pub struct PostProcessBindGroup {
     bind_group: BindGroup,
 }
 
-impl PostProcessRenderer {
-    pub fn create_bind_group(
-        state: &GraphicsState,
-        device: &RenderDevice,
-        color_buffer: &wgpu::TextureView,
-    ) -> BindGroup {
-        device.create_bind_group(
-            Some("postprocess bind group"),
-            &state.postprocess_pipeline().bind_group_layouts()[0],
-            &[
-                // sampler
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    // TODO: might need a dedicated sampler if downsampling
-                    resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
-                },
-                // color buffer
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(color_buffer),
-                },
-                // uniform buffer
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: state.postprocess_pipeline().uniform_buffer(),
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-            ],
-        )
-    }
-
+impl PostProcessBindGroup {
     pub fn new(
-        state: &GraphicsState,
         device: &RenderDevice,
+        state: &GraphicsState,
+        post_pipeline: &PostProcessPipeline,
         color_buffer: &wgpu::TextureView,
-    ) -> PostProcessRenderer {
-        let bind_group = Self::create_bind_group(state, device, color_buffer);
-
-        PostProcessRenderer { bind_group }
+    ) -> Self {
+        Self {
+            bind_group: device.create_bind_group(
+                Some("postprocess bind group"),
+                &post_pipeline.bind_group_layouts[0],
+                &[
+                    // color buffer
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(color_buffer),
+                    },
+                    // sampler
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(state.diffuse_sampler()),
+                    },
+                    // uniform buffer
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &post_pipeline.uniform_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                ],
+            ),
+        }
     }
 
-    pub fn rebuild(
-        &mut self,
-        state: &GraphicsState,
-        device: &RenderDevice,
-        color_buffer: &wgpu::TextureView,
-    ) {
-        self.bind_group = Self::create_bind_group(state, device, color_buffer);
-    }
-
+    // TODO: Move this to `PostProcessPipeline`
     pub fn update_uniform_buffers(
         &self,
-        state: &GraphicsState,
         queue: &RenderQueue,
+        post_pipeline: &PostProcessPipeline,
         color_shift: [[f32; 4]; 4],
-        blend_mode: i32,
-        color_space: u32,
     ) {
         // update color shift
-        queue.write_buffer(state.postprocess_pipeline().uniform_buffer(), 0, unsafe {
-            any_as_bytes(&PostProcessUniforms {
-                color_shift,
-                blend_mode,
-                color_space,
-            })
+        queue.write_buffer(&post_pipeline.uniform_buffer, 0, unsafe {
+            any_as_bytes(&PostProcessUniforms { color_shift })
         });
     }
 
     pub fn record_draw<'this, 'a>(
         &'this self,
-        state: &'this GraphicsState,
+        pipeline: &'this RenderPipeline,
         pass: &'a mut TrackedRenderPass<'this>,
     ) {
-        pass.set_render_pipeline(state.postprocess_pipeline().pipeline());
-        pass.set_vertex_buffer(0, state.quad_pipeline().vertex_buffer().slice(..));
+        pass.set_render_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.draw(0..6, 0..1);
+        pass.draw(0..3, 0..1);
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, Deserialize)]
+#[derive(Hash, Copy, Clone, Debug, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all(deserialize = "lowercase"))]
 enum BlendMode {
     Add = 1,
@@ -292,7 +285,7 @@ enum BlendMode {
     VividLight = 25,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, Deserialize)]
+#[derive(Hash, Copy, Clone, Debug, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all(deserialize = "lowercase"))]
 enum ColorSpace {
     #[default]
@@ -307,7 +300,7 @@ enum ColorSpace {
     Oklab = 8,
 }
 
-#[derive(Default, Debug, Resource, Deserialize)]
+#[derive(Hash, Copy, Clone, PartialEq, Eq, Default, Debug, Resource, Deserialize)]
 pub struct PostProcessVars {
     #[serde(default, rename(deserialize = "post_blendmode"))]
     blend_mode: BlendMode,
@@ -327,10 +320,26 @@ impl ExtractResource for PostProcessVars {
 pub struct PostProcessPassLabel;
 
 #[derive(Default)]
-pub struct PostProcessPass;
+pub struct PostProcessPass {
+    pipeline: Option<CachedRenderPipelineId>,
+}
 
 impl ViewNode for PostProcessPass {
     type ViewQuery = &'static ViewTarget;
+
+    fn update(&mut self, world: &mut World) {
+        let world = world.cell();
+        let mut pipeline_cache = world.resource_mut::<PipelineCache>();
+        let post_pipeline = world.resource::<PostProcessPipeline>();
+        let postprocess_vars = world.resource::<PostProcessVars>();
+
+        let mut pipelines = world.resource_mut::<SpecializedRenderPipelines<PostProcessPipeline>>();
+        let pipeline_id = pipelines.specialize(&pipeline_cache, &post_pipeline, *postprocess_vars);
+
+        self.pipeline = Some(pipeline_id);
+
+        pipeline_cache.block_on_render_pipeline(pipeline_id);
+    }
 
     fn run<'w>(
         &self,
@@ -341,11 +350,18 @@ impl ViewNode for PostProcessPass {
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let gfx_state = world.resource::<GraphicsState>();
         let queue = world.resource::<RenderQueue>();
-        let device = world.resource::<RenderDevice>();
-        let postprocess_vars = world.resource::<PostProcessVars>();
+        let pipeline_cache = world.resource::<PipelineCache>();
+        let post_pipeline = world.resource::<PostProcessPipeline>();
         let conn = world.get_resource::<RenderState>();
 
         let Some(conn) = conn else {
+            return Ok(());
+        };
+
+        let PostProcessPass {
+            pipeline: Some(pipeline_id),
+        } = self
+        else {
             return Ok(());
         };
 
@@ -363,29 +379,29 @@ impl ViewNode for PostProcessPass {
             destination: diffuse_target,
         } = target.post_process_write();
 
-        // TODO: Cache
-        let post_renderer = PostProcessRenderer::new(gfx_state, device, diffuse_input);
+        let pipeline = pipeline_cache.get_render_pipeline(*pipeline_id).unwrap();
 
-        let encoder = render_context.command_encoder();
-        let post_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Deferred pass"),
+        // TODO: Cache
+        let bind_group = PostProcessBindGroup::new(
+            render_context.render_device(),
+            gfx_state,
+            post_pipeline,
+            diffuse_input,
+        );
+
+        let mut post_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+            label: Some("postprocess"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: diffuse_target,
                 resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
+                ops: default(),
             })],
-            depth_stencil_attachment: None,
             ..default()
         });
 
-        let mut post_pass = TrackedRenderPass::new(device, post_pass);
-
-        post_renderer.update_uniform_buffers(
-            gfx_state,
+        bind_group.update_uniform_buffers(
             queue,
+            post_pipeline,
             conn.state
                 .color_shifts
                 .map(
@@ -395,10 +411,8 @@ impl ViewNode for PostProcessPass {
                      }| [r, g, b, ((percent * 256) / 100).min(255) as u8],
                 )
                 .map(|rgba| rgba.map(|v| v as f32 / 255.)),
-            postprocess_vars.blend_mode as _,
-            postprocess_vars.color_space as _,
         );
-        post_renderer.record_draw(gfx_state, &mut post_pass);
+        bind_group.record_draw(pipeline, &mut post_pass);
 
         Ok(())
     }

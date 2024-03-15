@@ -67,7 +67,10 @@ use bevy::{
     render::{
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_graph::{RenderGraphApp, ViewNodeRunner},
-        render_resource::{BindGroup, BindGroupLayout, Buffer, Sampler, Texture, TextureView},
+        render_resource::{
+            BindGroup, BindGroupLayout, Buffer, Sampler, SpecializedRenderPipelines, Texture,
+            TextureView,
+        },
         renderer::{RenderDevice, RenderQueue},
         view::ViewTarget,
         Render, RenderApp, RenderSet,
@@ -80,10 +83,11 @@ pub use error::{RenderError, RenderErrorKind};
 pub use palette::Palette;
 use parking_lot::RwLock;
 pub use pipeline::Pipeline;
-pub use postprocess::PostProcessRenderer;
+pub use postprocess::PostProcessBindGroup;
 use serde::{Deserialize, Serialize};
 pub use target::{PreferredFormat, RenderTarget, RenderTargetResolve};
 pub use ui::{hud::HudState, UiRenderer, UiState};
+use wgpu::naga::ShaderStage;
 pub use world::{
     deferred::{DeferredRenderer, DeferredUniforms, PointLight},
     Camera,
@@ -173,6 +177,8 @@ impl Plugin for SeismonRenderPlugin {
         };
 
         render_app
+            .init_resource::<PostProcessPipeline>()
+            .init_resource::<SpecializedRenderPipelines<PostProcessPipeline>>()
             .add_systems(
                 Render,
                 (
@@ -424,7 +430,6 @@ pub struct GraphicsState {
     sprite_pipeline: SpritePipeline,
     deferred_pipeline: DeferredPipeline,
     particle_pipeline: ParticlePipeline,
-    postprocess_pipeline: PostProcessPipeline,
     glyph_pipeline: GlyphPipeline,
     quad_pipeline: QuadPipeline,
 
@@ -554,7 +559,6 @@ impl GraphicsState {
             particle_pipeline,
             quad_pipeline,
             glyph_pipeline,
-            postprocess_pipeline,
         ) = COMPILER.with_borrow_mut(|compiler| {
             let alias_pipeline = AliasPipeline::new(
                 device,
@@ -594,9 +598,6 @@ impl GraphicsState {
             let quad_pipeline = QuadPipeline::new(device, compiler, diffuse_format, sample_count);
             let glyph_pipeline = GlyphPipeline::new(device, compiler, diffuse_format, sample_count);
 
-            let postprocess_pipeline =
-                PostProcessPipeline::new(device, compiler, diffuse_format, sample_count);
-
             (
                 alias_pipeline,
                 brush_pipeline,
@@ -605,7 +606,6 @@ impl GraphicsState {
                 particle_pipeline,
                 quad_pipeline,
                 glyph_pipeline,
-                postprocess_pipeline,
             )
         });
 
@@ -633,7 +633,6 @@ impl GraphicsState {
             sprite_pipeline,
             deferred_pipeline,
             particle_pipeline,
-            postprocess_pipeline,
             glyph_pipeline,
             quad_pipeline,
 
@@ -724,10 +723,6 @@ impl GraphicsState {
 
     pub fn particle_pipeline(&self) -> &ParticlePipeline {
         &self.particle_pipeline
-    }
-
-    pub fn postprocess_pipeline(&self) -> &PostProcessPipeline {
-        &self.postprocess_pipeline
     }
 
     pub fn glyph_pipeline(&self) -> &GlyphPipeline {

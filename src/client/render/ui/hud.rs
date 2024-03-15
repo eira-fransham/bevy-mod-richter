@@ -198,11 +198,16 @@ impl std::fmt::Display for FaceId {
 #[derive(Resource, Deserialize)]
 pub struct HudVars {
     pub crosshair: u8,
+    #[serde(rename(deserialize = "cl_hud"))]
+    pub hud_style: u8,
 }
 
 impl Default for HudVars {
     fn default() -> Self {
-        Self { crosshair: 1 }
+        Self {
+            crosshair: 1,
+            hud_style: 3,
+        }
     }
 }
 
@@ -414,6 +419,10 @@ impl HudRenderer {
     ) {
         use HudTextureId::*;
 
+        if hud_cvars.hud_style == 0 {
+            return;
+        }
+
         let sbar = self.textures.get(&StatusBar).unwrap();
         let sbar_x_ofs = -(sbar.width() as i32) / 2;
 
@@ -453,21 +462,23 @@ impl HudRenderer {
             }
         }
 
-        // ammo counters
-        for i in 0..4 {
-            let ammo_str = format!("{: >3}", stats[ClientStat::Shells as usize + i]);
-            for (chr_id, chr) in ammo_str.chars().enumerate() {
-                if chr != ' ' {
-                    glyph_cmds.push(GlyphRendererCommand::Glyph {
-                        glyph_id: 18 + chr as u8 - '0' as u8,
-                        position: ScreenPosition::Relative {
-                            anchor: Anchor::BOTTOM_CENTER,
-                            x_ofs: sbar_x_ofs + 8 * (6 * i + chr_id) as i32 + 10,
-                            y_ofs: sbar.height() as i32 + 16,
-                        },
-                        anchor: Anchor::BOTTOM_LEFT,
-                        scale,
-                    });
+        if hud_cvars.hud_style > 2 {
+            // ammo counters
+            for i in 0..4 {
+                let ammo_str = format!("{: >3}", stats[ClientStat::Shells as usize + i]);
+                for (chr_id, chr) in ammo_str.chars().enumerate() {
+                    if chr != ' ' {
+                        glyph_cmds.push(GlyphRendererCommand::Glyph {
+                            glyph_id: 18 + chr as u8 - '0' as u8,
+                            position: ScreenPosition::Relative {
+                                anchor: Anchor::BOTTOM_CENTER,
+                                x_ofs: sbar_x_ofs + 8 * (6 * i + chr_id) as i32 + 10,
+                                y_ofs: sbar.height() as i32 + 16,
+                            },
+                            anchor: Anchor::BOTTOM_LEFT,
+                            scale,
+                        });
+                    }
                 }
             }
         }

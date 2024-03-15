@@ -67,7 +67,7 @@ pub struct QuadVertex {
 }
 
 lazy_static! {
-    static ref VERTEX_BUFFER_ATTRIBUTES: Vec<wgpu::VertexAttribute> = vec![
+    pub static ref VERTEX_BUFFER_ATTRIBUTES: Vec<wgpu::VertexAttribute> = vec![
         // position
         wgpu::VertexAttribute {
             offset: 0,
