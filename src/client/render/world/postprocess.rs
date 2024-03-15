@@ -159,17 +159,11 @@ impl Pipeline for PostProcessPipeline {
     }
 
     fn vertex_shader() -> &'static str {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/postprocess.vert"
-        ))
+        ""
     }
 
     fn fragment_shader() -> &'static str {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/shaders/postprocess.frag"
-        ))
+        ""
     }
 
     fn primitive_state() -> wgpu::PrimitiveState {
