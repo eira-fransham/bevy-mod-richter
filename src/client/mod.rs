@@ -590,7 +590,15 @@ impl Connection {
 
         let mut reader = BufReader::new(message.as_slice());
 
-        while let Some(cmd) = ServerCmd::deserialize(&mut reader)? {
+        loop  {
+            let cmd = match ServerCmd::deserialize(&mut reader) {
+                Err(e) => {
+                    error!("{}", e);
+                    break;
+                },
+                Ok(Some(cmd)) => cmd,
+                Ok(None) => break,
+            };
             match cmd {
                 // TODO: have an error for this instead of panicking
                 // once all other commands have placeholder handlers, just error

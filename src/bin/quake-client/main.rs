@@ -35,7 +35,7 @@ use bevy::{
     pbr::DefaultOpaqueRendererMethod,
     prelude::*,
     render::{camera::Exposure, view::ColorGrading},
-    window::{PresentMode, PrimaryWindow, WindowTheme},
+    window::{PresentMode, PrimaryWindow},
 };
 #[cfg(feature = "auto-exposure")]
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
@@ -46,14 +46,14 @@ use seismon::{
     server::SeismonServerPlugin,
 };
 use serde_lexpr::Value;
-use structopt::StructOpt;
+use clap::Parser;
 
-#[derive(StructOpt, Debug)]
+#[derive(Parser, Debug)]
 struct Opt {
-    #[structopt(long)]
+    #[arg(long)]
     base_dir: Option<PathBuf>,
 
-    #[structopt(long)]
+    #[arg(long)]
     game: Option<String>,
 
     commands: Vec<String>,
@@ -250,7 +250,7 @@ fn startup(opt: Opt) -> impl FnMut(Commands, ResMut<ConsoleInput>, EventWriter<R
 }
 
 fn main() -> ExitCode {
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
 
     let mut app = App::new();
     let default_plugins = DefaultPlugins
