@@ -20,7 +20,7 @@ layout(push_constant) uniform PushConstants {
 
 // set 0: per-frame
 layout(set = 0, binding = 0) uniform FrameUniforms {
-    float light_anim_frames[64];
+    vec4 light_anim_frames[16];
     vec4 camera_pos;
     float time;
 } frame_uniforms;
@@ -54,7 +54,8 @@ vec4 calc_light() {
         ).r;
 
         // range [0, 4]
-        float style = frame_uniforms.light_anim_frames[f_lightmap_anim[i]];
+        ivec2 idx = ivec2(floor(f_lightmap_anim[i] / 4), mod(f_lightmap_anim[i], 4));
+        float style = frame_uniforms.light_anim_frames[idx.x][idx.y];
         light[i] = map * style;
     }
 

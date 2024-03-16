@@ -21,8 +21,9 @@ layout(location = 1) out vec2 f_diffuse;
 layout(location = 2) out vec2 f_lightmap;
 layout(location = 3) out uvec4 f_lightmap_anim;
 
+// set 0: per-frame
 layout(set = 0, binding = 0) uniform FrameUniforms {
-    float light_anim_frames[64];
+    vec4 light_anim_frames[16];
     vec4 camera_pos;
     float time;
 } frame_uniforms;

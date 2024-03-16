@@ -275,11 +275,9 @@ impl Camera {
 }
 
 #[repr(C, align(256))]
-#[derive(Copy, Clone)]
-// TODO: derive Debug once const generics are stable
+#[derive(Copy, Clone, Debug)]
 pub struct FrameUniforms {
-    // TODO: pack frame values into a [Vector4<f32>; 16],
-    lightmap_anim_frames: [UniformArrayFloat; 64],
+    lightmap_anim_frames: [Vector4<f32>; 16],
     camera_pos: Vector4<f32>,
     time: f32,
 
@@ -423,12 +421,18 @@ impl WorldRenderer {
         I: Iterator<Item = &'a ClientEntity>,
     {
         trace!("Updating frame uniform buffer");
-        queue.write_buffer(state.frame_uniform_buffer(), 0, unsafe {
-            any_as_bytes(&FrameUniforms {
+        queue.write_buffer(state.frame_uniform_buffer(), 0, unsafe { any_as_bytes(&FrameUniforms {
                 lightmap_anim_frames: {
-                    let mut frames = [UniformArrayFloat::new(0.0); 64];
-                    for i in 0..64 {
-                        frames[i] = UniformArrayFloat::new(lightstyle_values[i]);
+                    let mut frames = [Vector4::<f32>::unit_x(); 16];
+                    for i in 0..16 {
+                        for j in 0..4 {
+                            frames[i] = Vector4::<f32>::new(
+                                lightstyle_values[i * j],
+                                lightstyle_values[i * j + 1],
+                                lightstyle_values[i * j + 2],
+                                lightstyle_values[i * j + 3]
+                            );
+                        }
                     }
                     frames
                 },
