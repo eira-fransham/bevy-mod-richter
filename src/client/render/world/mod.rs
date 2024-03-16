@@ -12,7 +12,7 @@ use crate::{
         entity::particle::Particle,
         render::{
             pipeline::{Pipeline, PushConstantUpdate},
-            uniform::{DynamicUniformBufferBlock, UniformArrayFloat, UniformBool},
+            uniform::{DynamicUniformBufferBlock, UniformBool},
             world::{
                 alias::{AliasPipeline, AliasRenderer},
                 brush::{BrushPipeline, BrushRenderer, BrushRendererBuilder},
