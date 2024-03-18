@@ -20,13 +20,13 @@ pub fn register_commands(app: &mut App) {
                 _ => format!("\"{}\" is not bound", from).into(),
             },
             // bind (key) [command]
-            Some(to) => {
-                game_input
-                    .bind(&from[..], &to[..])
-                    .expect("TODO: Handle binding failures (e.g. invalid key)");
-                debug!("Bound {:?} to {:?}", from, to);
-                default()
-            }
+            Some(to) => match game_input.bind(&from[..], &to[..]) {
+                Ok(_) => {
+                    debug!("Bound {:?} to {:?}", from, to);
+                    default()
+                }
+                Err(e) => format!("Bind failed: {}", e).into(),
+            },
         },
     );
 

@@ -53,7 +53,7 @@ use self::{
 };
 
 use arrayvec::ArrayVec;
-use bevy::prelude::*;
+use bevy::{prelude::*, reflect::map_apply};
 use bitflags::bitflags;
 use cgmath::{Deg, InnerSpace, Matrix3, Vector3, Zero};
 use chrono::Duration;
@@ -193,6 +193,7 @@ pub struct Session {
 
 impl Session {
     pub fn new(
+        bsp_name: String,
         max_clients: usize,
         registry: Mut<Registry>,
         vfs: &Vfs,
@@ -203,7 +204,7 @@ impl Session {
         Session {
             persist: SessionPersistent::new(max_clients),
             state: SessionState::Loading,
-            level: LevelState::new(progs, models, entmap, registry, vfs),
+            level: LevelState::new(bsp_name, progs, models, entmap, registry, vfs),
         }
     }
 
@@ -307,12 +308,11 @@ pub struct LevelState {
     ///
     /// This contains the entities and world geometry.
     world: World,
-
-    datagram: ArrayVec<u8, MAX_DATAGRAM>,
 }
 
 impl LevelState {
     pub fn new(
+        map_path: String,
         progs: LoadProgs,
         models: Vec<Model>,
         entmap: String,
@@ -326,11 +326,10 @@ impl LevelState {
             mut string_table,
         } = progs;
 
-        let mut sound_precache = Precache::new();
-        sound_precache.precache("");
-
+        let sound_precache = Precache::new();
         let mut model_precache = Precache::new();
-        model_precache.precache("");
+
+        model_precache.precache(map_path);
 
         for model in models.iter() {
             let model_name = string_table.find_or_insert(model.name());
@@ -350,8 +349,6 @@ impl LevelState {
             cx,
             globals,
             world,
-
-            datagram: ArrayVec::new(),
         };
 
         for entity in entity_list {
@@ -1912,22 +1909,28 @@ impl LevelState {
 }
 
 pub mod systems {
-    use crate::{
-        client::{Connection, ConnectionState},
-        common::net::{
-            self, ClientCmd, ClientMessage, GameType, ServerCmd, ServerMessage, SignOnStage,
-        },
+    use crate::common::net::{
+        self, ClientCmd, ClientMessage, GameType, ServerCmd, ServerMessage, SignOnStage,
     };
 
     use super::*;
 
     pub fn recv_client_messages(
-        mut server: ResMut<Session>,
+        mut _server: ResMut<Session>,
         mut client_msgs: EventReader<ClientMessage>,
     ) {
         for msg in client_msgs.read() {
-            let parsed = ClientCmd::deserialize(&mut &msg.packet[..]).unwrap();
-            dbg!(parsed);
+            let mut packet = &msg.packet[..];
+            loop {
+                let _cmd = match ClientCmd::deserialize(&mut packet) {
+                    Ok(Some(cmd)) => cmd,
+                    Ok(None) => break,
+                    Err(e) => {
+                        error!("{}", e);
+                        break;
+                    }
+                };
+            }
         }
     }
 
@@ -1999,6 +2002,96 @@ pub mod systems {
         }
         .serialize(&mut packet)
         .unwrap();
+
+        for ent in server.level.world.entities.iter() {
+            let (ent_id, model_id, frame_id, colormap, skin_id, origin, angles) = (
+                ent.into(),
+                server
+                    .level
+                    .world
+                    .entities
+                    .get(ent)
+                    .get_float(
+                        &server.level.world.type_def,
+                        FieldAddrFloat::ModelIndex as i16,
+                    )
+                    .unwrap() as _,
+                server
+                    .level
+                    .world
+                    .entities
+                    .get(ent)
+                    .get_float(&server.level.world.type_def, FieldAddrFloat::FrameId as i16)
+                    .unwrap() as _,
+                server
+                    .level
+                    .world
+                    .entities
+                    .get(ent)
+                    .get_float(
+                        &server.level.world.type_def,
+                        FieldAddrFloat::Colormap as i16,
+                    )
+                    .unwrap() as _,
+                server
+                    .level
+                    .world
+                    .entities
+                    .get(ent)
+                    .get_float(&server.level.world.type_def, FieldAddrFloat::SkinId as i16)
+                    .unwrap() as _,
+                server
+                    .level
+                    .world
+                    .entities
+                    .get(ent)
+                    .get_vector(&server.level.world.type_def, FieldAddrVector::Origin as i16)
+                    .unwrap()
+                    .into(),
+                server
+                    .level
+                    .world
+                    .entities
+                    .get(ent)
+                    .get_vector(&server.level.world.type_def, FieldAddrVector::Angles as i16)
+                    .unwrap(),
+            );
+
+            let angles: Vector3<f32> = angles.into();
+            let angles = angles.map(Deg);
+            ServerCmd::SpawnBaseline {
+                ent_id,
+                model_id,
+                frame_id,
+                colormap,
+                skin_id,
+                origin,
+                angles,
+            }
+            .serialize(&mut packet)
+            .unwrap();
+        }
+
+        for (id, style) in server.level.lightstyles.iter().enumerate() {
+            ServerCmd::LightStyle {
+                id: id as _,
+                value: server
+                    .level
+                    .string_table
+                    .get(*style)
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_default(),
+            }
+            .serialize(&mut packet)
+            .unwrap();
+        }
+
+        ServerCmd::SignOnStage {
+            stage: SignOnStage::Done,
+        }
+        .serialize(&mut packet)
+        .unwrap();
+
         server_messages.send(ServerMessage(packet));
     }
 

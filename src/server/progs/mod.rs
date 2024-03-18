@@ -230,6 +230,12 @@ impl StringId {
 #[repr(C)]
 pub struct EntityId(pub usize);
 
+impl From<EntityId> for u16 {
+    fn from(other: EntityId) -> Self {
+        other.0 as _
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct FieldAddr(pub usize);

@@ -62,6 +62,10 @@ impl Precache {
     {
         let item = item.as_ref();
 
+        if item.is_empty() {
+            return;
+        }
+
         if item.len() > MAX_PRECACHE_PATH {
             panic!(
                 "precache name (\"{}\") too long: max length is {}",

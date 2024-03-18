@@ -26,7 +26,7 @@ use std::{
     collections::VecDeque,
     error::Error,
     fmt,
-    io::{BufRead, BufReader, Cursor, Read, Write},
+    io::{self, BufRead, BufReader, Cursor, Read, Write},
     net::{SocketAddr, UdpSocket},
 };
 
@@ -1898,11 +1898,15 @@ impl ClientCmd {
         }
     }
 
-    pub fn deserialize<R>(reader: &mut R) -> Result<ClientCmd, NetError>
+    pub fn deserialize<R>(reader: &mut R) -> Result<Option<ClientCmd>, NetError>
     where
         R: ReadBytesExt + BufRead,
     {
-        let code_val = reader.read_u8()?;
+        let code_val = match reader.read_u8() {
+            Ok(val) => val,
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
         let code = match ClientCmdCode::from_u8(code_val) {
             Some(c) => c,
             None => {
@@ -1954,7 +1958,7 @@ impl ClientCmd {
             }
         };
 
-        Ok(cmd)
+        Ok(Some(cmd))
     }
 
     pub fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>

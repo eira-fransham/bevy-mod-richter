@@ -45,17 +45,20 @@ fn cmd_map(
     let mut path = PathBuf::from("maps");
     path.push(map_name);
 
-    let bsp = vfs.open(format!("{}", path.display()))?;
+    let bsp_name = format!("{}", path.display());
+    let bsp = vfs.open(&bsp_name)?;
     let (models, entmap) = crate::common::bsp::load(bsp)?;
     let progs = vfs.open("progs.dat")?;
     let progs = crate::server::progs::load(progs)?;
 
     if let Some(mut session) = session {
         session.state = SessionState::Loading;
-        session.level = LevelState::new(progs, models, entmap, registry.reborrow(), &*vfs);
+        session.level =
+            LevelState::new(bsp_name, progs, models, entmap, registry.reborrow(), &*vfs);
     } else {
         // TODO: Make `max_clients` a cvar
         commands.insert_resource(Session::new(
+            bsp_name,
             8,
             registry.reborrow(),
             &*vfs,

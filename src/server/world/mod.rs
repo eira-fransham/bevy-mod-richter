@@ -193,13 +193,13 @@ struct AreaBranch {
 }
 
 #[derive(Debug, Clone)]
-struct AreaEntity {
+pub struct AreaEntity {
     entity: Entity,
     area_id: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
-enum AreaEntitySlot {
+pub enum AreaEntitySlot {
     Vacant,
     Occupied(AreaEntity),
 }
