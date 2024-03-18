@@ -37,7 +37,9 @@ use self::{
     sound::{MixerEvent, SeismonSoundPlugin},
 };
 
-use std::{collections::VecDeque, io::BufReader, mem, net::ToSocketAddrs, path::PathBuf};
+use std::{
+    collections::VecDeque, io::BufReader, iter, mem, net::ToSocketAddrs, ops::Range, path::PathBuf,
+};
 
 use crate::{
     client::{
@@ -590,12 +592,12 @@ impl Connection {
 
         let mut reader = BufReader::new(message.as_slice());
 
-        loop  {
+        loop {
             let cmd = match ServerCmd::deserialize(&mut reader) {
                 Err(e) => {
                     error!("{}", e);
                     break;
-                },
+                }
                 Ok(Some(cmd)) => cmd,
                 Ok(None) => break,
             };
@@ -1060,8 +1062,39 @@ impl Connection {
     }
 }
 
-#[derive(Resource, ExtractResource, Clone, Default)]
-pub struct DemoQueue(pub VecDeque<String>);
+#[derive(Resource, ExtractResource, Clone)]
+pub struct DemoQueue {
+    values: Vec<String>,
+    indices: iter::Peekable<iter::Cycle<Range<usize>>>,
+}
+
+impl Default for DemoQueue {
+    fn default() -> Self {
+        Self::new(default())
+    }
+}
+
+impl DemoQueue {
+    pub fn new(inner: Vec<String>) -> Self {
+        let range = (0..inner.len()).cycle().peekable();
+        Self {
+            values: inner,
+            indices: range,
+        }
+    }
+
+    pub fn next(&mut self) -> Option<&str> {
+        self.indices.next().map(|i| &self.values[i][..])
+    }
+
+    pub fn index(&mut self) -> Option<usize> {
+        self.indices.peek().copied()
+    }
+
+    pub fn reset(&mut self) {
+        self.indices = (0..self.values.len()).cycle().peekable();
+    }
+}
 
 fn connect<A>(server_addrs: A) -> Result<(QSocket, ConnectionState), ClientError>
 where
@@ -1279,14 +1312,8 @@ mod systems {
                     Disconnect => None,
 
                     // get the next demo from the queue
-                    NextDemo => {
-                        // Prevent the demo queue borrow from lasting too long
-                        let next = {
-                            let next = demo_queue.0.pop_front();
-
-                            next
-                        };
-                        match next {
+                    NextDemo => loop {
+                        match demo_queue.next() {
                             Some(demo) => {
                                 // TODO: Extract this to a separate function so we don't duplicate the logic to find the demos in different places
                                 let mut demo_file = match vfs
@@ -1297,28 +1324,33 @@ mod systems {
                                     Err(e) => {
                                         // log the error, dump the demo queue and disconnect
                                         console.println(format!("{}", e), time);
-                                        demo_queue.0.clear();
-                                        None
+
+                                        match demo_queue.index() {
+                                            Some(0) => break None,
+                                            _ => continue,
+                                        }
                                     }
                                 };
 
-                                demo_file.as_mut().and_then(|df| match DemoServer::new(df) {
-                                    Ok(d) => Some(Connection {
-                                        kind: ConnectionKind::Demo(d),
-                                        state: ClientState::new(),
-                                    }),
-                                    Err(e) => {
-                                        console.println(format!("{}", e), time);
-                                        demo_queue.0.clear();
-                                        None
+                                break demo_file.as_mut().and_then(|df| {
+                                    match DemoServer::new(df) {
+                                        Ok(d) => Some(Connection {
+                                            kind: ConnectionKind::Demo(d),
+                                            state: ClientState::new(),
+                                        }),
+                                        Err(e) => {
+                                            console.println(format!("{}", e), time);
+                                            demo_queue.reset();
+                                            None
+                                        }
                                     }
-                                })
+                                });
                             }
 
                             // if there are no more demos in the queue, disconnect
-                            None => None,
+                            None => break None,
                         }
-                    }
+                    },
 
                     // covered in first match
                     Maintain => unreachable!(),

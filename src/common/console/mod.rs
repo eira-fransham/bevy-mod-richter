@@ -21,7 +21,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{self, Write},
-    io, mem,
+    io, iter,
+    marker::PhantomData,
+    mem,
     str::FromStr,
 };
 
@@ -35,6 +37,7 @@ use bevy::{
     render::render_asset::RenderAssetUsages,
 };
 use chrono::Duration;
+use clap::{FromArgMatches, Parser};
 use hashbrown::{hash_map::Entry, HashMap};
 use liner::{Editor, EditorContext, Emacs, Key, KeyBindings, KeyMap as _, Prompt, Tty};
 use serde::{
@@ -76,6 +79,31 @@ impl Plugin for SeismonConsolePlugin {
             }
         }
 
+        #[derive(Parser)]
+        #[command(
+            name = "stuffcmds",
+            about = "Run the commands from the CLI input arguments"
+        )]
+        struct StuffCmds;
+
+        #[derive(Parser)]
+        #[command(name = "help", about = "Show help text for a command or cvar")]
+        struct Help {
+            #[arg(value_name = "COMMAND")]
+            arg_name: Option<String>,
+        }
+
+        #[derive(Parser)]
+        #[command(name = "reset", about = "Reset a cvar to its initial value")]
+        struct Reset {
+            #[arg(required = true)]
+            cvars: Vec<String>,
+        }
+
+        #[derive(Parser)]
+        #[command(name = "resetall", about = "Reset all cvars to their initial values")]
+        struct ResetAll;
+
         app.init_resource::<ConsoleOutput>()
             .insert_resource(ConsoleInput::new(history).unwrap())
             .init_resource::<RenderConsoleOutput>()
@@ -108,37 +136,32 @@ impl Plugin for SeismonConsolePlugin {
                 ),
             )
             .command(
-                "stuffcmds",
-                |In(args): In<Box<[String]>>, mut input: ResMut<ConsoleInput>| -> ExecResult {
-                    if !args.is_empty() {
-                        return "usage: stuffcmds".into();
-                    }
-
+                |In(StuffCmds), mut input: ResMut<ConsoleInput>| -> ExecResult {
                     ExecResult {
                         extra_commands: Box::new(mem::take(&mut input.stuffcmds).into_iter()),
                         ..default()
                     }
                 },
-                "Run the commands from the input arguments",
             )
             .command(
-                "help",
-                |In(mut args): In<Box<[String]>>, registry: Res<Registry>| -> ExecResult {
-                    if args.is_empty() {
-                        args = registry.all_names().map(ToString::to_string).collect();
-                    }
+                |In(Help { arg_name }), registry: Res<Registry>| -> ExecResult {
+                    let args = arg_name
+                        .map(|arg| itertools::Either::Left(iter::once(arg)))
+                        .unwrap_or_else(|| {
+                            itertools::Either::Right(registry.all_names().map(ToString::to_string))
+                        });
 
                     let mut out = String::new();
 
-                    for arg in args.iter() {
-                        let Some(CommandImpl { help, .. }) = registry.get(arg) else {
+                    for arg in args {
+                        let Some(CommandImpl { help, .. }) = registry.get(&arg) else {
                             out.push_str("Unknown command: ");
-                            out.push_str(arg);
+                            out.push_str(&arg);
                             out.push('\n');
                             continue;
                         };
 
-                        out.push_str(arg);
+                        out.push_str(&arg);
                         out.push_str(": ");
                         out.push_str(help);
                         out.push('\n');
@@ -146,18 +169,12 @@ impl Plugin for SeismonConsolePlugin {
 
                     out.into()
                 },
-                "Show help text for a command or cvar",
             )
             .command(
-                "reset",
-                |In(args): In<Box<[String]>>, mut registry: ResMut<Registry>| -> ExecResult {
-                    if args.is_empty() {
-                        return "usage: reset [CVAR...]".into();
-                    }
-
+                |In(Reset { cvars }), mut registry: ResMut<Registry>| -> ExecResult {
                     let mut out = String::new();
 
-                    for arg in &*args {
+                    for arg in cvars {
                         if let Err(e) = registry.reset_cvar(arg) {
                             writeln!(&mut out, "{}", e).unwrap();
                         }
@@ -165,15 +182,9 @@ impl Plugin for SeismonConsolePlugin {
 
                     out.into()
                 },
-                "Reset a cvar to its default value",
             )
             .command(
-                "resetall",
-                |In(args): In<Box<[String]>>, mut registry: ResMut<Registry>| -> ExecResult {
-                    if !args.is_empty() {
-                        return "usage: resetall".into();
-                    }
-
+                |In(ResetAll), mut registry: ResMut<Registry>| -> ExecResult {
                     let all_cvars = registry
                         .cvar_names()
                         .map(ToString::to_string)
@@ -184,7 +195,6 @@ impl Plugin for SeismonConsolePlugin {
 
                     default()
                 },
-                "Reset a cvar to its default value",
             );
     }
 }
@@ -247,7 +257,7 @@ pub fn cvar_error_handler(In(result): In<Result<(), ConsoleError>>) {
 }
 
 // TODO: Add more-complex scripting language
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum CmdKind {
     Builtin(SystemId<Box<[String]>, ExecResult>),
     Action {
@@ -263,7 +273,7 @@ pub enum CmdKind {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CommandImpl {
     pub kind: CmdKind,
     pub help: CName,
@@ -406,11 +416,10 @@ impl From<String> for RunCmd<'static> {
 }
 
 pub trait RegisterCmdExt {
-    fn command<N, I, S, M>(&mut self, name: N, run: S, usage: I) -> &mut Self
+    fn command<A, S, M>(&mut self, run: S) -> &mut Self
     where
-        N: Into<CName>,
-        S: IntoSystem<Box<[String]>, ExecResult, M> + 'static,
-        I: Into<CName>;
+        A: Parser + 'static,
+        S: IntoSystem<A, ExecResult, M> + 'static;
 
     fn cvar_on_set<N, I, S, C, M>(&mut self, name: N, value: C, on_set: S, usage: I) -> &mut Self
     where
@@ -427,13 +436,12 @@ pub trait RegisterCmdExt {
 }
 
 impl RegisterCmdExt for App {
-    fn command<N, I, S, M>(&mut self, name: N, run: S, usage: I) -> &mut Self
+    fn command<A, S, M>(&mut self, run: S) -> &mut Self
     where
-        N: Into<CName>,
-        S: IntoSystem<Box<[String]>, ExecResult, M> + 'static,
-        I: Into<CName>,
+        A: Parser + 'static,
+        S: IntoSystem<A, ExecResult, M> + 'static,
     {
-        self.world.command(name, run, usage);
+        self.world.command::<A, S, M>(run);
 
         self
     }
@@ -461,15 +469,140 @@ impl RegisterCmdExt for App {
     }
 }
 
-impl RegisterCmdExt for World {
-    fn command<N, I, S, M>(&mut self, name: N, run: S, usage: I) -> &mut Self
+struct MaybeSystem<S, F, E> {
+    inner: S,
+    handle_error: F,
+    _error: PhantomData<E>,
+}
+
+impl<S, F, E> MaybeSystem<S, F, E>
+where
+    S: System,
+    F: FnMut(E) -> S::Out + Send + Sync + 'static,
+{
+    fn new<I, A, O, M>(system: I, handle_error: F) -> Self
     where
-        N: Into<CName>,
-        S: IntoSystem<Box<[String]>, ExecResult, M> + 'static,
-        I: Into<CName>,
+        I: IntoSystem<A, O, M, System = S>,
     {
-        let sys = self.register_system(run);
-        self.resource_mut::<Registry>().command(name, sys, usage);
+        Self {
+            inner: I::into_system(system),
+            handle_error,
+            _error: PhantomData,
+        }
+    }
+}
+
+impl<S, F, E> System for MaybeSystem<S, F, E>
+where
+    S: System,
+    F: FnMut(E) -> S::Out + Send + Sync + 'static,
+    E: Send + Sync + 'static,
+{
+    type In = Result<S::In, E>;
+    type Out = S::Out;
+
+    fn name(&self) -> std::borrow::Cow<'static, str> {
+        self.inner.name()
+    }
+
+    fn component_access(&self) -> &bevy::ecs::query::Access<bevy::ecs::component::ComponentId> {
+        self.inner.component_access()
+    }
+
+    fn archetype_component_access(
+        &self,
+    ) -> &bevy::ecs::query::Access<bevy::ecs::archetype::ArchetypeComponentId> {
+        self.inner.archetype_component_access()
+    }
+
+    fn is_send(&self) -> bool {
+        self.inner.is_send()
+    }
+
+    fn is_exclusive(&self) -> bool {
+        self.inner.is_exclusive()
+    }
+
+    fn has_deferred(&self) -> bool {
+        self.inner.has_deferred()
+    }
+
+    unsafe fn run_unsafe(
+        &mut self,
+        input: Self::In,
+        world: bevy::ecs::world::unsafe_world_cell::UnsafeWorldCell,
+    ) -> Self::Out {
+        match input {
+            Ok(input) => self.inner.run_unsafe(input, world),
+            Err(e) => (self.handle_error)(e),
+        }
+    }
+
+    fn apply_deferred(&mut self, world: &mut World) {
+        self.inner.apply_deferred(world)
+    }
+
+    fn initialize(&mut self, world: &mut World) {
+        self.inner.initialize(world)
+    }
+
+    fn update_archetype_component_access(
+        &mut self,
+        world: bevy::ecs::world::unsafe_world_cell::UnsafeWorldCell,
+    ) {
+        self.inner.update_archetype_component_access(world)
+    }
+
+    fn check_change_tick(&mut self, change_tick: bevy::ecs::component::Tick) {
+        self.inner.check_change_tick(change_tick)
+    }
+
+    fn get_last_run(&self) -> bevy::ecs::component::Tick {
+        self.inner.get_last_run()
+    }
+
+    fn set_last_run(&mut self, last_run: bevy::ecs::component::Tick) {
+        self.inner.set_last_run(last_run)
+    }
+}
+
+fn parse_args<A>(
+    mut command: clap::Command,
+) -> impl FnMut(In<Box<[String]>>) -> Result<A, clap::Error>
+where
+    A: FromArgMatches,
+{
+    move |In(args)| {
+        let matches = command.try_get_matches_from_mut(args.into_iter());
+        matches.and_then(|mut m| A::from_arg_matches_mut(&mut m))
+    }
+}
+
+impl RegisterCmdExt for World {
+    fn command<A, S, M>(&mut self, run: S) -> &mut Self
+    where
+        A: Parser + 'static,
+        S: IntoSystem<A, ExecResult, M> + 'static,
+    {
+        let mut command = A::command().no_binary_name(true);
+        let command_name = Cow::from(command.get_name().to_owned());
+        let usage = command.render_usage();
+        let short_about = command.render_help();
+        let about = command.render_long_help();
+        let sys = self.register_system(parse_args::<A>(command).pipe(MaybeSystem::new(
+            run,
+            move |clap_err: clap::Error| -> ExecResult {
+                match clap_err.kind() {
+                    clap::error::ErrorKind::DisplayHelp
+                    | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+                        format!("{}", short_about).into()
+                    }
+                    other => format!("{}\n{}", other, usage).into(),
+                }
+            },
+        )));
+        self.resource_mut::<Registry>()
+            .command(command_name, sys, format!("{}", about));
 
         self
     }

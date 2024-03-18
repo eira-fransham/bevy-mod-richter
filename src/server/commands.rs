@@ -1,4 +1,7 @@
+use std::path::PathBuf;
+
 use bevy::prelude::*;
+use clap::Parser;
 use failure::Error;
 
 use crate::{
@@ -8,37 +11,41 @@ use crate::{
         net::SignOnStage,
     },
 };
-use failure::bail;
 
 use super::*;
 
 pub fn register_commands(app: &mut App) {
-    app.command(
-        "map",
-        cmd_map.map(|res| -> ExecResult {
-            if let Err(e) = res {
-                format!("{}", e).into()
-            } else {
-                default()
-            }
-        }),
-        "Load and start a new map",
-    );
+    app.command(cmd_map.map(|res| -> ExecResult {
+        if let Err(e) = res {
+            format!("{}", e).into()
+        } else {
+            default()
+        }
+    }));
+}
+
+#[derive(Parser)]
+#[command(name = "map", about = "Load and start a new map")]
+struct Map {
+    map_name: PathBuf,
 }
 
 fn cmd_map(
-    In(args): In<Box<[String]>>,
+    In(Map { mut map_name }): In<Map>,
     mut commands: Commands,
     session: Option<ResMut<Session>>,
     mut focus: ResMut<InputFocus>,
     vfs: Res<Vfs>,
     mut registry: ResMut<Registry>,
 ) -> Result<(), Error> {
-    let map = match &*args {
-        [map_name] => map_name,
-        _ => bail!("usage: map [MAP_NAME]"),
-    };
-    let bsp = vfs.open(format!("maps/{}.bsp", map))?;
+    if map_name.extension().is_none() {
+        map_name.set_extension("bsp");
+    }
+
+    let mut path = PathBuf::from("maps");
+    path.push(map_name);
+
+    let bsp = vfs.open(format!("{}", path.display()))?;
     let (models, entmap) = crate::common::bsp::load(bsp)?;
     let progs = vfs.open("progs.dat")?;
     let progs = crate::server::progs::load(progs)?;

@@ -40,13 +40,13 @@ use bevy::{
 #[cfg(feature = "auto-exposure")]
 use bevy_mod_auto_exposure::{AutoExposure, AutoExposurePlugin};
 use capture::CapturePlugin;
+use clap::Parser;
 use seismon::{
     client::SeismonClientPlugin,
     common::console::{ConsoleInput, RegisterCmdExt as _, RunCmd},
     server::SeismonServerPlugin,
 };
 use serde_lexpr::Value;
-use clap::Parser;
 
 #[derive(Parser, Debug)]
 struct Opt {
