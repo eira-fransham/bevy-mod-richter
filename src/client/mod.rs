@@ -37,7 +37,13 @@ use self::{
     sound::{MixerEvent, SeismonSoundPlugin},
 };
 
-use std::{io::BufReader, iter, mem, net::ToSocketAddrs, ops::Range, path::PathBuf};
+use std::{
+    io::{self, BufReader},
+    iter, mem,
+    net::ToSocketAddrs,
+    ops::Range,
+    path::PathBuf,
+};
 
 use crate::{
     client::{
@@ -601,7 +607,7 @@ impl Connection {
             return Ok(Maintain);
         }
 
-        let mut reader = BufReader::new(message.as_slice());
+        let mut reader = &mut message.as_slice();
 
         loop {
             let cmd = match ServerCmd::deserialize(&mut reader) {
@@ -612,7 +618,7 @@ impl Connection {
                 Ok(Some(cmd)) => cmd,
                 Ok(None) => break,
             };
-            match dbg!(cmd) {
+            match cmd {
                 ServerCmd::Bad => {
                     warn!("Invalid command from server")
                 }

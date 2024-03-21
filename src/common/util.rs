@@ -17,6 +17,7 @@
 
 use std::{
     fmt,
+    io::{self, BufRead, BufReader, Read},
     mem::{self, size_of},
     ops::{Deref, Not},
 };
@@ -203,17 +204,25 @@ where
 ///
 /// ## Panics
 /// - If the end of the input is reached before a zero byte is found.
-pub fn read_cstring<R>(src: &mut R) -> QString
+pub fn read_cstring<R>(src: &mut R) -> io::Result<QString>
 // QStringOwned
 where
-    R: std::io::BufRead,
+    R: BufRead,
 {
+    // TODO: `BufRead` would be better here
     let mut bytes: Vec<u8> = Vec::new();
-    src.read_until(0, &mut bytes).unwrap();
-    bytes.pop();
-    QStr {
-        raw: Cow::owned(bytes),
+    loop {
+        let next_byte = src.read_u8()?;
+        if next_byte == 0 {
+            break;
+        } else {
+            bytes.push(next_byte);
+        }
     }
+
+    Ok(QStr {
+        raw: Cow::owned(bytes),
+    })
 }
 
 pub unsafe fn any_as_bytes<T>(t: &T) -> &[u8]

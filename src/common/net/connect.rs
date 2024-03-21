@@ -588,7 +588,7 @@ impl ConnectListener {
 
         let request = match request_code {
             RequestCode::Connect => {
-                let game_name = util::read_cstring(&mut reader).into_string();
+                let game_name = util::read_cstring(&mut reader)?.into_string();
                 let proto_ver = reader.read_u8()?;
                 Request::Connect(RequestConnect {
                     game_name,
@@ -597,7 +597,7 @@ impl ConnectListener {
             }
 
             RequestCode::ServerInfo => {
-                let game_name = util::read_cstring(&mut reader).into_string();
+                let game_name = util::read_cstring(&mut reader)?.into_string();
                 Request::ServerInfo(RequestServerInfo { game_name })
             }
 
@@ -607,7 +607,7 @@ impl ConnectListener {
             }
 
             RequestCode::RuleInfo => {
-                let prev_cvar = util::read_cstring(&mut reader).into_string();
+                let prev_cvar = util::read_cstring(&mut reader)?.into_string();
                 Request::RuleInfo(RequestRuleInfo { prev_cvar })
             }
         };
@@ -711,14 +711,14 @@ impl ConnectSocket {
             }
 
             ResponseCode::Reject => {
-                let message = util::read_cstring(&mut reader);
+                let message = util::read_cstring(&mut reader)?;
                 Response::Reject(ResponseReject { message })
             }
 
             ResponseCode::ServerInfo => {
-                let address = util::read_cstring(&mut reader).into_string();
-                let hostname = util::read_cstring(&mut reader).into_string();
-                let levelname = util::read_cstring(&mut reader).into_string();
+                let address = util::read_cstring(&mut reader)?.into_string();
+                let hostname = util::read_cstring(&mut reader)?.into_string();
+                let levelname = util::read_cstring(&mut reader)?.into_string();
                 let client_count = reader.read_u8()?;
                 let client_max = reader.read_u8()?;
                 let protocol_version = reader.read_u8()?;

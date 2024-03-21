@@ -366,7 +366,7 @@ pub enum TempEntity {
 impl TempEntity {
     pub fn read_temp_entity<R>(reader: &mut R) -> Result<TempEntity, NetError>
     where
-        R: BufRead + ReadBytesExt,
+        R: Read,
     {
         let code_byte = reader.read_u8()?;
         let code = match TempEntityCode::from_u8(code_byte) {
@@ -581,6 +581,115 @@ pub struct EntityUpdate {
 }
 
 impl EntityUpdate {
+    pub fn read<R>(reader: &mut R, update_flags: UpdateFlags) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let ent_id;
+        if update_flags.contains(UpdateFlags::LONG_ENTITY) {
+            ent_id = reader.read_u16::<LittleEndian>()?;
+        } else {
+            ent_id = reader.read_u8()? as u16;
+        }
+
+        let model_id;
+        if update_flags.contains(UpdateFlags::MODEL) {
+            model_id = Some(reader.read_u8()?);
+        } else {
+            model_id = None;
+        }
+
+        let frame_id;
+        if update_flags.contains(UpdateFlags::FRAME) {
+            frame_id = Some(reader.read_u8()?);
+        } else {
+            frame_id = None;
+        }
+
+        let colormap;
+        if update_flags.contains(UpdateFlags::COLORMAP) {
+            colormap = Some(reader.read_u8()?);
+        } else {
+            colormap = None;
+        }
+
+        let skin_id;
+        if update_flags.contains(UpdateFlags::SKIN) {
+            skin_id = Some(reader.read_u8()?);
+        } else {
+            skin_id = None;
+        }
+
+        let effects;
+        if update_flags.contains(UpdateFlags::EFFECTS) {
+            let effects_bits = reader.read_u8()?;
+            effects =
+                Some(EntityEffects::from_bits(effects_bits).ok_or(io::ErrorKind::InvalidData)?);
+        } else {
+            effects = None;
+        }
+
+        let origin_x;
+        if update_flags.contains(UpdateFlags::ORIGIN_X) {
+            origin_x = Some(read_coord(reader)?);
+        } else {
+            origin_x = None;
+        }
+
+        let pitch;
+        if update_flags.contains(UpdateFlags::PITCH) {
+            pitch = Some(read_angle(reader)?);
+        } else {
+            pitch = None;
+        }
+
+        let origin_y;
+        if update_flags.contains(UpdateFlags::ORIGIN_Y) {
+            origin_y = Some(read_coord(reader)?);
+        } else {
+            origin_y = None;
+        }
+
+        let yaw;
+        if update_flags.contains(UpdateFlags::YAW) {
+            yaw = Some(read_angle(reader)?);
+        } else {
+            yaw = None;
+        }
+
+        let origin_z;
+        if update_flags.contains(UpdateFlags::ORIGIN_Z) {
+            origin_z = Some(read_coord(reader)?);
+        } else {
+            origin_z = None;
+        }
+
+        let roll;
+        if update_flags.contains(UpdateFlags::ROLL) {
+            roll = Some(read_angle(reader)?);
+        } else {
+            roll = None;
+        }
+
+        let no_lerp = update_flags.contains(UpdateFlags::NO_LERP);
+
+        Ok(Self {
+            ent_id,
+            model_id,
+            frame_id,
+            colormap,
+            skin_id,
+            effects,
+            origin_x,
+            pitch,
+            origin_y,
+            yaw,
+            origin_z,
+            roll,
+            no_lerp,
+        })
+    }
+
     pub fn write<W>(&self, writer: &mut W) -> io::Result<()>
     where
         W: Write,
@@ -606,23 +715,24 @@ impl EntityUpdate {
             writer.write_u8(effects.bits())?;
         }
         if let Some(origin_x) = self.origin_x {
-            writer.write_f32::<LittleEndian>(origin_x)?;
+            write_coord(writer, origin_x)?;
         }
         if let Some(pitch) = self.pitch {
-            writer.write_f32::<LittleEndian>(pitch.0)?;
+            write_angle(writer, pitch)?;
         }
         if let Some(origin_y) = self.origin_y {
-            writer.write_f32::<LittleEndian>(origin_y)?;
+            write_coord(writer, origin_y)?;
         }
         if let Some(yaw) = self.yaw {
-            writer.write_f32::<LittleEndian>(yaw.0)?;
+            write_angle(writer, yaw)?;
         }
         if let Some(origin_z) = self.origin_z {
-            writer.write_f32::<LittleEndian>(origin_z)?;
+            write_coord(writer, origin_z)?;
         }
         if let Some(roll) = self.roll {
-            writer.write_f32::<LittleEndian>(roll.0)?;
+            write_angle(writer, roll)?;
         }
+
         Ok(())
     }
 
@@ -637,7 +747,7 @@ impl EntityUpdate {
             (self.long_entity(), UpdateFlags::LONG_ENTITY),
             (self.model_id.is_some(), UpdateFlags::MODEL),
             (self.frame_id.is_some(), UpdateFlags::FRAME),
-            (self.colormap.is_some(), UpdateFlags::FRAME),
+            (self.colormap.is_some(), UpdateFlags::COLORMAP),
             (self.skin_id.is_some(), UpdateFlags::SKIN),
             (self.effects.is_some(), UpdateFlags::EFFECTS),
             (self.origin_x.is_some(), UpdateFlags::ORIGIN_X),
@@ -651,6 +761,10 @@ impl EntityUpdate {
             if set {
                 out |= flag;
             }
+        }
+
+        if out.bits() & !(u8::MAX as u16) != 0 {
+            out |= UpdateFlags::MORE_BITS;
         }
 
         out
@@ -777,10 +891,19 @@ impl ServerCmdCode {
 
         if low_bits & FAST_UPDATE_FLAG != 0 {
             let low_bits = (low_bits & !FAST_UPDATE_FLAG) as u16;
-            let high_bits = reader.read_u8()? as u16;
 
-            let update_flags = UpdateFlags::from_bits(high_bits << 8 | low_bits)
-                .ok_or(io::Error::from(io::ErrorKind::InvalidData))?;
+            let bits = if UpdateFlags::from_bits(low_bits)
+                .ok_or(io::Error::from(io::ErrorKind::InvalidData))?
+                .contains(UpdateFlags::MORE_BITS)
+            {
+                let high_bits = reader.read_u8()? as u16;
+                high_bits << 8 | low_bits
+            } else {
+                low_bits
+            };
+
+            let update_flags =
+                UpdateFlags::from_bits(bits).ok_or(io::Error::from(io::ErrorKind::InvalidData))?;
 
             Ok(Self::FastUpdate(update_flags))
         } else {
@@ -796,10 +919,19 @@ impl ServerCmdCode {
     {
         match self {
             Self::Basic(basic) => writer.write_u8(*basic as _).map(|()| mem::size_of::<u8>()),
-            // FAST_UPDATE_FLAG needs to be on the _lower_ bits of the u16
-            Self::FastUpdate(update) => writer
-                .write_u16::<LittleEndian>(update.bits() | (FAST_UPDATE_FLAG as u16))
-                .map(|()| mem::size_of::<u16>()),
+            Self::FastUpdate(update) => {
+                if update.contains(UpdateFlags::MORE_BITS) {
+                    assert!(update.bits() & !(u8::MAX as u16) != 0);
+                    writer
+                        .write_u16::<LittleEndian>(update.bits() | (FAST_UPDATE_FLAG as u16))
+                        .map(|()| mem::size_of::<u16>())
+                } else {
+                    assert!(update.bits() & !(u8::MAX as u16) == 0);
+                    writer
+                        .write_u8(update.bits() as u8 | FAST_UPDATE_FLAG)
+                        .map(|()| mem::size_of::<u8>())
+                }
+            }
         }
     }
 }
@@ -987,123 +1119,17 @@ impl ServerCmd {
 
     pub fn deserialize<R>(reader: &mut R) -> Result<Option<ServerCmd>, NetError>
     where
-        R: BufRead + ReadBytesExt,
+        R: BufRead,
     {
         let code = ServerCmdCode::read(reader)?;
 
         let code = match code {
             ServerCmdCode::Basic(basic) => basic,
             ServerCmdCode::FastUpdate(update_flags) => {
-                let ent_id;
-                if update_flags.contains(UpdateFlags::LONG_ENTITY) {
-                    ent_id = reader.read_u16::<LittleEndian>()?;
-                } else {
-                    ent_id = reader.read_u8()? as u16;
-                }
-
-                let model_id;
-                if update_flags.contains(UpdateFlags::MODEL) {
-                    model_id = Some(reader.read_u8()?);
-                } else {
-                    model_id = None;
-                }
-
-                let frame_id;
-                if update_flags.contains(UpdateFlags::FRAME) {
-                    frame_id = Some(reader.read_u8()?);
-                } else {
-                    frame_id = None;
-                }
-
-                let colormap;
-                if update_flags.contains(UpdateFlags::COLORMAP) {
-                    colormap = Some(reader.read_u8()?);
-                } else {
-                    colormap = None;
-                }
-
-                let skin_id;
-                if update_flags.contains(UpdateFlags::SKIN) {
-                    skin_id = Some(reader.read_u8()?);
-                } else {
-                    skin_id = None;
-                }
-
-                let effects;
-                if update_flags.contains(UpdateFlags::EFFECTS) {
-                    let effects_bits = reader.read_u8()?;
-                    effects = match EntityEffects::from_bits(effects_bits) {
-                        Some(e) => Some(e),
-                        None => {
-                            return Err(NetError::InvalidData(format!(
-                                "EntityEffects: {:b}",
-                                effects_bits
-                            )))
-                        }
-                    };
-                } else {
-                    effects = None;
-                }
-
-                let origin_x;
-                if update_flags.contains(UpdateFlags::ORIGIN_X) {
-                    origin_x = Some(read_coord(reader)?);
-                } else {
-                    origin_x = None;
-                }
-
-                let pitch;
-                if update_flags.contains(UpdateFlags::PITCH) {
-                    pitch = Some(read_angle(reader)?);
-                } else {
-                    pitch = None;
-                }
-
-                let origin_y;
-                if update_flags.contains(UpdateFlags::ORIGIN_Y) {
-                    origin_y = Some(read_coord(reader)?);
-                } else {
-                    origin_y = None;
-                }
-
-                let yaw;
-                if update_flags.contains(UpdateFlags::YAW) {
-                    yaw = Some(read_angle(reader)?);
-                } else {
-                    yaw = None;
-                }
-
-                let origin_z;
-                if update_flags.contains(UpdateFlags::ORIGIN_Z) {
-                    origin_z = Some(read_coord(reader)?);
-                } else {
-                    origin_z = None;
-                }
-
-                let roll;
-                if update_flags.contains(UpdateFlags::ROLL) {
-                    roll = Some(read_angle(reader)?);
-                } else {
-                    roll = None;
-                }
-
-                let no_lerp = update_flags.contains(UpdateFlags::NO_LERP);
-
-                return Ok(Some(ServerCmd::FastUpdate(EntityUpdate {
-                    ent_id,
-                    model_id,
-                    frame_id,
-                    colormap,
-                    skin_id,
-                    effects,
-                    origin_x,
-                    pitch,
-                    origin_y,
-                    yaw,
-                    origin_z,
-                    roll,
-                    no_lerp,
-                })));
+                return Ok(Some(ServerCmd::FastUpdate(EntityUpdate::read(
+                    reader,
+                    update_flags,
+                )?)));
             }
         };
 
@@ -1186,13 +1212,13 @@ impl ServerCmd {
             }
 
             BasicServerCmdCode::Print => {
-                let text = util::read_cstring(reader);
+                let text = util::read_cstring(reader)?;
 
                 ServerCmd::Print { text }
             }
 
             BasicServerCmdCode::StuffText => {
-                let text = util::read_cstring(reader);
+                let text = util::read_cstring(reader)?;
 
                 ServerCmd::StuffText { text }
             }
@@ -1221,11 +1247,11 @@ impl ServerCmd {
                     }
                 };
 
-                let message = util::read_cstring(reader);
+                let message = util::read_cstring(reader)?;
 
                 let mut model_precache = Vec::new();
                 loop {
-                    let model_name = util::read_cstring(reader).into_string();
+                    let model_name = util::read_cstring(reader)?.into_string();
                     if model_name.is_empty() {
                         break;
                     }
@@ -1234,7 +1260,7 @@ impl ServerCmd {
 
                 let mut sound_precache = Vec::new();
                 loop {
-                    let sound_name = util::read_cstring(reader).into_string();
+                    let sound_name = util::read_cstring(reader)?.into_string();
                     if sound_name.is_empty() {
                         break;
                     }
@@ -1253,13 +1279,13 @@ impl ServerCmd {
 
             BasicServerCmdCode::LightStyle => {
                 let id = reader.read_u8()?;
-                let value = util::read_cstring(reader).into_string();
+                let value = util::read_cstring(reader)?.into_string();
                 ServerCmd::LightStyle { id, value }
             }
 
             BasicServerCmdCode::UpdateName => {
                 let player_id = reader.read_u8()?;
-                let new_name = util::read_cstring(reader);
+                let new_name = util::read_cstring(reader)?;
                 ServerCmd::UpdateName {
                     player_id,
                     new_name,
@@ -1520,7 +1546,7 @@ impl ServerCmd {
             }
 
             BasicServerCmdCode::CenterPrint => {
-                let text = util::read_cstring(reader);
+                let text = util::read_cstring(reader)?;
 
                 ServerCmd::CenterPrint { text }
             }
@@ -1545,7 +1571,7 @@ impl ServerCmd {
             BasicServerCmdCode::Intermission => ServerCmd::Intermission,
 
             BasicServerCmdCode::Finale => {
-                let text = util::read_cstring(reader);
+                let text = util::read_cstring(reader)?;
 
                 ServerCmd::Finale { text }
             }
@@ -1559,7 +1585,7 @@ impl ServerCmd {
             BasicServerCmdCode::SellScreen => ServerCmd::SellScreen,
 
             BasicServerCmdCode::Cutscene => {
-                let text = util::read_cstring(reader);
+                let text = util::read_cstring(reader)?;
 
                 ServerCmd::Cutscene { text }
             }
@@ -1570,12 +1596,12 @@ impl ServerCmd {
 
     pub fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
-        W: WriteBytesExt,
+        W: Write,
     {
         self.code().write(writer)?;
 
         match *self {
-            ServerCmd::Bad | ServerCmd::NoOp | ServerCmd::Disconnect => {},
+            ServerCmd::Bad | ServerCmd::NoOp | ServerCmd::Disconnect => {}
 
             ServerCmd::UpdateStat { stat, value } => {
                 writer.write_u8(stat as u8)?;
@@ -1911,7 +1937,7 @@ impl ServerCmd {
                 writer.write_u8(0)?;
             }
 
-            ServerCmd::KilledMonster | ServerCmd::FoundSecret => {},
+            ServerCmd::KilledMonster | ServerCmd::FoundSecret => {}
 
             ServerCmd::SpawnStaticSound {
                 origin,
@@ -1925,7 +1951,7 @@ impl ServerCmd {
                 writer.write_u8(attenuation)?;
             }
 
-            ServerCmd::Intermission => {},
+            ServerCmd::Intermission => {}
 
             ServerCmd::Finale { ref text } => {
                 writer.write_all(&*text.raw)?;
@@ -1937,14 +1963,13 @@ impl ServerCmd {
                 writer.write_u8(loop_)?;
             }
 
-            ServerCmd::SellScreen => {},
+            ServerCmd::SellScreen => {}
 
             ServerCmd::Cutscene { ref text } => {
                 writer.write_all(&*text.raw)?;
                 writer.write_u8(0)?;
             }
 
-            // TODO
             ServerCmd::FastUpdate(ref update) => {
                 update.write(writer)?;
             }
@@ -2048,7 +2073,7 @@ impl ClientCmd {
                 }
             }
             ClientCmdCode::StringCmd => {
-                let cmd = util::read_cstring(reader).into_str().into_owned();
+                let cmd = util::read_cstring(reader)?.into_str().into_owned();
                 ClientCmd::StringCmd { cmd }
             }
         };
@@ -2063,9 +2088,9 @@ impl ClientCmd {
         writer.write_u8(self.code())?;
 
         match *self {
-            ClientCmd::Bad => {},
-            ClientCmd::NoOp => {},
-            ClientCmd::Disconnect => {},
+            ClientCmd::Bad => {}
+            ClientCmd::NoOp => {}
+            ClientCmd::Disconnect => {}
             ClientCmd::Move {
                 send_time,
                 angles,
@@ -2347,7 +2372,7 @@ impl QSocket {
 
             match msg_kind {
                 // ignore control messages
-                MsgKind::Ctl => {},
+                MsgKind::Ctl => {}
 
                 MsgKind::Unreliable => {
                     // we've received a newer datagram, ignore
@@ -2430,16 +2455,16 @@ impl QSocket {
     }
 }
 
-fn read_coord<R>(reader: &mut R) -> Result<f32, NetError>
+fn read_coord<R>(reader: &mut R) -> io::Result<f32>
 where
-    R: BufRead + ReadBytesExt,
+    R: Read,
 {
     Ok(reader.read_i16::<LittleEndian>()? as f32 / 8.0)
 }
 
-fn read_coord_vector3<R>(reader: &mut R) -> Result<Vector3<f32>, NetError>
+fn read_coord_vector3<R>(reader: &mut R) -> io::Result<Vector3<f32>>
 where
-    R: BufRead + ReadBytesExt,
+    R: Read,
 {
     Ok(Vector3::new(
         read_coord(reader)?,
@@ -2448,17 +2473,17 @@ where
     ))
 }
 
-fn write_coord<W>(writer: &mut W, coord: f32) -> Result<(), NetError>
+fn write_coord<W>(writer: &mut W, coord: f32) -> io::Result<()>
 where
-    W: WriteBytesExt,
+    W: Write,
 {
     writer.write_i16::<LittleEndian>((coord * 8.0) as i16)?;
     Ok(())
 }
 
-fn write_coord_vector3<W>(writer: &mut W, coords: Vector3<f32>) -> Result<(), NetError>
+fn write_coord_vector3<W>(writer: &mut W, coords: Vector3<f32>) -> io::Result<()>
 where
-    W: WriteBytesExt,
+    W: Write,
 {
     for coord in &coords[..] {
         write_coord(writer, *coord)?;
@@ -2467,24 +2492,24 @@ where
     Ok(())
 }
 
-fn read_angle<R>(reader: &mut R) -> Result<Deg<f32>, NetError>
+fn read_angle<R>(reader: &mut R) -> io::Result<Deg<f32>>
 where
-    R: BufRead + ReadBytesExt,
+    R: Read,
 {
     Ok(Deg(reader.read_i8()? as f32 * (360.0 / 256.0)))
 }
 
-fn write_angle<W>(writer: &mut W, angle: Deg<f32>) -> Result<(), NetError>
+fn write_angle<W>(writer: &mut W, angle: Deg<f32>) -> io::Result<()>
 where
-    W: WriteBytesExt,
+    W: Write,
 {
     writer.write_u8(((angle.0 as i32 * 256 / 360) & 0xFF) as u8)?;
     Ok(())
 }
 
-fn write_angle_vector3<W>(writer: &mut W, angles: Vector3<Deg<f32>>) -> Result<(), NetError>
+fn write_angle_vector3<W>(writer: &mut W, angles: Vector3<Deg<f32>>) -> io::Result<()>
 where
-    W: WriteBytesExt,
+    W: Write,
 {
     for angle in &angles[..] {
         write_angle(writer, *angle)?;

@@ -23,7 +23,14 @@ pub mod world;
 
 use crate::{
     common::{
-        console::Registry, engine::{duration_from_f32, duration_to_f32}, math::Hyperplane, model::Model, net::ServerCmd, parse, util::QString, vfs::Vfs
+        console::Registry,
+        engine::{self, duration_from_f32, duration_to_f32},
+        math::Hyperplane,
+        model::Model,
+        net::ServerCmd,
+        parse,
+        util::QString,
+        vfs::Vfs,
     },
     server::{
         progs::{functions::FunctionKind, GlobalAddrFunction},
@@ -84,10 +91,13 @@ impl Plugin for SeismonServerPlugin {
     }
 }
 
+#[derive(Debug)]
 pub struct Client {
     name: QString,
     color: u8,
     state: ClientState,
+    // TODO: Per-client send
+    buffer: Vec<u8>,
 }
 
 impl Default for Client {
@@ -96,6 +106,7 @@ impl Default for Client {
             name: "player".into(),
             color: 0,
             state: ClientState::Connecting,
+            buffer: default(),
         }
     }
 }
@@ -109,6 +120,7 @@ impl Client {
     }
 }
 
+#[derive(Debug)]
 /// The state of a client's connection to the server.
 pub enum ClientState {
     /// The client is still connecting.
@@ -118,6 +130,7 @@ pub enum ClientState {
     Active(ClientActive),
 }
 
+#[derive(Debug)]
 pub struct ClientActive {
     /// If true, client may execute any command.
     privileged: bool,
@@ -158,7 +171,8 @@ impl ClientSlots {
     }
 
     pub fn active_clients(&self) -> impl Iterator<Item = &Client> {
-        self.connected_clients().filter(|c| matches!(c.state, ClientState::Active(_)))
+        self.connected_clients()
+            .filter(|c| matches!(c.state, ClientState::Active(_)))
     }
 
     /// Returns a reference to the client in a slot.
@@ -273,40 +287,37 @@ impl Session {
 
         let ent = self.level.world.entities.get(id)?;
 
-            let (model_id, frame_id, colormap, skin_id, origin, angles) = (
-                ent.get_float(
-                    &self.level.world.type_def,
-                    FieldAddrFloat::ModelIndex as i16,
-                ).ok()? as _,
-                ent
-                    .get_float(&self.level.world.type_def, FieldAddrFloat::FrameId as i16).ok()?
-                    as _,
-                ent.get_float(
-                    &self.level.world.type_def,
-                    FieldAddrFloat::Colormap as i16,
-                ).ok()? as _,
-                ent
-                    .get_float(&self.level.world.type_def, FieldAddrFloat::SkinId as i16).ok()?
-                    as _,
-                ent
-                    .get_vector(&self.level.world.type_def, FieldAddrVector::Origin as i16).ok()?
-                    .into(),
-                ent
-                    .get_vector(&self.level.world.type_def, FieldAddrVector::Angles as i16).ok()?,
-            );
+        let (model_id, frame_id, colormap, skin_id, origin, angles) = (
+            ent.get_float(
+                &self.level.world.type_def,
+                FieldAddrFloat::ModelIndex as i16,
+            )
+            .ok()? as _,
+            ent.get_float(&self.level.world.type_def, FieldAddrFloat::FrameId as i16)
+                .ok()? as _,
+            ent.get_float(&self.level.world.type_def, FieldAddrFloat::Colormap as i16)
+                .ok()? as _,
+            ent.get_float(&self.level.world.type_def, FieldAddrFloat::SkinId as i16)
+                .ok()? as _,
+            ent.get_vector(&self.level.world.type_def, FieldAddrVector::Origin as i16)
+                .ok()?
+                .into(),
+            ent.get_vector(&self.level.world.type_def, FieldAddrVector::Angles as i16)
+                .ok()?,
+        );
 
-            let angles: Vector3<f32> = angles.into();
-            let angles = angles.map(Deg);
+        let angles: Vector3<f32> = angles.into();
+        let angles = angles.map(Deg);
 
-            Some(ServerCmd::SpawnBaseline {
-                ent_id,
-                model_id,
-                frame_id,
-                colormap,
-                skin_id,
-                origin,
-                angles,
-            })
+        Some(ServerCmd::SpawnBaseline {
+            ent_id,
+            model_id,
+            frame_id,
+            colormap,
+            skin_id,
+            origin,
+            angles,
+        })
     }
 
     pub fn clientcmd_prespawn(&self, slot: usize) -> Result<(), failure::Error> {
@@ -363,7 +374,10 @@ impl Session {
         };
 
         // TODO: All players are currently privileged
-        client.state = ClientState::Active(ClientActive { privileged: true, entity_id: client_entity });
+        client.state = ClientState::Active(ClientActive {
+            privileged: true,
+            entity_id: client_entity,
+        });
 
         self.level
             .world
@@ -497,6 +511,8 @@ pub struct LevelState {
     ///
     /// This contains the entities and world geometry.
     world: World,
+
+    broadcast: Vec<u8>,
 }
 
 impl LevelState {
@@ -518,11 +534,14 @@ impl LevelState {
         let sound_precache = Precache::new();
         let mut model_precache = Precache::new();
 
-        model_precache.precache(map_path);
-
         for model in models.iter() {
             let model_name = string_table.find_or_insert(model.name());
-            model_precache.precache(&*string_table.get(model_name).unwrap());
+            let name = &*string_table.get(model_name).unwrap();
+            if name == "*0" {
+                model_precache.precache(&map_path);
+            } else {
+                model_precache.precache(name);
+            }
         }
 
         let world = World::create(models, entity_def, &mut string_table).unwrap();
@@ -538,12 +557,14 @@ impl LevelState {
             cx,
             globals,
             world,
+
+            broadcast: default(),
         };
 
         for entity in entity_list {
-            level
-                .spawn_entity_from_map(entity, registry.reborrow(), vfs)
-                .unwrap();
+            if let Err(e) = level.spawn_entity_from_map(entity, registry.reborrow(), vfs) {
+                error!("{}", e);
+            }
         }
 
         level
@@ -585,7 +606,7 @@ impl LevelState {
         mut registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
-        let mut runaway = 100000;
+        let mut runaway = 10000;
 
         let exit_depth = self.cx.call_stack_depth();
 
@@ -596,7 +617,10 @@ impl LevelState {
             runaway -= 1;
 
             if runaway == 0 {
-                panic!("runaway program");
+                for (depth, id) in self.cx.backtrace().enumerate() {
+                    println!("{}: {:?}", depth, id);
+                }
+                return Err(ProgsError::LocalStackOverflow);
             }
 
             let statement = self.cx.load_statement();
@@ -655,6 +679,12 @@ impl LevelState {
                     let name_id = self.cx.function_def(f_to_call)?.name_id;
                     let name = &self.string_table.get(name_id).unwrap().to_owned();
 
+                    macro_rules! todo_builtin {
+                        ($id:ident) => {
+                            error!(concat!("TODO: ", stringify!($id)))
+                        };
+                    }
+
                     if let FunctionKind::BuiltIn(b) = self.cx.function_def(f_to_call)?.kind {
                         debug!("Calling built-in function {}", name);
                         use progs::functions::BuiltinFunctionId::*;
@@ -663,32 +693,32 @@ impl LevelState {
                             SetOrigin => self.builtin_set_origin(registry.reborrow(), vfs)?,
                             SetModel => self.builtin_set_model()?,
                             SetSize => self.builtin_set_size()?,
-                            Break => unimplemented!(),
+                            Break => todo_builtin!(Break),
                             Random => self.globals.builtin_random()?,
-                            Sound => unimplemented!(),
-                            Normalize => unimplemented!(),
+                            Sound => todo_builtin!(Sound),
+                            Normalize => todo_builtin!(Normalize),
                             Error => error!("QuakeC error"),
-                            ObjError => unimplemented!(),
+                            ObjError => todo_builtin!(ObjError),
                             VLen => self.globals.builtin_v_len()?,
                             VecToYaw => self.globals.builtin_vec_to_yaw()?,
                             Spawn => self.builtin_spawn(registry.reborrow(), vfs)?,
                             Remove => self.builtin_remove()?,
-                            TraceLine => unimplemented!(),
+                            TraceLine => todo_builtin!(TraceLine),
                             CheckClient => self.builtin_check_client()?,
                             Find => self.builtin_find()?,
                             PrecacheSound => self.builtin_precache_sound()?,
                             PrecacheModel => self.builtin_precache_model(vfs)?,
-                            StuffCmd => unimplemented!(),
-                            FindRadius => unimplemented!(),
+                            StuffCmd => todo_builtin!(StuffCmd),
+                            FindRadius => todo_builtin!(FindRadius),
                             BPrint => self.builtin_bprint()?,
                             SPrint => self.builtin_sprint()?,
                             DPrint => self.builtin_dprint()?,
-                            FToS => unimplemented!(),
+                            FToS => todo_builtin!(FToS),
                             VToS => self.builtin_vtos()?,
-                            CoreDump => unimplemented!(),
-                            TraceOn => unimplemented!(),
-                            TraceOff => unimplemented!(),
-                            EPrint => unimplemented!(),
+                            CoreDump => todo_builtin!(CoreDump),
+                            TraceOn => todo_builtin!(TraceOn),
+                            TraceOff => todo_builtin!(TraceOff),
+                            EPrint => todo_builtin!(EPrint),
                             WalkMove => self.builtin_walk_move(registry.reborrow(), vfs)?,
 
                             DropToFloor => self.builtin_drop_to_floor(registry.reborrow(), vfs)?,
@@ -696,35 +726,35 @@ impl LevelState {
                             RInt => self.globals.builtin_r_int()?,
                             Floor => self.globals.builtin_floor()?,
                             Ceil => self.globals.builtin_ceil()?,
-                            CheckBottom => unimplemented!(),
-                            PointContents => unimplemented!(),
+                            CheckBottom => todo_builtin!(CheckBottom),
+                            PointContents => todo_builtin!(PointContents),
                             FAbs => self.globals.builtin_f_abs()?,
-                            Aim => unimplemented!(),
+                            Aim => todo_builtin!(Aim),
                             Cvar => self.builtin_cvar(&*registry)?,
-                            LocalCmd => unimplemented!(),
-                            NextEnt => unimplemented!(),
-                            Particle => unimplemented!(),
-                            ChangeYaw => unimplemented!(),
-                            VecToAngles => unimplemented!(),
-                            WriteByte => unimplemented!(),
-                            WriteChar => unimplemented!(),
-                            WriteShort => unimplemented!(),
-                            WriteLong => unimplemented!(),
-                            WriteCoord => unimplemented!(),
-                            WriteAngle => unimplemented!(),
-                            WriteString => unimplemented!(),
-                            WriteEntity => unimplemented!(),
-                            MoveToGoal => unimplemented!(),
-                            PrecacheFile => unimplemented!(),
-                            MakeStatic => unimplemented!(),
-                            ChangeLevel => unimplemented!(),
+                            LocalCmd => todo_builtin!(LocalCmd),
+                            NextEnt => todo_builtin!(NextEnt),
+                            Particle => todo_builtin!(Particle),
+                            ChangeYaw => todo_builtin!(ChangeYaw),
+                            VecToAngles => todo_builtin!(VecToAngles),
+                            WriteByte => todo_builtin!(WriteByte),
+                            WriteChar => todo_builtin!(WriteChar),
+                            WriteShort => todo_builtin!(WriteShort),
+                            WriteLong => todo_builtin!(WriteLong),
+                            WriteCoord => todo_builtin!(WriteCoord),
+                            WriteAngle => todo_builtin!(WriteAngle),
+                            WriteString => todo_builtin!(WriteString),
+                            WriteEntity => todo_builtin!(WriteEntity),
+                            MoveToGoal => todo_builtin!(MoveToGoal),
+                            PrecacheFile => todo_builtin!(PrecacheFile),
+                            MakeStatic => self.builtin_make_static()?,
+                            ChangeLevel => todo_builtin!(ChangeLevel),
                             CvarSet => self.builtin_cvar_set(registry.reborrow())?,
-                            CenterPrint => unimplemented!(),
+                            CenterPrint => todo_builtin!(CenterPrint),
                             AmbientSound => self.builtin_ambient_sound()?,
-                            PrecacheModel2 => unimplemented!(),
-                            PrecacheSound2 => unimplemented!(),
-                            PrecacheFile2 => unimplemented!(),
-                            SetSpawnArgs => unimplemented!(),
+                            PrecacheModel2 => todo_builtin!(PrecacheModel2),
+                            PrecacheSound2 => todo_builtin!(PrecacheSound2),
+                            PrecacheFile2 => todo_builtin!(PrecacheFile2),
+                            SetSpawnArgs => todo_builtin!(SetSpawnArgs),
                         }
                         debug!("Returning from built-in function {}", name);
                     } else {
@@ -807,8 +837,11 @@ impl LevelState {
     where
         S: AsRef<str>,
     {
-        let func_id = self.cx.find_function_by_name(&self.string_table, name)?;
-        self.execute_program(func_id, registry, vfs)?;
+        match self.cx.find_function_by_name(&self.string_table, name) {
+            Ok(func_id) => self.execute_program(func_id, registry, vfs)?,
+            Err(e) => error!("{}", e),
+        }
+
         Ok(())
     }
 
@@ -1105,7 +1138,11 @@ impl LevelState {
         // Let the entity think if it needs to.
         if old_local_time < next_think && next_think <= new_local_time {
             // Deschedule thinking.
-            ent.store(&self.world.type_def, FieldAddrFloat::NextThink, 0.0)?;
+            ent.store(
+                &self.world.type_def,
+                FieldAddrFloat::NextThink,
+                engine::duration_to_f32(new_local_time),
+            )?;
 
             self.globals
                 .put_float(duration_to_f32(self.time), GlobalAddrFloat::Time as i16)?;
@@ -1224,7 +1261,7 @@ impl LevelState {
                 && hit_sound
             {
                 // Entity hit the ground this frame.
-                todo!("SV_StartSound(demon/dland2.wav)");
+                error!("TODO: SV_StartSound(demon/dland2.wav)");
             }
         }
 
@@ -2047,7 +2084,13 @@ impl LevelState {
         let s_id = self.globals.string_id(GLOBAL_ADDR_ARG_0 as i16)?;
         let strs = &self.string_table;
         let s = strs.get(s_id).unwrap();
-        let f = registry.read_cvar(&*s).unwrap();
+        let f = match registry.read_cvar(&*s) {
+            Ok(f) => f,
+            Err(e) => {
+                error!("{}", e);
+                default()
+            }
+        };
         self.globals.put_float(f, GLOBAL_ADDR_RETURN as i16)?;
 
         Ok(())
@@ -2156,17 +2199,26 @@ impl LevelState {
         self.globals
             .put_entity_id(EntityId(0), GLOBAL_ADDR_RETURN as i16)?;
 
+        Err(ProgsError::LocalStackOverflow)
+
+        // Ok(())
+    }
+
+    pub fn builtin_make_static(&mut self) -> Result<(), ProgsError> {
+        let _ent = self.globals.entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
+
+        error!("TODO: MakeStatic");
+
         Ok(())
     }
 }
 
 pub mod systems {
+    use std::io;
+
     use crate::common::{
         console::{CmdName, RunCmd},
-        net::{
-            self, ClientCmd, ClientMessage, EntityUpdate, GameType, ServerCmd, ServerMessage,
-            SignOnStage,
-        },
+        net::{self, ClientCmd, ClientMessage, EntityUpdate, GameType, ServerMessage, SignOnStage},
     };
 
     use super::*;
@@ -2178,7 +2230,7 @@ pub mod systems {
         mut registry: ResMut<Registry>,
         vfs: Res<Vfs>,
     ) {
-        let mut out_packet = Vec::new();
+        let mut out_packet = io::Cursor::new(Vec::new());
         for msg in client_msgs.read() {
             let mut packet = &msg.packet[..];
             loop {
@@ -2189,7 +2241,7 @@ pub mod systems {
                             let Ok(cmds) = RunCmd::parse_many(&cmd) else {
                                 continue;
                             };
-                            for RunCmd(CmdName { name, trigger }, args) in dbg!(cmds) {
+                            for RunCmd(CmdName { name, trigger }, args) in cmds {
                                 if trigger.is_some() {
                                     error!("TODO: Action in `ClientCmd` - currently we only handle network-related cmds");
                                     continue;
@@ -2242,9 +2294,8 @@ pub mod systems {
                                             .clientcmd_begin(0, registry.reborrow(), &*vfs)
                                             .unwrap();
 
-                                        let client_ent = server.client(0).unwrap().entity().unwrap();
-
-                                        server.spawn_baseline(client_ent).unwrap().serialize(&mut out_packet).unwrap();
+                                        let client_ent =
+                                            server.client(0).unwrap().entity().unwrap();
 
                                         // TODO: Error handling
                                         ServerCmd::SetView {
@@ -2284,8 +2335,8 @@ pub mod systems {
             }
         }
 
-        if !out_packet.is_empty() {
-            server_messages.send(ServerMessage(out_packet));
+        if !out_packet.get_ref().is_empty() {
+            server_messages.send(ServerMessage(out_packet.into_inner()));
         }
     }
 
@@ -2325,7 +2376,7 @@ pub mod systems {
             _ => GameType::Deathmatch,
         };
 
-        let mut packet = Vec::new();
+        let mut packet = io::Cursor::new(Vec::new());
         ServerCmd::ServerInfo {
             protocol_version: net::PROTOCOL_VERSION as _,
             max_clients: server.max_clients() as _,
@@ -2371,7 +2422,7 @@ pub mod systems {
         // TODO: Handle this with QC
         server.new_client().unwrap();
 
-        server_messages.send(ServerMessage(packet));
+        server_messages.send(ServerMessage(packet.into_inner()));
 
         Ok(())
     }
@@ -2379,6 +2430,7 @@ pub mod systems {
     pub fn server_update(
         mut server: ResMut<Session>,
         time: Res<Time<Virtual>>,
+        mut server_messages: EventWriter<ServerMessage>,
         mut registry: ResMut<Registry>,
         vfs: Res<Vfs>,
     ) {
@@ -2394,21 +2446,21 @@ pub mod systems {
                 state: SessionState::Active,
                 level,
             } => {
-                level
-                    .physics(
-                        &persist.client_slots,
-                        Duration::from_std(time.elapsed()).unwrap(),
-                        registry.reborrow(),
-                        &*vfs,
-                    )
-                    .unwrap();
+                if let Err(e) = level.physics(
+                    &persist.client_slots,
+                    Duration::from_std(time.elapsed()).unwrap(),
+                    registry.reborrow(),
+                    &*vfs,
+                ) {
+                    error!("{}", e);
+                }
                 true
             }
             _ => false,
         };
 
         if send_diff {
-            let mut packet = Vec::new();
+            let mut packet = io::Cursor::new(Vec::new());
             for ent in server.level.world.diff() {
                 // TODO: Handle deletions
                 if server.level.world.entities.try_get(ent).is_err() {
@@ -2475,7 +2527,7 @@ pub mod systems {
 
                 let angles: Vector3<f32> = angles.into();
                 let angles = angles.map(Deg);
-                ServerCmd::FastUpdate(EntityUpdate {
+                let update = ServerCmd::FastUpdate(EntityUpdate {
                     ent_id,
                     model_id: Some(model_id),
                     frame_id: Some(frame_id),
@@ -2489,12 +2541,18 @@ pub mod systems {
                     yaw: Some(angles[1]),
                     roll: Some(angles[2]),
                     no_lerp: false,
-                })
-                .serialize(&mut packet)
-                .unwrap();
+                });
 
-                // server_messages.send(ServerMessage(packet));
+                if server.client(0).and_then(|c| c.entity()) == Some(ent) {
+                    // ServerCmd::PlayerData(PlayerData {
+                    //     // TODO: Send player data
+                    // }).serialize(&mut packet).unwrap()
+                }
+
+                update.serialize(&mut packet).unwrap();
             }
+
+            server_messages.send(ServerMessage(packet.into_inner()));
         }
     }
 }

@@ -15,7 +15,7 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{rc::Rc, sync::Arc};
+use std::{fmt, rc::Rc, sync::Arc};
 
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
@@ -49,9 +49,22 @@ impl Statement {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Default, PartialEq)]
 #[repr(C)]
 pub struct FunctionId(pub usize);
+
+impl fmt::Debug for FunctionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[derive(Debug)]
+        struct FunctionId(usize);
+
+        if let Some(builtin) = BuiltinFunctionId::from_usize(self.0) {
+            builtin.fmt(f)
+        } else {
+            FunctionId(self.0).fmt(f)
+        }
+    }
+}
 
 impl TryInto<i32> for FunctionId {
     type Error = ProgsError;

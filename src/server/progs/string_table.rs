@@ -1,12 +1,11 @@
-use parking_lot::RwLock;
-
 use crate::server::progs::{ProgsError, StringId};
 use dashmap::DashMap;
+use std::str;
 
 #[derive(Debug)]
 pub struct StringTable {
     /// Interned string data.
-    data: String,
+    data: Vec<u8>,
 
     /// Caches string lengths for faster lookup.
     lengths: DashMap<StringId, usize>,
@@ -15,7 +14,7 @@ pub struct StringTable {
 impl StringTable {
     pub fn new(data: Vec<u8>) -> StringTable {
         StringTable {
-            data: String::from_utf8(data).unwrap().into(),
+            data,
             lengths: Default::default(),
         }
     }
@@ -38,8 +37,8 @@ impl StringTable {
     where
         S: AsRef<str>,
     {
-        let target = target.as_ref();
-        for (ofs, _) in target.char_indices() {
+        let target = target.as_ref().as_bytes();
+        for (ofs, _) in target.iter().enumerate() {
             let sub = &self.data[ofs..];
             if !sub.starts_with(target) {
                 continue;
@@ -49,7 +48,7 @@ impl StringTable {
             // erroneously return the StringId of a ImString whose first
             // `target.len()` bytes were equal to `target`, but which had
             // additional bytes.
-            if sub.as_bytes().get(target.len()) != Some(&0) {
+            if sub.get(target.len()) != Some(&0) {
                 continue;
             }
 
@@ -68,19 +67,19 @@ impl StringTable {
 
         if let Some(len) = self.lengths.get(&id) {
             let end = start + *len;
-            return Some(&self.data[start..end]);
+            return str::from_utf8(&self.data[start..end]).ok();
         }
 
         match self.data[start..]
-            .chars()
+            .iter()
             .take(1024 * 1024)
             .enumerate()
-            .find(|&(_i, c)| c == '\0')
+            .find(|&(_i, c)| *c == 0)
         {
             Some((len, _)) => {
                 self.lengths.insert(id, len);
                 let end = start + len;
-                Some(&self.data[start..end])
+                str::from_utf8(&self.data[start..end]).ok()
             }
             None => panic!("string data not NUL-terminated!"),
         }
@@ -95,7 +94,7 @@ impl StringTable {
         assert!(!s.contains('\0'));
 
         let id = StringId(self.data.len());
-        self.data.push_str(s);
+        self.data.extend_from_slice(s.as_bytes());
         self.lengths.insert(id, s.len());
         id
     }
@@ -113,6 +112,8 @@ impl StringTable {
     pub fn iter(&self) -> impl Iterator<Item = &str> + '_ {
         // TODO: Make this work properly with the refcell - since the inner data
         //       is cheaply clonable this should be relatively easy.
-        self.data.split('\0')
+        self.data
+            .split(|b| *b == 0)
+            .filter_map(|bytes| str::from_utf8(bytes).ok())
     }
 }

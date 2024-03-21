@@ -102,7 +102,6 @@ use std::{
     error::Error,
     fmt,
     io::{Read, Seek, SeekFrom},
-    rc::Rc,
 };
 
 use crate::server::world::{EntityError, EntityTypeDef};
@@ -547,6 +546,13 @@ impl ExecutionContext {
         self.call_stack.len()
     }
 
+    pub fn backtrace(&self) -> impl Iterator<Item = FunctionId> + '_ {
+        self.call_stack
+            .iter()
+            .rev()
+            .map(|StackFrame { func_id, .. }| *func_id)
+    }
+
     pub fn find_function_by_name<S: AsRef<str>>(
         &mut self,
         string_table: &StringTable,
@@ -565,6 +571,10 @@ impl ExecutionContext {
         globals: &mut Globals,
         f: FunctionId,
     ) -> Result<(), ProgsError> {
+        if f.0 == 0 {
+            return Ok(());
+        }
+
         let def = self.functions.get_def(f)?;
         debug!(
             "Calling QuakeC function {}",

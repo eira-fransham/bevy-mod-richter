@@ -433,7 +433,7 @@ pub fn register_commands(app: &mut App) {
     );
 
     #[derive(Parser)]
-    #[command(name = "name", about = "Flash the screen")]
+    #[command(name = "name", about = "Set the player name")]
     struct Name {
         new_name: String,
     }

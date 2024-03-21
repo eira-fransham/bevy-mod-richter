@@ -1174,7 +1174,7 @@ impl ClientState {
         // view entity may not have been spawned yet, so check
         // against both max_players and the current number of
         // entities
-        if entity_id > self.max_players || entity_id >= self.entities.len() {
+        if entity_id > self.max_players && entity_id >= self.entities.len() {
             Err(ClientError::InvalidViewEntity(entity_id))?;
         }
         self.view.set_entity_id(entity_id);

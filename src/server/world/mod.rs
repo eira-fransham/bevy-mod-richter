@@ -315,6 +315,7 @@ impl Entities {
             })
     }
 
+    // TODO: Filter by entities that have actually changed?
     pub fn diff<'a>(&'a self, last: &'a Entities) -> impl Iterator<Item = EntityId> + 'a {
         let mut cur_index = 0;
         self.slots
@@ -598,7 +599,11 @@ impl World {
                 "light" => {
                     // more fun hacks brought to you by Carmack & Friends
                     let def = self.find_def(&string_table, "light_lev")?;
-                    ent.put_float(&self.type_def, val.parse().unwrap(), def.offset as i16)?;
+                    ent.put_float(
+                        &self.type_def,
+                        val.trim().parse().unwrap(),
+                        def.offset as i16,
+                    )?;
                 }
 
                 k => {
