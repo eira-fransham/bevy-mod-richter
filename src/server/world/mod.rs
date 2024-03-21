@@ -18,7 +18,7 @@
 mod entity;
 pub mod phys;
 
-use std::{collections::HashSet, iter, ops::RangeBounds, slice::SliceIndex};
+use std::{collections::HashSet, iter, mem, ops::RangeBounds, slice::SliceIndex};
 
 use self::{
     entity::Entity,
@@ -193,13 +193,13 @@ struct AreaBranch {
 }
 
 #[derive(Debug, Clone)]
-pub struct AreaEntity {
+struct AreaEntity {
     entity: Entity,
     area_id: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
-pub enum AreaEntitySlot {
+enum AreaEntitySlot {
     Vacant,
     Occupied(AreaEntity),
 }
@@ -211,12 +211,13 @@ pub struct World {
 
     area_nodes: ArrayVec<AreaNode, NUM_AREA_NODES>,
     pub entities: Entities,
+    last_entities: Entities,
     models: Vec<Model>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Entities {
-    slots: Vec<AreaEntitySlot>,
+    slots: im::Vector<AreaEntitySlot>,
 }
 
 impl Entities {
@@ -227,10 +228,10 @@ impl Entities {
     /// This method panics if `entity_id` does not refer to a valid slot or if
     /// the slot is vacant.
     #[inline]
-    pub fn get(&self, entity_id: EntityId) -> &Entity {
-        match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant => panic!("no such entity: {:?}", entity_id),
-            AreaEntitySlot::Occupied(ref e) => &e.entity,
+    pub fn get(&self, entity_id: EntityId) -> Option<&Entity> {
+        match self.slots.get(entity_id.0)? {
+            AreaEntitySlot::Vacant => None,
+            AreaEntitySlot::Occupied(ref e) => Some(&e.entity),
         }
     }
 
@@ -268,6 +269,18 @@ impl Entities {
         }
     }
 
+    pub fn insert(&mut self, entity_id: EntityId, type_def: &EntityTypeDef) -> &mut Entity {
+        self.slots[entity_id.0] = AreaEntitySlot::Occupied(AreaEntity {
+            entity: Entity::new(type_def),
+            area_id: None,
+        });
+
+        match &mut self.slots[entity_id.0] {
+            AreaEntitySlot::Occupied(ent) => &mut ent.entity,
+            _ => unreachable!(),
+        }
+    }
+
     pub fn exists(&self, entity_id: EntityId) -> bool {
         matches!(self.slots[entity_id.0], AreaEntitySlot::Occupied(_))
     }
@@ -284,14 +297,14 @@ impl Entities {
         self.range(..)
     }
 
-    pub fn range<'a, R>(&'a self, range: R) -> impl Iterator<Item = EntityId> + 'a
+    pub fn range<R>(&self, range: R) -> impl Iterator<Item = EntityId> + '_
     where
-        R: SliceIndex<[AreaEntitySlot]>,
-        R::Output: AsRef<[AreaEntitySlot]> + 'a,
+        R: RangeBounds<usize>,
     {
-        self.slots[range]
-            .as_ref()
-            .iter()
+        self.slots
+            .focus()
+            .narrow(range)
+            .into_iter()
             .enumerate()
             .filter_map(|(id, slot)| {
                 if let &AreaEntitySlot::Occupied(_) = slot {
@@ -300,6 +313,20 @@ impl Entities {
                     None
                 }
             })
+    }
+
+    pub fn diff<'a>(&'a self, last: &'a Entities) -> impl Iterator<Item = EntityId> + 'a {
+        let mut cur_index = 0;
+        self.slots
+            .leaves()
+            .zip(last.slots.leaves())
+            .filter(|(cur, last)| cur.as_ptr() != last.as_ptr())
+            .map(move |(cur, _)| {
+                let out = (cur_index..cur_index + cur.len()).map(EntityId);
+                cur_index += cur.len();
+                out
+            })
+            .flatten()
     }
 
     fn find_vacant_slot(&self) -> Result<usize, ()> {
@@ -421,12 +448,24 @@ impl World {
         .chain(iter::repeat_n(AreaEntitySlot::Vacant, MAX_ENTITIES - 1))
         .collect();
 
+        let entities = Entities { slots };
+        let last_entities = entities.clone();
+
         Ok(World {
             area_nodes,
             type_def,
-            entities: Entities { slots },
+            last_entities,
+            entities,
             models,
         })
+    }
+
+    pub fn start_frame(&mut self) {
+        mem::swap(&mut self.entities, &mut self.last_entities);
+    }
+
+    pub fn diff(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.entities.diff(&self.last_entities)
     }
 
     pub fn add_model(
@@ -627,12 +666,9 @@ impl World {
         ent_id: EntityId,
         area_id: usize,
     ) -> Result<(), ProgsError> {
-        // if this entity has been removed or freed, do nothing
-        if let AreaEntitySlot::Vacant = self.entities.slots[ent_id.0] {
+        let Some(ent) = self.entities.get(ent_id) else {
             return Ok(());
-        }
-
-        let ent = self.entities.get(ent_id);
+        };
 
         'next_trigger: for trigger_id in self.area_nodes[area_id].triggers.iter().copied() {
             if trigger_id == ent_id {
@@ -640,7 +676,9 @@ impl World {
                 continue;
             }
 
-            let trigger = self.entities.get(trigger_id);
+            let Some(trigger) = self.entities.get(trigger_id) else {
+                continue;
+            };
 
             let trigger_touch = trigger.load(&self.type_def, FieldAddrFunctionId::Touch)?;
             if trigger_touch == FunctionId(0) || trigger.solid(&self.type_def)? == EntitySolid::Not
@@ -830,20 +868,26 @@ impl World {
         min: Vector3<f32>,
         max: Vector3<f32>,
     ) -> Result<(BspCollisionHull, Vector3<f32>), ProgsError> {
-        let solid = self.entities.get(e_id).solid(&self.type_def)?;
+        let solid = self.entities.get(e_id).unwrap().solid(&self.type_def)?;
         debug!("Entity solid type: {:?}", solid);
 
         match solid {
             EntitySolid::Bsp => {
-                if self.entities.get(e_id).move_kind(&self.type_def)? != MoveKind::Push {
+                if self.entities.get(e_id).unwrap().move_kind(&self.type_def)? != MoveKind::Push {
                     return Err(ProgsError::with_msg(format!(
                         "Brush entities must have MoveKind::Push (has {:?})",
-                        self.entities.get(e_id).move_kind(&self.type_def,)
+                        self.entities.get(e_id).unwrap().move_kind(&self.type_def,)
                     )));
                 }
 
                 let size = max - min;
-                match self.models[self.entities.get(e_id).model_index(&self.type_def)?].kind() {
+                match self.models[self
+                    .entities
+                    .get(e_id)
+                    .unwrap()
+                    .model_index(&self.type_def)?]
+                .kind()
+                {
                     ModelKind::Brush(bmodel) => {
                         let hull_index;
 
@@ -861,8 +905,8 @@ impl World {
 
                         let hull = bmodel.hull(hull_index).unwrap();
 
-                        let offset =
-                            hull.min() - min + self.entities.get(e_id).origin(&self.type_def)?;
+                        let offset = hull.min() - min
+                            + self.entities.get(e_id).unwrap().origin(&self.type_def)?;
 
                         Ok((hull, offset))
                     }
@@ -874,11 +918,11 @@ impl World {
 
             _ => {
                 let hull = BspCollisionHull::for_bounds(
-                    self.entities.get(e_id).min(&self.type_def)?,
-                    self.entities.get(e_id).max(&self.type_def)?,
+                    self.entities.get(e_id).unwrap().min(&self.type_def)?,
+                    self.entities.get(e_id).unwrap().max(&self.type_def)?,
                 )
                 .unwrap();
-                let offset = self.entities.get(e_id).origin(&self.type_def)?;
+                let offset = self.entities.get(e_id).unwrap().origin(&self.type_def)?;
 
                 Ok((hull, offset))
             }
@@ -972,7 +1016,7 @@ impl World {
                 }
             }
 
-            match self.entities.get(*touch).solid(&self.type_def)? {
+            match self.entities.get(*touch).unwrap().solid(&self.type_def)? {
                 // if the other entity has no collision, skip it
                 EntitySolid::Not => continue,
 
@@ -994,16 +1038,18 @@ impl World {
 
             // if bounding boxes never intersect, skip this entity
             for i in 0..3 {
-                if collide.move_min[i] > self.entities.get(*touch).abs_max(&self.type_def)?[i]
-                    || collide.move_max[i] < self.entities.get(*touch).abs_min(&self.type_def)?[i]
+                if collide.move_min[i]
+                    > self.entities.get(*touch).unwrap().abs_max(&self.type_def)?[i]
+                    || collide.move_max[i]
+                        < self.entities.get(*touch).unwrap().abs_min(&self.type_def)?[i]
                 {
                     continue;
                 }
             }
 
             if let Some(e) = collide.e_id {
-                if self.entities.get(e).size(&self.type_def)?[0] != 0.0
-                    && self.entities.get(*touch).size(&self.type_def)?[0] == 0.0
+                if self.entities.get(e).unwrap().size(&self.type_def)?[0] != 0.0
+                    && self.entities.get(*touch).unwrap().size(&self.type_def)?[0] == 0.0
                 {
                     continue;
                 }
@@ -1015,8 +1061,8 @@ impl World {
 
             if let Some(e) = collide.e_id {
                 // don't collide against owner or owned entities
-                if self.entities.get(*touch).owner(&self.type_def)? == e
-                    || self.entities.get(e).owner(&self.type_def)? == *touch
+                if self.entities.get(*touch).unwrap().owner(&self.type_def)? == e
+                    || self.entities.get(e).unwrap().owner(&self.type_def)? == *touch
                 {
                     continue;
                 }
@@ -1026,6 +1072,7 @@ impl World {
             let tmp_trace = if self
                 .entities
                 .get(*touch)
+                .unwrap()
                 .flags(&self.type_def)?
                 .contains(EntityFlags::MONSTER)
             {

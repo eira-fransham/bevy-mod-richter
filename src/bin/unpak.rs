@@ -25,21 +25,21 @@ use std::{
 
 use seismon::common::pak::Pak;
 
-use structopt::StructOpt;
+use clap::Parser;
 
 #[allow(dead_code)]
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 struct Opt {
-    #[structopt(short, long)]
+    #[arg(short, long)]
     verbose: bool,
 
-    #[structopt(long)]
+    #[arg(long)]
     version: bool,
 
-    #[structopt(name = "INPUT_PAK", parse(from_os_str))]
+    #[arg(name = "INPUT_PAK")]
     input_pak: PathBuf,
 
-    #[structopt(name = "OUTPUT_DIR", parse(from_os_str))]
+    #[arg(name = "OUTPUT_DIR")]
     output_dir: Option<PathBuf>,
 }
 
@@ -50,7 +50,7 @@ Released under the terms of the MIT License
 ";
 
 fn main() {
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
 
     if opt.version {
         println!("{}", VERSION);

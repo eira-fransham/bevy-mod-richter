@@ -26,9 +26,9 @@ impl Plugin for CapturePlugin {
         #[command(name = "startvideo", about = "Start recording a video")]
         struct StartVideo {
             path: Option<PathBuf>,
-            #[arg(short, long)]
+            #[arg(long)]
             width: Option<u32>,
-            #[arg(short, long)]
+            #[arg(long)]
             height: Option<u32>,
         }
 

@@ -70,7 +70,7 @@ fn cmd_map(
 
     // TODO: This should not be handled here, server and client should be decoupled
     commands.insert_resource(Connection::new_server());
-    commands.insert_resource(ConnectionState::SignOn(SignOnStage::Prespawn));
+    commands.insert_resource(ConnectionState::SignOn(SignOnStage::Not));
     *focus = InputFocus::Game;
 
     Ok(())

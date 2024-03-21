@@ -431,4 +431,19 @@ pub fn register_commands(app: &mut App) {
             default()
         },
     );
+
+    #[derive(Parser)]
+    #[command(name = "name", about = "Flash the screen")]
+    struct Name {
+        new_name: String,
+    }
+
+    app.command(
+        move |In(Name { new_name }), mut registry: ResMut<Registry>| -> ExecResult {
+            match registry.set_cvar_raw("_cl_name", new_name.into()) {
+                Ok(_) => default(),
+                Err(e) => format!("Error: {}", e).into(),
+            }
+        },
+    );
 }

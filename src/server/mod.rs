@@ -23,12 +23,7 @@ pub mod world;
 
 use crate::{
     common::{
-        console::Registry,
-        engine::{duration_from_f32, duration_to_f32},
-        math::Hyperplane,
-        model::Model,
-        parse,
-        vfs::Vfs,
+        console::Registry, engine::{duration_from_f32, duration_to_f32}, math::Hyperplane, model::Model, net::ServerCmd, parse, util::QString, vfs::Vfs
     },
     server::{
         progs::{functions::FunctionKind, GlobalAddrFunction},
@@ -53,10 +48,11 @@ use self::{
 };
 
 use arrayvec::ArrayVec;
-use bevy::{prelude::*, reflect::map_apply};
+use bevy::prelude::*;
 use bitflags::bitflags;
 use cgmath::{Deg, InnerSpace, Matrix3, Vector3, Zero};
 use chrono::Duration;
+use failure::bail;
 use hashbrown::HashMap;
 use num::FromPrimitive;
 use serde::Deserialize;
@@ -73,7 +69,11 @@ impl Plugin for SeismonServerPlugin {
             FixedUpdate,
             (
                 systems::recv_client_messages,
-                systems::server_spawn,
+                systems::server_spawn.pipe(|In(res)| {
+                    if let Err(e) = res {
+                        error!("Failed spawning server: {}", e);
+                    }
+                }),
                 systems::server_update,
             )
                 .run_if(resource_exists::<Session>),
@@ -81,6 +81,31 @@ impl Plugin for SeismonServerPlugin {
 
         commands::register_commands(app);
         cvars::register_cvars(app);
+    }
+}
+
+pub struct Client {
+    name: QString,
+    color: u8,
+    state: ClientState,
+}
+
+impl Default for Client {
+    fn default() -> Self {
+        Self {
+            name: "player".into(),
+            color: 0,
+            state: ClientState::Connecting,
+        }
+    }
+}
+
+impl Client {
+    pub fn entity(&self) -> Option<EntityId> {
+        match &self.state {
+            ClientState::Active(active) => Some(active.entity_id),
+            _ => None,
+        }
     }
 }
 
@@ -116,7 +141,7 @@ bitflags! {
 /// A fixed-size pool of client connections.
 pub struct ClientSlots {
     /// Occupied slots are `Some`.
-    slots: Vec<Option<ClientState>>,
+    slots: Vec<Option<Client>>,
 }
 
 impl ClientSlots {
@@ -128,16 +153,28 @@ impl ClientSlots {
         ClientSlots { slots }
     }
 
-    pub fn connected_clients(&self) -> impl Iterator<Item = &ClientState> {
+    pub fn connected_clients(&self) -> impl Iterator<Item = &Client> {
         self.slots.iter().filter_map(|v| v.as_ref())
+    }
+
+    pub fn active_clients(&self) -> impl Iterator<Item = &Client> {
+        self.connected_clients().filter(|c| matches!(c.state, ClientState::Active(_)))
     }
 
     /// Returns a reference to the client in a slot.
     ///
     /// If the slot is unoccupied, or if `id` is greater than `self.limit()`,
     /// returns `None`.
-    pub fn get(&self, id: usize) -> Option<&ClientState> {
+    pub fn get(&self, id: usize) -> Option<&Client> {
         self.slots.get(id)?.as_ref()
+    }
+
+    /// Returns a reference to the client in a slot.
+    ///
+    /// If the slot is unoccupied, or if `id` is greater than `self.limit()`,
+    /// returns `None`.
+    pub fn get_mut(&mut self, id: usize) -> Option<&mut Client> {
+        self.slots.get_mut(id)?.as_mut()
     }
 
     /// Returns the maximum number of simultaneous clients.
@@ -146,9 +183,9 @@ impl ClientSlots {
     }
 
     /// Finds an available connection slot for a new client.
-    pub fn find_available(&mut self) -> Option<&mut ClientState> {
+    pub fn find_available(&mut self) -> Option<&mut Client> {
         let slot = self.slots.iter_mut().find(|s| s.is_none())?;
-        Some(slot.insert(ClientState::Connecting))
+        Some(slot.insert(Client::default()))
     }
 }
 
@@ -166,8 +203,12 @@ impl SessionPersistent {
         }
     }
 
-    pub fn client(&self, slot: usize) -> Option<&ClientState> {
+    pub fn client(&self, slot: usize) -> Option<&Client> {
         self.client_slots.get(slot)
+    }
+
+    pub fn client_mut(&mut self, slot: usize) -> Option<&mut Client> {
+        self.client_slots.get_mut(slot)
     }
 }
 
@@ -214,8 +255,156 @@ impl Session {
     }
 
     #[inline]
-    pub fn client(&self, slot: usize) -> Option<&ClientState> {
+    pub fn client(&self, slot: usize) -> Option<&Client> {
         self.persist.client(slot)
+    }
+
+    #[inline]
+    pub fn client_mut(&mut self, slot: usize) -> Option<&mut Client> {
+        self.persist.client_mut(slot)
+    }
+
+    pub fn new_client(&mut self) -> Option<&mut Client> {
+        self.persist.client_slots.find_available()
+    }
+
+    pub fn spawn_baseline(&self, id: EntityId) -> Option<ServerCmd> {
+        let ent_id = id.into();
+
+        let ent = self.level.world.entities.get(id)?;
+
+            let (model_id, frame_id, colormap, skin_id, origin, angles) = (
+                ent.get_float(
+                    &self.level.world.type_def,
+                    FieldAddrFloat::ModelIndex as i16,
+                ).ok()? as _,
+                ent
+                    .get_float(&self.level.world.type_def, FieldAddrFloat::FrameId as i16).ok()?
+                    as _,
+                ent.get_float(
+                    &self.level.world.type_def,
+                    FieldAddrFloat::Colormap as i16,
+                ).ok()? as _,
+                ent
+                    .get_float(&self.level.world.type_def, FieldAddrFloat::SkinId as i16).ok()?
+                    as _,
+                ent
+                    .get_vector(&self.level.world.type_def, FieldAddrVector::Origin as i16).ok()?
+                    .into(),
+                ent
+                    .get_vector(&self.level.world.type_def, FieldAddrVector::Angles as i16).ok()?,
+            );
+
+            let angles: Vector3<f32> = angles.into();
+            let angles = angles.map(Deg);
+
+            Some(ServerCmd::SpawnBaseline {
+                ent_id,
+                model_id,
+                frame_id,
+                colormap,
+                skin_id,
+                origin,
+                angles,
+            })
+    }
+
+    pub fn clientcmd_prespawn(&self, slot: usize) -> Result<(), failure::Error> {
+        let Some(_client) = self.client(slot) else {
+            bail!("No such client {}", slot);
+        };
+
+        // TODO: Actually run prespawn routines
+
+        Ok(())
+    }
+
+    pub fn clientcmd_name(&mut self, slot: usize, name: QString) -> Result<(), failure::Error> {
+        let Some(client) = self.client_mut(slot) else {
+            bail!("No such client {}", slot);
+        };
+
+        client.name = name;
+
+        Ok(())
+    }
+
+    pub fn clientcmd_color(&mut self, slot: usize, color: u8) -> Result<(), failure::Error> {
+        let Some(client) = self.client_mut(slot) else {
+            bail!("No such client {}", slot);
+        };
+
+        client.color = color;
+
+        Ok(())
+    }
+
+    // TODO: Spawn parameters
+    pub fn clientcmd_spawn(&mut self, slot: usize) -> Result<(), failure::Error> {
+        let Some(_client) = self.client(slot) else {
+            bail!("No such client {}", slot);
+        };
+
+        // TODO: Actually run spawn routines
+
+        Ok(())
+    }
+
+    pub fn clientcmd_begin(
+        &mut self,
+        slot: usize,
+        mut registry: Mut<Registry>,
+        vfs: &Vfs,
+    ) -> Result<(), failure::Error> {
+        let client_entity = self.level.world.alloc_uninitialized()?;
+
+        let Some(client) = self.client_mut(slot) else {
+            bail!("No such client {}", slot);
+        };
+
+        // TODO: All players are currently privileged
+        client.state = ClientState::Active(ClientActive { privileged: true, entity_id: client_entity });
+
+        self.level
+            .world
+            .entities
+            .insert(client_entity, &self.level.world.type_def);
+
+        self.level
+            .globals
+            .store(GlobalAddrEntity::Self_, client_entity)?;
+        self.level
+            .globals
+            .store(GlobalAddrEntity::Other, EntityId(0))?;
+        self.level
+            .globals
+            .store(GlobalAddrFloat::Time, duration_to_f32(self.level.time))?;
+
+        let client_connect = self
+            .level
+            .globals
+            .function_id(GlobalAddrFunction::ClientConnect as i16)?;
+        self.level
+            .execute_program(client_connect, registry.reborrow(), vfs)?;
+
+        self.level
+            .globals
+            .store(GlobalAddrEntity::Self_, client_entity)?;
+        self.level
+            .globals
+            .store(GlobalAddrEntity::Other, EntityId(0))?;
+        self.level
+            .globals
+            .store(GlobalAddrFloat::Time, duration_to_f32(self.level.time))?;
+
+        let client_connect = self
+            .level
+            .globals
+            .function_id(GlobalAddrFunction::PutClientInServer as i16)?;
+        self.level
+            .execute_program(client_connect, registry.reborrow(), vfs)?;
+
+        Ok(())
     }
 
     pub fn precache_sound(&mut self, name_id: StringId) {
@@ -478,7 +667,7 @@ impl LevelState {
                             Random => self.globals.builtin_random()?,
                             Sound => unimplemented!(),
                             Normalize => unimplemented!(),
-                            Error => unimplemented!(),
+                            Error => error!("QuakeC error"),
                             ObjError => unimplemented!(),
                             VLen => self.globals.builtin_v_len()?,
                             VecToYaw => self.globals.builtin_vec_to_yaw()?,
@@ -765,13 +954,13 @@ impl LevelState {
         Ok(())
     }
 
-    pub fn physics(
+    pub fn start_frame(
         &mut self,
-        clients: &ClientSlots,
-        frame_time: Duration,
         mut registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
+        self.world.start_frame();
+
         self.globals.store(GlobalAddrEntity::Self_, EntityId(0))?;
         self.globals.store(GlobalAddrEntity::Other, EntityId(0))?;
         self.globals
@@ -781,6 +970,18 @@ impl LevelState {
             .globals
             .function_id(GlobalAddrFunction::StartFrame as i16)?;
         self.execute_program(start_frame, registry.reborrow(), vfs)?;
+
+        Ok(())
+    }
+
+    pub fn physics(
+        &mut self,
+        clients: &ClientSlots,
+        frame_time: Duration,
+        mut registry: Mut<Registry>,
+        vfs: &Vfs,
+    ) -> Result<(), ProgsError> {
+        self.start_frame(registry.reborrow(), vfs)?;
 
         // TODO: don't alloc
         let mut ent_ids = Vec::new();
@@ -815,10 +1016,11 @@ impl LevelState {
                     .world
                     .entities
                     .get(ent_id)
+                    .unwrap()
                     .move_kind(&self.world.type_def)?
                 {
                     MoveKind::Walk => {
-                        todo!("MoveKind::Walk");
+                        error!("TODO: MoveKind::Walk");
                     }
 
                     MoveKind::Push => {
@@ -834,7 +1036,7 @@ impl LevelState {
                     }
 
                     // all airborne entities have the same physics
-                    _ => unimplemented!(),
+                    _ => error!("TODO: Airborne physics"),
                 }
             }
 
@@ -849,7 +1051,6 @@ impl LevelState {
         Ok(())
     }
 
-    // TODO: rename arguments when implementing
     pub fn physics_player(
         &mut self,
         clients: &ClientSlots,
@@ -867,7 +1068,8 @@ impl LevelState {
 
         let ent = self.world.entities.get_mut(ent_id)?;
         ent.limit_velocity(&self.world.type_def, server_vars.max_velocity)?;
-        unimplemented!();
+        error!("TODO: Player physics not fully implemented");
+        Ok(())
     }
 
     pub fn physics_push(
@@ -913,7 +1115,9 @@ impl LevelState {
                 .put_entity_id(EntityId(0), GlobalAddrEntity::Other as i16)?;
 
             let think = ent.function_id(&self.world.type_def, FieldAddrFunctionId::Think as i16)?;
-            self.execute_program(think, registry, vfs)?;
+            // TODO: Sometimes causes runaway programs - disable for now to work on networking
+            // self.execute_program(think, registry, vfs)?;
+            error!("TODO: Execute think - sometimes causes runaway programs");
         }
 
         Ok(())
@@ -980,6 +1184,7 @@ impl LevelState {
             .world
             .entities
             .get(ent_id)
+            .unwrap()
             .flags(&self.world.type_def)?
             .intersects(EntityFlags::ON_GROUND | EntityFlags::FLY | EntityFlags::IN_WATER);
 
@@ -988,6 +1193,7 @@ impl LevelState {
                 .world
                 .entities
                 .get(ent_id)
+                .unwrap()
                 .load(&self.world.type_def, FieldAddrVector::Velocity)?
                 .into();
 
@@ -1078,6 +1284,7 @@ impl LevelState {
             .world
             .entities
             .get(ent_id)
+            .unwrap()
             .velocity(&self.world.type_def)?;
         let mut trace_velocity = init_velocity;
 
@@ -1089,6 +1296,7 @@ impl LevelState {
                 .world
                 .entities
                 .get(ent_id)
+                .unwrap()
                 .velocity(&self.world.type_def)?;
 
             if velocity.is_zero() {
@@ -1100,10 +1308,21 @@ impl LevelState {
                 .world
                 .entities
                 .get(ent_id)
+                .unwrap()
                 .origin(&self.world.type_def)?;
             let end = orig + sim_time_f * velocity;
-            let min = self.world.entities.get(ent_id).min(&self.world.type_def)?;
-            let max = self.world.entities.get(ent_id).max(&self.world.type_def)?;
+            let min = self
+                .world
+                .entities
+                .get(ent_id)
+                .unwrap()
+                .min(&self.world.type_def)?;
+            let max = self
+                .world
+                .entities
+                .get(ent_id)
+                .unwrap()
+                .max(&self.world.type_def)?;
 
             let (trace, hit_entity) =
                 self.world
@@ -1133,6 +1352,7 @@ impl LevelState {
                     .world
                     .entities
                     .get(ent_id)
+                    .unwrap()
                     .velocity(&self.world.type_def)?;
             }
 
@@ -1157,6 +1377,7 @@ impl LevelState {
                     .world
                     .entities
                     .get(hit_entity)
+                    .unwrap()
                     .solid(&self.world.type_def)?
                     == EntitySolid::Bsp
                 {
@@ -1253,11 +1474,22 @@ impl LevelState {
             .world
             .entities
             .get(ent_id)
+            .unwrap()
             .origin(&self.world.type_def)?;
 
         let end = Vector3::new(origin.x, origin.y, origin.z - Self::DROP_TO_FLOOR_DIST);
-        let min = self.world.entities.get(ent_id).min(&self.world.type_def)?;
-        let max = self.world.entities.get(ent_id).max(&self.world.type_def)?;
+        let min = self
+            .world
+            .entities
+            .get(ent_id)
+            .unwrap()
+            .min(&self.world.type_def)?;
+        let max = self
+            .world
+            .entities
+            .get(ent_id)
+            .unwrap()
+            .max(&self.world.type_def)?;
 
         let (trace, collide_entity) =
             self.world
@@ -1312,6 +1544,7 @@ impl LevelState {
                 .world
                 .entities
                 .get(trigger_id)
+                .unwrap()
                 .load(&self.world.type_def, FieldAddrFunctionId::Touch)?;
 
             self.globals.store(GlobalAddrEntity::Self_, trigger_id)?;
@@ -1345,8 +1578,14 @@ impl LevelState {
             .world
             .entities
             .get(ent_a)
+            .unwrap()
             .load(&self.world.type_def, FieldAddrFunctionId::Touch)?;
-        let solid_a = self.world.entities.get(ent_a).solid(&self.world.type_def)?;
+        let solid_a = self
+            .world
+            .entities
+            .get(ent_a)
+            .unwrap()
+            .solid(&self.world.type_def)?;
         if touch_a.0 != 0 && solid_a != EntitySolid::Not {
             self.globals.store(GlobalAddrEntity::Self_, ent_a)?;
             self.globals.store(GlobalAddrEntity::Other, ent_b)?;
@@ -1358,8 +1597,14 @@ impl LevelState {
             .world
             .entities
             .get(ent_b)
+            .unwrap()
             .load(&self.world.type_def, FieldAddrFunctionId::Touch)?;
-        let solid_b = self.world.entities.get(ent_b).solid(&self.world.type_def)?;
+        let solid_b = self
+            .world
+            .entities
+            .get(ent_b)
+            .unwrap()
+            .solid(&self.world.type_def)?;
         if touch_b.0 != 0 && solid_b != EntitySolid::Not {
             self.globals.store(GlobalAddrEntity::Self_, ent_b)?;
             self.globals.store(GlobalAddrEntity::Other, ent_a)?;
@@ -1401,6 +1646,7 @@ impl LevelState {
             .world
             .entities
             .get(ent_id)
+            .unwrap()
             .get_float(&self.world.type_def, fld_ofs.0 as i16)?;
         self.globals.put_float(f, dest_ofs)?;
 
@@ -1420,6 +1666,7 @@ impl LevelState {
             .world
             .entities
             .get(ent_id)
+            .unwrap()
             .get_vector(&self.world.type_def, ent_vector.0 as i16)?;
         self.globals.put_vector(v, dest_addr)?;
 
@@ -1438,6 +1685,7 @@ impl LevelState {
             .world
             .entities
             .get(ent_id)
+            .unwrap()
             .string_id(&self.world.type_def, ent_string_id.0 as i16)?;
         self.globals.put_string_id(s, dest_addr)?;
 
@@ -1456,6 +1704,7 @@ impl LevelState {
             .world
             .entities
             .get(ent_id)
+            .unwrap()
             .entity_id(&self.world.type_def, ent_entity_id.0 as i16)?;
         self.globals.put_entity_id(e, dest_addr)?;
 
@@ -1474,6 +1723,7 @@ impl LevelState {
             .world
             .entities
             .get(ent_id)
+            .unwrap()
             .function_id(&self.world.type_def, fnc_function_id.0 as i16)?;
         self.globals.put_function_id(f, dest_addr)?;
 
@@ -1847,6 +2097,7 @@ impl LevelState {
                 .world
                 .entities
                 .get(ent)
+                .unwrap()
                 .load(&self.world.type_def, field)
             else {
                 continue;
@@ -1881,6 +2132,7 @@ impl LevelState {
             .world
             .entities
             .get(this)
+            .unwrap()
             .velocity(&self.world.type_def)
             .unwrap();
         self.world.entities.get_mut(this).unwrap().set_velocity(
@@ -1909,21 +2161,120 @@ impl LevelState {
 }
 
 pub mod systems {
-    use crate::common::net::{
-        self, ClientCmd, ClientMessage, GameType, ServerCmd, ServerMessage, SignOnStage,
+    use crate::common::{
+        console::{CmdName, RunCmd},
+        net::{
+            self, ClientCmd, ClientMessage, EntityUpdate, GameType, ServerCmd, ServerMessage,
+            SignOnStage,
+        },
     };
 
     use super::*;
 
     pub fn recv_client_messages(
-        mut _server: ResMut<Session>,
+        mut server: ResMut<Session>,
         mut client_msgs: EventReader<ClientMessage>,
+        mut server_messages: EventWriter<ServerMessage>,
+        mut registry: ResMut<Registry>,
+        vfs: Res<Vfs>,
     ) {
+        let mut out_packet = Vec::new();
         for msg in client_msgs.read() {
             let mut packet = &msg.packet[..];
             loop {
-                let _cmd = match ClientCmd::deserialize(&mut packet) {
-                    Ok(Some(cmd)) => cmd,
+                // TODO: Should this be handled by the registry too?
+                match ClientCmd::deserialize(&mut packet) {
+                    Ok(Some(cmd)) => match cmd {
+                        ClientCmd::StringCmd { cmd } => {
+                            let Ok(cmds) = RunCmd::parse_many(&cmd) else {
+                                continue;
+                            };
+                            for RunCmd(CmdName { name, trigger }, args) in dbg!(cmds) {
+                                if trigger.is_some() {
+                                    error!("TODO: Action in `ClientCmd` - currently we only handle network-related cmds");
+                                    continue;
+                                }
+
+                                match &*name {
+                                    "prespawn" => {
+                                        // TODO: Error handling
+                                        assert!(args.is_empty());
+
+                                        server.clientcmd_prespawn(0).unwrap();
+
+                                        ServerCmd::SignOnStage {
+                                            stage: SignOnStage::ClientInfo,
+                                        }
+                                        .serialize(&mut out_packet)
+                                        .unwrap();
+                                    }
+                                    "name" => {
+                                        // TODO: Error handling
+                                        assert!(args.len() == 1);
+
+                                        // TODO: Hard-coded slot 0 - need to have better handling of multiple clients
+                                        server
+                                            .clientcmd_name(
+                                                0,
+                                                args.into_iter().next().unwrap().to_owned().into(),
+                                            )
+                                            .unwrap();
+                                    }
+                                    "color" => {
+                                        assert!(args.len() == 2);
+
+                                        error!("TODO: Set color");
+                                    }
+                                    "spawn" => {
+                                        server.clientcmd_spawn(0).unwrap();
+
+                                        ServerCmd::SignOnStage {
+                                            stage: SignOnStage::Begin,
+                                        }
+                                        .serialize(&mut out_packet)
+                                        .unwrap();
+                                    }
+                                    "begin" => {
+                                        // TODO: Error handling
+                                        assert!(args.is_empty());
+
+                                        server
+                                            .clientcmd_begin(0, registry.reborrow(), &*vfs)
+                                            .unwrap();
+
+                                        let client_ent = server.client(0).unwrap().entity().unwrap();
+
+                                        server.spawn_baseline(client_ent).unwrap().serialize(&mut out_packet).unwrap();
+
+                                        // TODO: Error handling
+                                        ServerCmd::SetView {
+                                            ent_id: client_ent.0 as _,
+                                        }
+                                        .serialize(&mut out_packet)
+                                        .unwrap();
+
+                                        ServerCmd::SignOnStage {
+                                            stage: SignOnStage::Done,
+                                        }
+                                        .serialize(&mut out_packet)
+                                        .unwrap();
+                                    }
+                                    other => {
+                                        error!(
+                                            "{}: command unrecognized in connection scope",
+                                            other
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        other @ ClientCmd::Move { .. } => {
+                            info!("TODO: Unimplemented command {:?}", other);
+                        }
+                        other => {
+                            warn!("TODO: Unimplemented command {:?}", other);
+                        }
+                    },
                     Ok(None) => break,
                     Err(e) => {
                         error!("{}", e);
@@ -1931,6 +2282,10 @@ pub mod systems {
                     }
                 };
             }
+        }
+
+        if !out_packet.is_empty() {
+            server_messages.send(ServerMessage(out_packet));
         }
     }
 
@@ -1940,39 +2295,28 @@ pub mod systems {
         mut server_messages: EventWriter<ServerMessage>,
         time: Res<Time<Virtual>>,
         vfs: Res<Vfs>,
-    ) {
+    ) -> Result<(), failure::Error> {
         if !server.loading() {
-            return;
+            return Ok(());
         }
 
-        let start_frame = server
-            .level
-            .globals
-            .function_id(GlobalAddrFunction::StartFrame as i16)
-            .unwrap();
-        server
-            .level
-            .execute_program(start_frame, registry.reborrow(), &*vfs)
-            .unwrap();
+        server.level.start_frame(registry.reborrow(), &*vfs)?;
 
         // In `sv_init.c` there is a comment saying to run physics twice before starting the server
         // properly to "allow everything to settle".
         for _ in 0..2 {
             let server = &mut *server;
-            server
-                .level
-                .physics(
-                    &server.persist.client_slots,
-                    Duration::from_std(time.elapsed()).unwrap(),
-                    registry.reborrow(),
-                    &*vfs,
-                )
-                .unwrap();
+            server.level.physics(
+                &server.persist.client_slots,
+                Duration::from_std(time.elapsed())?,
+                registry.reborrow(),
+                &*vfs,
+            )?;
         }
 
         server.state = SessionState::Active;
 
-        let teamplay = registry.read_cvar::<u8>("teamplay").unwrap();
+        let teamplay = registry.read_cvar::<u8>("teamplay")?;
 
         let game_type = match teamplay {
             0 => GameType::Deathmatch,
@@ -1986,7 +2330,7 @@ pub mod systems {
             protocol_version: net::PROTOCOL_VERSION as _,
             max_clients: server.max_clients() as _,
             game_type,
-            message: "Hello, world!".into(),
+            message: "Seismon server".into(),
             model_precache: server
                 .level
                 .model_precache
@@ -2000,76 +2344,10 @@ pub mod systems {
                 .map(ToOwned::to_owned)
                 .collect(),
         }
-        .serialize(&mut packet)
-        .unwrap();
+        .serialize(&mut packet)?;
 
         for ent in server.level.world.entities.iter() {
-            let (ent_id, model_id, frame_id, colormap, skin_id, origin, angles) = (
-                ent.into(),
-                server
-                    .level
-                    .world
-                    .entities
-                    .get(ent)
-                    .get_float(
-                        &server.level.world.type_def,
-                        FieldAddrFloat::ModelIndex as i16,
-                    )
-                    .unwrap() as _,
-                server
-                    .level
-                    .world
-                    .entities
-                    .get(ent)
-                    .get_float(&server.level.world.type_def, FieldAddrFloat::FrameId as i16)
-                    .unwrap() as _,
-                server
-                    .level
-                    .world
-                    .entities
-                    .get(ent)
-                    .get_float(
-                        &server.level.world.type_def,
-                        FieldAddrFloat::Colormap as i16,
-                    )
-                    .unwrap() as _,
-                server
-                    .level
-                    .world
-                    .entities
-                    .get(ent)
-                    .get_float(&server.level.world.type_def, FieldAddrFloat::SkinId as i16)
-                    .unwrap() as _,
-                server
-                    .level
-                    .world
-                    .entities
-                    .get(ent)
-                    .get_vector(&server.level.world.type_def, FieldAddrVector::Origin as i16)
-                    .unwrap()
-                    .into(),
-                server
-                    .level
-                    .world
-                    .entities
-                    .get(ent)
-                    .get_vector(&server.level.world.type_def, FieldAddrVector::Angles as i16)
-                    .unwrap(),
-            );
-
-            let angles: Vector3<f32> = angles.into();
-            let angles = angles.map(Deg);
-            ServerCmd::SpawnBaseline {
-                ent_id,
-                model_id,
-                frame_id,
-                colormap,
-                skin_id,
-                origin,
-                angles,
-            }
-            .serialize(&mut packet)
-            .unwrap();
+            server.spawn_baseline(ent).unwrap().serialize(&mut packet)?;
         }
 
         for (id, style) in server.level.lightstyles.iter().enumerate() {
@@ -2082,17 +2360,20 @@ pub mod systems {
                     .map(ToOwned::to_owned)
                     .unwrap_or_default(),
             }
-            .serialize(&mut packet)
-            .unwrap();
+            .serialize(&mut packet)?;
         }
 
         ServerCmd::SignOnStage {
-            stage: SignOnStage::Done,
+            stage: SignOnStage::Prespawn,
         }
-        .serialize(&mut packet)
-        .unwrap();
+        .serialize(&mut packet)?;
+
+        // TODO: Handle this with QC
+        server.new_client().unwrap();
 
         server_messages.send(ServerMessage(packet));
+
+        Ok(())
     }
 
     pub fn server_update(
@@ -2102,12 +2383,12 @@ pub mod systems {
         vfs: Res<Vfs>,
     ) {
         if registry.read_cvar::<u8>("sv_paused").unwrap() != 0
-            || server.persist.client_slots.connected_clients().count() == 0
+            || server.persist.client_slots.active_clients().count() == 0
         {
             return;
         }
 
-        match &mut *server {
+        let send_diff = match &mut *server {
             Session {
                 persist,
                 state: SessionState::Active,
@@ -2121,8 +2402,99 @@ pub mod systems {
                         &*vfs,
                     )
                     .unwrap();
+                true
             }
-            _ => {}
+            _ => false,
+        };
+
+        if send_diff {
+            let mut packet = Vec::new();
+            for ent in server.level.world.diff() {
+                // TODO: Handle deletions
+                if server.level.world.entities.try_get(ent).is_err() {
+                    continue;
+                }
+
+                let (ent_id, model_id, frame_id, colormap, skin_id, origin, angles) = (
+                    ent.into(),
+                    server
+                        .level
+                        .world
+                        .entities
+                        .get(ent)
+                        .unwrap()
+                        .get_float(
+                            &server.level.world.type_def,
+                            FieldAddrFloat::ModelIndex as i16,
+                        )
+                        .unwrap() as _,
+                    server
+                        .level
+                        .world
+                        .entities
+                        .get(ent)
+                        .unwrap()
+                        .get_float(&server.level.world.type_def, FieldAddrFloat::FrameId as i16)
+                        .unwrap() as _,
+                    server
+                        .level
+                        .world
+                        .entities
+                        .get(ent)
+                        .unwrap()
+                        .get_float(
+                            &server.level.world.type_def,
+                            FieldAddrFloat::Colormap as i16,
+                        )
+                        .unwrap() as _,
+                    server
+                        .level
+                        .world
+                        .entities
+                        .get(ent)
+                        .unwrap()
+                        .get_float(&server.level.world.type_def, FieldAddrFloat::SkinId as i16)
+                        .unwrap() as _,
+                    server
+                        .level
+                        .world
+                        .entities
+                        .get(ent)
+                        .unwrap()
+                        .get_vector(&server.level.world.type_def, FieldAddrVector::Origin as i16)
+                        .unwrap(),
+                    server
+                        .level
+                        .world
+                        .entities
+                        .get(ent)
+                        .unwrap()
+                        .get_vector(&server.level.world.type_def, FieldAddrVector::Angles as i16)
+                        .unwrap(),
+                );
+
+                let angles: Vector3<f32> = angles.into();
+                let angles = angles.map(Deg);
+                ServerCmd::FastUpdate(EntityUpdate {
+                    ent_id,
+                    model_id: Some(model_id),
+                    frame_id: Some(frame_id),
+                    colormap: Some(colormap),
+                    skin_id: Some(skin_id),
+                    effects: None,
+                    origin_x: Some(origin[0]),
+                    origin_y: Some(origin[1]),
+                    origin_z: Some(origin[2]),
+                    pitch: Some(angles[0]),
+                    yaw: Some(angles[1]),
+                    roll: Some(angles[2]),
+                    no_lerp: false,
+                })
+                .serialize(&mut packet)
+                .unwrap();
+
+                // server_messages.send(ServerMessage(packet));
+            }
         }
     }
 }

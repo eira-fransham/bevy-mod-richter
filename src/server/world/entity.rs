@@ -31,7 +31,6 @@ use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use cgmath::Vector3;
 use chrono::Duration;
-use im::Vector;
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 use parking_lot::Mutex;
@@ -469,7 +468,7 @@ pub enum EntitySolid {
 
 #[derive(Debug, Clone)]
 pub struct Entity {
-    addrs: Vector<[u8; 4]>,
+    addrs: im::Vector<[u8; 4]>,
 
     pub leaf_count: usize,
     pub leaf_ids: [usize; MAX_ENT_LEAVES],

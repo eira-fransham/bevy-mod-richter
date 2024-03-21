@@ -1400,7 +1400,7 @@ impl Cvar {
         self
     }
 
-    fn value(&self) -> &Value {
+    pub fn value(&self) -> &Value {
         self.value.as_ref().unwrap_or(&self.default)
     }
 }
@@ -2376,7 +2376,7 @@ mod systems {
                                             Value::String(new_value.clone().into())
                                         });
 
-                                    if cvar.value.as_ref().unwrap_or(&cvar.default) != &new_value {
+                                    if cvar.value() != &new_value {
                                         if let Some(on_set) = on_set {
                                             changed_cvars
                                                 .push((EqHack(on_set.clone()), new_value.clone()));

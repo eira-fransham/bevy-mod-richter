@@ -37,9 +37,7 @@ use self::{
     sound::{MixerEvent, SeismonSoundPlugin},
 };
 
-use std::{
-    collections::VecDeque, io::BufReader, iter, mem, net::ToSocketAddrs, ops::Range, path::PathBuf,
-};
+use std::{io::BufReader, iter, mem, net::ToSocketAddrs, ops::Range, path::PathBuf};
 
 use crate::{
     client::{
@@ -64,6 +62,7 @@ use crate::{
         util::QString,
         vfs::{Vfs, VfsError},
     },
+    server::Client,
 };
 use cgmath::{Deg, Vector3};
 
@@ -410,6 +409,12 @@ impl ConnectionKind {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ClientVars<'a> {
+    pub name: &'a str,
+    pub color: u8,
+}
+
 /// A connection to a game server of some kind.
 ///
 /// The exact nature of the connected server is specified by [`ConnectionKind`].
@@ -482,6 +487,7 @@ impl Connection {
 
     fn handle_signon(
         &mut self,
+        client_vars: &ClientVars,
         mut state: Mut<ConnectionState>,
         new_stage: SignOnStage,
     ) -> Result<(), ClientError> {
@@ -505,11 +511,15 @@ impl Connection {
                         ClientInfo => {
                             // TODO: fill in client info here
                             ClientCmd::StringCmd {
-                                cmd: format!("name \"{}\"\n", "UNNAMED"),
+                                cmd: format!("name \"{}\"\n", &client_vars.name),
                             }
                             .serialize(compose)?;
                             ClientCmd::StringCmd {
-                                cmd: format!("color {} {}", 0, 0),
+                                cmd: format!(
+                                    "color {} {}",
+                                    client_vars.color >> 4,
+                                    client_vars.color & ((1 << 4) - 1)
+                                ),
                             }
                             .serialize(compose)?;
                             // TODO: need default spawn parameters?
@@ -563,6 +573,7 @@ impl Connection {
         mixer_events: &mut EventWriter<MixerEvent>,
         mut console_output: Mut<ConsoleOutput>,
         kick_vars: KickVars,
+        client_vars: ClientVars,
     ) -> Result<ConnectionStatus, ClientError> {
         use ConnectionStatus::*;
 
@@ -601,10 +612,7 @@ impl Connection {
                 Ok(Some(cmd)) => cmd,
                 Ok(None) => break,
             };
-            match cmd {
-                // TODO: have an error for this instead of panicking
-                // once all other commands have placeholder handlers, just error
-                // in the wildcard branch
+            match dbg!(cmd) {
                 ServerCmd::Bad => {
                     warn!("Invalid command from server")
                 }
@@ -646,7 +654,7 @@ impl Connection {
 
                 ServerCmd::FastUpdate(ent_update) => {
                     // first update signals the last sign-on stage
-                    self.handle_signon(state.reborrow(), SignOnStage::Done)?;
+                    self.handle_signon(&client_vars, state.reborrow(), SignOnStage::Done)?;
 
                     let ent_id = ent_update.ent_id as usize;
                     self.state.update_entity(ent_id, ent_update)?;
@@ -746,7 +754,7 @@ impl Connection {
                 }
 
                 ServerCmd::SignOnStage { stage } => {
-                    self.handle_signon(state.reborrow(), stage)?;
+                    self.handle_signon(&client_vars, state.reborrow(), stage)?;
                 }
 
                 ServerCmd::Sound {
@@ -989,6 +997,7 @@ impl Connection {
         kick_vars: KickVars,
         roll_vars: RollVars,
         bob_vars: BobVars,
+        client_vars: ClientVars,
         cl_nolerp: bool,
         sv_gravity: f32,
     ) -> Result<ConnectionStatus, ClientError> {
@@ -1007,6 +1016,7 @@ impl Connection {
             mixer_events,
             console.reborrow(),
             kick_vars,
+            client_vars,
         )? {
             ConnectionStatus::Maintain => {}
             // if Disconnect or NextDemo, delegate up the chain
@@ -1277,6 +1287,17 @@ mod systems {
         let bob_vars: BobVars = cvars
             .read_cvars()
             .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
+        // `serde_lexpr` doesn't allow us to configure deserialising strings and doesn't recognise symbols
+        // as valid strings, so we need to use `.value().as_name()` and can't use `read_cvars`.
+        let client_vars: ClientVars = ClientVars {
+            name: cvars
+                .get_cvar("_cl_name")
+                .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?
+                .value()
+                .as_name()
+                .unwrap_or("player"),
+            color: cvars.read_cvar("_cl_color")?,
+        };
 
         let status = match conn.as_deref_mut() {
             Some(ref mut conn) => conn.frame(
@@ -1296,6 +1317,7 @@ mod systems {
                 kick_vars,
                 roll_vars,
                 bob_vars,
+                client_vars,
                 disable_lerp != 0.,
                 gravity,
             )?,

@@ -21,6 +21,7 @@ use crate::server::progs::{
     EntityId, FieldAddr, FunctionId, GlobalDef, StringId, StringTable, Type,
 };
 
+use bevy::log::error;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use cgmath::{Deg, Euler, InnerSpace, Matrix3, Vector3};
 use num_derive::FromPrimitive;
@@ -254,7 +255,11 @@ impl Globals {
                 {
                     Ok(())
                 } else {
-                    Err(GlobalsError::with_msg("type check failed"))
+                    // Err(GlobalsError::with_msg("type check failed"))
+                    // TODO: QuakeC almost certainly does type punning, so we probably don't want to
+                    //       completely error out.
+                    error!("Type check failed!");
+                    Ok(())
                 }
             }
             None => Ok(()),
