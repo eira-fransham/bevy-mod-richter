@@ -64,10 +64,14 @@ use failure::bail;
 use hashbrown::HashMap;
 use num::FromPrimitive;
 use serde::Deserialize;
-use snafu::Report;
+use snafu::{Backtrace, Report};
 
 const MAX_DATAGRAM: usize = 1024;
 const MAX_LIGHTSTYLES: usize = 64;
+
+// macro_rules! debug {
+//     ($($val:tt)*) => { error!($($val)*) }
+// }
 
 #[derive(Default, Copy, Clone)]
 pub struct SeismonServerPlugin;
@@ -78,6 +82,7 @@ impl Plugin for SeismonServerPlugin {
             FixedUpdate,
             (
                 systems::recv_client_messages,
+                systems::server_update,
                 systems::server_spawn.pipe(
                     |In(res), mut commands: Commands, mut runcmd: EventWriter<RunCmd<'static>>| {
                         if let Err(e) = res {
@@ -87,7 +92,6 @@ impl Plugin for SeismonServerPlugin {
                         }
                     },
                 ),
-                systems::server_update,
             )
                 .run_if(resource_exists::<Session>),
         );
@@ -628,9 +632,16 @@ impl LevelState {
 
             if runaway == 0 {
                 for (depth, id) in self.cx.backtrace().enumerate() {
-                    println!("{}: {:?}", depth, id);
+                    let def = self.cx.function_def(id).unwrap();
+
+                    let name_id = def.name_id;
+                    let name = self.string_table.get(name_id).unwrap();
+
+                    println!("{}: {} - {:?}", depth, name, def.kind);
                 }
-                return Err(ProgsError::LocalStackOverflow);
+                return Err(ProgsError::LocalStackOverflow {
+                    backtrace: Backtrace::capture(),
+                });
             }
 
             let statement = self.cx.load_statement();
@@ -670,17 +681,15 @@ impl LevelState {
                 }
 
                 Call0 | Call1 | Call2 | Call3 | Call4 | Call5 | Call6 | Call7 | Call8 => {
-                    // TODO: pass to equivalent of PF_VarString
-                    let _arg_count = op as usize - Opcode::Call0 as usize;
-
                     let f_to_call = self.globals.function_id(a)?;
+
                     if f_to_call.0 == 0 {
-                        panic!("NULL function");
+                        return Err(ProgsError::with_msg("NULL function"));
                     }
 
-                    let def = self.cx.function_def(f_to_call)?;
-                    let name_id = def.name_id;
-                    let name = &self.string_table.get(name_id).unwrap().to_owned();
+                    let Ok(def) = self.cx.function_def(f_to_call) else {
+                        return Err(ProgsError::with_msg("NULL function"));
+                    };
 
                     macro_rules! todo_builtin {
                         ($id:ident) => {
@@ -688,7 +697,13 @@ impl LevelState {
                         };
                     }
 
-                    debug!("Calling function {} ({:?})", name, f_to_call);
+                    let name_id = def.name_id;
+
+                    debug!(
+                        "Calling function {} ({:?})",
+                        self.string_table.get(name_id).unwrap(),
+                        f_to_call
+                    );
 
                     if let FunctionKind::BuiltIn(b) = def.kind {
                         use progs::functions::BuiltinFunctionId::*;
@@ -701,8 +716,14 @@ impl LevelState {
                             Random => self.globals.builtin_random()?,
                             Sound => todo_builtin!(Sound),
                             Normalize => todo_builtin!(Normalize),
-                            Error => error!("QuakeC error"),
-                            ObjError => todo_builtin!(ObjError),
+                            Error => {
+                                todo_builtin!(Error);
+                                return Ok(());
+                            }
+                            ObjError => {
+                                todo_builtin!(ObjError);
+                                return Ok(());
+                            }
                             VLen => self.globals.builtin_v_len()?,
                             VecToYaw => self.globals.builtin_vec_to_yaw()?,
                             Spawn => self.builtin_spawn(registry.reborrow(), vfs)?,
@@ -760,7 +781,10 @@ impl LevelState {
                             PrecacheFile2 => todo_builtin!(PrecacheFile2),
                             SetSpawnArgs => todo_builtin!(SetSpawnArgs),
                         }
-                        debug!("Returning from built-in function {}", name);
+                        debug!(
+                            "Returning from built-in function {}",
+                            self.string_table.get(name_id).unwrap()
+                        );
                     } else {
                         self.cx
                             .enter_function(&self.string_table, &mut self.globals, f_to_call)?;
@@ -996,6 +1020,8 @@ impl LevelState {
         mut registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
+        self.cx.reset();
+
         self.globals.store(GlobalAddrEntity::Self_, EntityId(0))?;
         self.globals.store(GlobalAddrEntity::Other, EntityId(0))?;
         self.globals
@@ -1018,16 +1044,11 @@ impl LevelState {
     ) -> Result<(), ProgsError> {
         self.start_frame(registry.reborrow(), vfs)?;
 
-        // TODO: don't alloc
-        let mut ent_ids = Vec::new();
-
-        self.world.entities.list(&mut ent_ids);
-
         let server_vars = registry
             .read_cvars::<ServerVars>()
             .ok_or_else(|| ProgsError::with_msg(format!("Failed to read server cvars")))?;
 
-        for ent_id in ent_ids {
+        for ent_id in self.world.entities.list() {
             if self.globals.load(GlobalAddrFloat::ForceRetouch)? != 0.0 {
                 // Force all entities to touch triggers, even if they didn't
                 // move. This is required when e.g. creating new triggers, as
@@ -1054,7 +1075,7 @@ impl LevelState {
                     .move_kind(&self.world.type_def)?
                 {
                     MoveKind::Walk => {
-                        error!("TODO: MoveKind::Walk");
+                        debug!("TODO: MoveKind::Walk");
                     }
 
                     MoveKind::Push => {
@@ -1070,7 +1091,7 @@ impl LevelState {
                     }
 
                     // all airborne entities have the same physics
-                    _ => error!("TODO: Airborne physics"),
+                    _ => debug!("TODO: Airborne physics"),
                 }
             }
 
@@ -1102,7 +1123,7 @@ impl LevelState {
 
         let ent = self.world.entities.get_mut(ent_id)?;
         ent.limit_velocity(&self.world.type_def, server_vars.max_velocity)?;
-        error!("TODO: Player physics not fully implemented");
+        debug!("TODO: Player physics not fully implemented");
         Ok(())
     }
 
@@ -1152,10 +1173,7 @@ impl LevelState {
             self.globals
                 .put_entity_id(EntityId(0), GlobalAddrEntity::Other as i16)?;
 
-            let think = ent.function_id(&self.world.type_def, FieldAddrFunctionId::Think as i16)?;
-            // TODO: Sometimes causes runaway programs - disable for now to work on networking
-            // self.execute_program(think, registry, vfs)?;
-            error!("TODO: Execute think - sometimes causes runaway programs");
+            self.think(ent_id, frame_time, registry, vfs)?;
         }
 
         Ok(())
@@ -1168,37 +1186,62 @@ impl LevelState {
         registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
-        // Let entity think, then move if it didn't remove itself.
-        self.think(ent_id, frame_time, registry, vfs)?;
+        let ent = self.world.entities.get_mut(ent_id)?;
 
-        if let Ok(ent) = self.world.entities.get_mut(ent_id) {
-            let frame_time_f = duration_to_f32(frame_time);
+        let frame_time_f = duration_to_f32(frame_time);
 
-            let angles: Vector3<f32> = ent
-                .load(&self.world.type_def, FieldAddrVector::Angles)?
-                .into();
-            let angle_vel: Vector3<f32> = ent
-                .load(&self.world.type_def, FieldAddrVector::AngularVelocity)?
-                .into();
-            let new_angles = angles + frame_time_f * angle_vel;
+        let angles: Vector3<f32> = ent
+            .load(&self.world.type_def, FieldAddrVector::Angles)?
+            .into();
+        let angle_vel: Vector3<f32> = ent
+            .load(&self.world.type_def, FieldAddrVector::AngularVelocity)?
+            .into();
+        let new_angles = angles + frame_time_f * angle_vel;
+        ent.store(
+            &self.world.type_def,
+            FieldAddrVector::Angles,
+            new_angles.into(),
+        )?;
+
+        let orig: Vector3<f32> = ent
+            .load(&self.world.type_def, FieldAddrVector::Origin)?
+            .into();
+        let vel: Vector3<f32> = ent
+            .load(&self.world.type_def, FieldAddrVector::Velocity)?
+            .into();
+        let new_orig = orig + frame_time_f * vel;
+        ent.store(
+            &self.world.type_def,
+            FieldAddrVector::Origin,
+            new_orig.into(),
+        )?;
+
+        let local_time =
+            duration_from_f32(ent.load(&self.world.type_def, FieldAddrFloat::LocalTime)?);
+        let next_think =
+            duration_from_f32(ent.load(&self.world.type_def, FieldAddrFloat::NextThink)?);
+
+        let old_local_time = local_time;
+        let new_local_time =
+            duration_from_f32(ent.load(&self.world.type_def, FieldAddrFloat::LocalTime)?);
+
+        // Let the entity think if it needs to.
+        if old_local_time < next_think && next_think <= new_local_time {
+            // Deschedule thinking.
             ent.store(
                 &self.world.type_def,
-                FieldAddrVector::Angles,
-                new_angles.into(),
+                FieldAddrFloat::NextThink,
+                engine::duration_to_f32(new_local_time),
             )?;
 
-            let orig: Vector3<f32> = ent
-                .load(&self.world.type_def, FieldAddrVector::Origin)?
-                .into();
-            let vel: Vector3<f32> = ent
-                .load(&self.world.type_def, FieldAddrVector::Velocity)?
-                .into();
-            let new_orig = orig + frame_time_f * vel;
-            ent.store(
-                &self.world.type_def,
-                FieldAddrVector::Origin,
-                new_orig.into(),
-            )?;
+            self.globals
+                .put_float(duration_to_f32(self.time), GlobalAddrFloat::Time as i16)?;
+            self.globals
+                .put_entity_id(ent_id, GlobalAddrEntity::Self_ as i16)?;
+            self.globals
+                .put_entity_id(EntityId(0), GlobalAddrEntity::Other as i16)?;
+
+            self.think(ent_id, frame_time, registry, vfs)?;
         }
 
         Ok(())
@@ -1260,13 +1303,13 @@ impl LevelState {
                 && hit_sound
             {
                 // Entity hit the ground this frame.
-                error!("TODO: SV_StartSound(demon/dland2.wav)");
+                debug!("TODO: SV_StartSound(demon/dland2.wav)");
             }
         }
 
         self.think(ent_id, frame_time, registry, vfs)?;
 
-        error!("TODO: SV_CheckWaterTransition");
+        debug!("TODO: SV_CheckWaterTransition");
 
         Ok(())
     }
@@ -1881,15 +1924,14 @@ impl LevelState {
     pub fn op_state(
         &mut self,
         frame_id_addr: i16,
-        unused_b: i16,
+        think_function_addr: i16,
         unused_c: i16,
     ) -> Result<(), ProgsError> {
-        if unused_b != 0 {
-            error!("state: nonzero arg2 ({})", unused_b);
-            // return Err(ProgsError::with_msg(format!("state: nonzero arg2 ({})", unused_b)));
-        } else if unused_c != 0 {
-            error!("state: nonzero arg3 ({})", unused_c);
-            // return Err(ProgsError::with_msg(format!("state: nonzero arg3 ({})", unused_c)));
+        if unused_c != 0 {
+            return Err(ProgsError::with_msg(format!(
+                "state: nonzero arg3 ({})",
+                unused_c
+            )));
         }
 
         let self_id = self.globals.entity_id(GlobalAddrEntity::Self_ as i16)?;
@@ -1907,6 +1949,13 @@ impl LevelState {
             &self.world.type_def,
             frame_id,
             FieldAddrFloat::FrameId as i16,
+        )?;
+
+        let think_func = self.globals.function_id(think_function_addr)?;
+        self_ent.put_function_id(
+            &self.world.type_def,
+            think_func,
+            FieldAddrFunctionId::Think as _,
         )?;
 
         Ok(())
@@ -2173,11 +2222,9 @@ impl LevelState {
     }
 
     pub fn builtin_check_client(&mut self) -> Result<(), ProgsError> {
-        error!("TODO: PF_checkclient");
+        debug!("TODO: PF_checkclient");
         self.globals
             .put_entity_id(EntityId(0), GLOBAL_ADDR_RETURN as i16)?;
-
-        // Err(ProgsError::LocalStackOverflow)
 
         Ok(())
     }
@@ -2187,19 +2234,15 @@ impl LevelState {
 
         self.world.entities.remove(ent)?;
 
-        error!("TODO: MakeStatic");
+        debug!("TODO: MakeStatic");
 
         Ok(())
     }
 }
 
 pub mod systems {
-    use std::io;
-
-    use snafu::FromString as _;
-
     use crate::common::{
-        console::{CmdName, RunCmd},
+        console::CmdName,
         net::{self, ClientCmd, ClientMessage, EntityUpdate, GameType, ServerMessage, SignOnStage},
     };
 
@@ -2212,7 +2255,7 @@ pub mod systems {
         mut registry: ResMut<Registry>,
         vfs: Res<Vfs>,
     ) {
-        let mut out_packet = io::Cursor::new(Vec::new());
+        let mut out_packet = Vec::new();
         for msg in client_msgs.read() {
             let mut packet = &msg.packet[..];
             loop {
@@ -2317,8 +2360,8 @@ pub mod systems {
             }
         }
 
-        if !out_packet.get_ref().is_empty() {
-            server_messages.send(ServerMessage(out_packet.into_inner()));
+        if !out_packet.is_empty() {
+            server_messages.send(ServerMessage(out_packet));
         }
     }
 
@@ -2359,7 +2402,7 @@ pub mod systems {
             _ => GameType::Deathmatch,
         };
 
-        let mut packet = io::Cursor::new(Vec::new());
+        let mut packet = Vec::new();
         ServerCmd::ServerInfo {
             protocol_version: net::PROTOCOL_VERSION as _,
             max_clients: server.max_clients() as _,
@@ -2405,7 +2448,7 @@ pub mod systems {
         // TODO: Handle this with QC
         server.new_client().unwrap();
 
-        server_messages.send(ServerMessage(packet.into_inner()));
+        server_messages.send(ServerMessage(packet));
 
         Ok(())
     }
@@ -2417,7 +2460,8 @@ pub mod systems {
         mut registry: ResMut<Registry>,
         vfs: Res<Vfs>,
     ) {
-        if registry.read_cvar::<u8>("sv_paused").unwrap() != 0
+        if server.loading()
+            || registry.read_cvar::<u8>("sv_paused").unwrap() != 0
             || server.persist.client_slots.active_clients().count() == 0
         {
             return;

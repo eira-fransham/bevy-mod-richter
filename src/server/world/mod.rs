@@ -18,7 +18,11 @@
 mod entity;
 pub mod phys;
 
-use std::{collections::HashSet, iter, mem, ops::RangeBounds};
+use std::{
+    collections::HashSet,
+    iter,
+    ops::{Bound, RangeBounds},
+};
 
 use self::{
     entity::Entity,
@@ -201,7 +205,7 @@ struct AreaEntity {
 #[derive(Debug, Clone)]
 enum AreaEntitySlot {
     Vacant,
-    Reserved,
+    Reserved(Entity),
     Occupied(AreaEntity),
 }
 
@@ -230,8 +234,9 @@ impl Entities {
     #[inline]
     pub fn get(&self, entity_id: EntityId) -> Option<&Entity> {
         match self.slots.get(entity_id.0)? {
-            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => None,
-            AreaEntitySlot::Occupied(ref e) => Some(&e.entity),
+            AreaEntitySlot::Vacant => None,
+            AreaEntitySlot::Reserved(entity) => Some(entity),
+            AreaEntitySlot::Occupied(e) => Some(&e.entity),
         }
     }
 
@@ -243,11 +248,13 @@ impl Entities {
             )));
         }
 
-        match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id.0),
-            )),
-            AreaEntitySlot::Occupied(ref e) => Ok(&e.entity),
+        match self.slots.get(entity_id.0) {
+            None | Some(AreaEntitySlot::Vacant) => Err(ProgsError::with_msg(format!(
+                "No entity at list entry {}",
+                entity_id.0
+            ))),
+            Some(AreaEntitySlot::Reserved(entity)) => Ok(entity),
+            Some(AreaEntitySlot::Occupied(e)) => Ok(&e.entity),
         }
     }
 
@@ -259,11 +266,13 @@ impl Entities {
             )));
         }
 
-        match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => Err(ProgsError::with_msg(
-                format!("No entity at list entry {}", entity_id.0),
-            )),
-            AreaEntitySlot::Occupied(ref mut e) => Ok(&mut e.entity),
+        match self.slots.get_mut(entity_id.0) {
+            None | Some(AreaEntitySlot::Vacant) => Err(ProgsError::with_msg(format!(
+                "No entity at list entry {}",
+                entity_id.0
+            ))),
+            Some(AreaEntitySlot::Reserved(entity)) => Ok(entity),
+            Some(AreaEntitySlot::Occupied(e)) => Ok(&mut e.entity),
         }
     }
 
@@ -284,7 +293,7 @@ impl Entities {
             self.slots[entity_id.0] = AreaEntitySlot::Vacant;
             Ok(())
         } else {
-        Err(EntityError::Address(entity_id.0 as _).into())
+            Err(EntityError::Address(entity_id.0 as _).into())
         }
     }
 
@@ -292,12 +301,14 @@ impl Entities {
         matches!(self.slots[entity_id.0], AreaEntitySlot::Occupied(_))
     }
 
-    pub fn list(&self, list: &mut Vec<EntityId>) {
-        for (id, slot) in self.slots.iter().enumerate() {
-            if let &AreaEntitySlot::Occupied(_) = slot {
-                list.push(EntityId(id));
-            }
-        }
+    pub fn list(&self) -> impl Iterator<Item = EntityId> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| matches!(slot, &AreaEntitySlot::Occupied(_)))
+            .map(|(id, _)| EntityId(id))
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = EntityId> + '_ {
@@ -308,14 +319,19 @@ impl Entities {
     where
         R: RangeBounds<usize>,
     {
+        let start = match range.start_bound() {
+            Bound::Unbounded => 0,
+            Bound::Excluded(bound) => *bound + 1,
+            Bound::Included(bound) => *bound,
+        };
         self.slots
             .focus()
             .narrow(range)
             .into_iter()
             .enumerate()
-            .filter_map(|(id, slot)| {
+            .filter_map(move |(id, slot)| {
                 if let &AreaEntitySlot::Occupied(_) = slot {
-                    Some(EntityId(id))
+                    Some(EntityId(id + start))
                 } else {
                     None
                 }
@@ -349,7 +365,7 @@ impl Entities {
 
     fn find_reserved_slot(&self) -> Result<usize, ProgsError> {
         for (i, slot) in self.slots.iter().enumerate() {
-            if let &AreaEntitySlot::Reserved = slot {
+            if let &AreaEntitySlot::Reserved(_) = slot {
                 return Ok(i);
             }
         }
@@ -412,7 +428,7 @@ impl Entities {
         }
 
         match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => Err(ProgsError::with_msg(
+            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved(_) => Err(ProgsError::with_msg(
                 format!("No entity at list entry {}", entity_id.0),
             )),
             AreaEntitySlot::Occupied(ref e) => Ok(e),
@@ -428,7 +444,7 @@ impl Entities {
         }
 
         match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => Err(ProgsError::with_msg(
+            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved(_) => Err(ProgsError::with_msg(
                 format!("No entity at list entry {}", entity_id.0),
             )),
             AreaEntitySlot::Occupied(ref mut e) => Ok(e),
@@ -477,7 +493,10 @@ impl World {
             entity: world_entity,
             area_id: None,
         }))
-        .chain(iter::repeat_n(AreaEntitySlot::Reserved, 4))
+        .chain(iter::repeat_n(
+            AreaEntitySlot::Reserved(Entity::new(&type_def)),
+            8,
+        ))
         .chain(iter::repeat(AreaEntitySlot::Vacant))
         .take(MAX_ENTITIES)
         .collect();
@@ -606,6 +625,7 @@ impl World {
         &mut self,
         string_table: &mut StringTable,
         map: HashMap<&str, &str>,
+        // functions: &Functions,
     ) -> Result<EntityId, ProgsError> {
         let mut ent = Entity::new(&self.type_def);
 
@@ -664,21 +684,18 @@ impl World {
                             let id: usize = val.parse().unwrap();
 
                             if id > MAX_ENTITIES {
-                                panic!("out-of-bounds entity access");
-                            }
-
-                            match self.entities.slots[id] {
-                                AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => {
-                                    panic!("no entity with id {}", id)
-                                }
-                                AreaEntitySlot::Occupied(_) => (),
+                                return Err(ProgsError::with_msg("out-of-bounds entity access"));
                             }
 
                             ent.put_entity_id(&self.type_def, EntityId(id), def.offset as i16)?
                         }
-                        Type::QField => panic!("attempted to store field of type Field in entity"),
+                        Type::QField => {
+                            return Err(ProgsError::with_msg(
+                                "attempted to store field of type Field in entity",
+                            ));
+                        }
                         Type::QFunction => {
-                            // TODO: need to validate this against function table
+                            error!("TODO: Implement set field function ({})", val);
                         }
                     }
                 }

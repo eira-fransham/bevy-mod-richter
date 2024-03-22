@@ -87,7 +87,6 @@ pub use postprocess::PostProcessBindGroup;
 use serde::{Deserialize, Serialize};
 pub use target::{PreferredFormat, RenderTarget, RenderTargetResolve};
 pub use ui::{hud::HudState, UiRenderer, UiState};
-use wgpu::naga::ShaderStage;
 pub use world::{
     deferred::{DeferredRenderer, DeferredUniforms, PointLight},
     Camera,

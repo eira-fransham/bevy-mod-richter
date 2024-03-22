@@ -98,7 +98,10 @@ pub mod globals;
 mod ops;
 mod string_table;
 
-use std::io::{Read, Seek, SeekFrom};
+use std::{
+    io::{Read, Seek, SeekFrom},
+    iter,
+};
 
 use crate::{
     common::{bsp::BspError, console::ConsoleError, net::NetError},
@@ -173,8 +176,12 @@ pub enum ProgsError {
         source: BspError,
         backtrace: Backtrace,
     },
-    CallStackOverflow,
-    LocalStackOverflow,
+    CallStackOverflow {
+        backtrace: Backtrace,
+    },
+    LocalStackOverflow {
+        backtrace: Backtrace,
+    },
     #[snafu(display("{message}"))]
     Other {
         message: String,
@@ -540,8 +547,8 @@ impl ExecutionContext {
     pub fn backtrace(&self) -> impl Iterator<Item = FunctionId> + '_ {
         self.call_stack
             .iter()
-            .rev()
             .map(|StackFrame { func_id, .. }| *func_id)
+            .chain(iter::once(self.current_function))
     }
 
     pub fn find_function_by_name<S: AsRef<str>>(
@@ -556,16 +563,18 @@ impl ExecutionContext {
         self.functions.get_def(id)
     }
 
+    pub fn reset(&mut self) {
+        self.call_stack.clear();
+        self.local_stack.clear();
+        self.current_function = FunctionId(0);
+    }
+
     pub fn enter_function(
         &mut self,
         string_table: &StringTable,
         globals: &mut Globals,
         f: FunctionId,
     ) -> Result<(), ProgsError> {
-        if f.0 == 0 {
-            return Ok(());
-        }
-
         let def = self.functions.get_def(f)?;
         debug!(
             "Calling QuakeC function {}",
@@ -580,12 +589,16 @@ impl ExecutionContext {
 
         // check call stack overflow
         if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
-            return Err(ProgsError::CallStackOverflow);
+            return Err(ProgsError::CallStackOverflow {
+                backtrace: Backtrace::capture(),
+            });
         }
 
         // preemptively check local stack overflow
         if self.local_stack.len() + def.locals > MAX_LOCAL_STACK_DEPTH {
-            return Err(ProgsError::LocalStackOverflow);
+            return Err(ProgsError::LocalStackOverflow {
+                backtrace: Backtrace::capture(),
+            });
         }
 
         // save locals to stack
