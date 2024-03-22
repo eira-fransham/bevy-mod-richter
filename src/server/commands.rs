@@ -8,7 +8,7 @@ use crate::{
     client::{input::InputFocus, Connection, ConnectionState},
     common::{
         console::{ExecResult, RegisterCmdExt},
-        net::SignOnStage,
+        net::{ClientMessage, ServerMessage, SignOnStage},
     },
 };
 
@@ -37,6 +37,8 @@ fn cmd_map(
     mut focus: ResMut<InputFocus>,
     vfs: Res<Vfs>,
     mut registry: ResMut<Registry>,
+    mut client_events: ResMut<Events<ClientMessage>>,
+    mut server_events: ResMut<Events<ServerMessage>>,
 ) -> Result<(), Error> {
     if map_name.extension().is_none() {
         map_name.set_extension("bsp");
@@ -67,6 +69,9 @@ fn cmd_map(
             entmap,
         ));
     }
+
+    client_events.clear();
+    server_events.clear();
 
     // TODO: This should not be handled here, server and client should be decoupled
     commands.insert_resource(Connection::new_server());

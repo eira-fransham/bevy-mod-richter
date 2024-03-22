@@ -45,6 +45,7 @@ pub enum EntityError {
     Io(::std::io::Error),
     Address(isize),
     Other(String),
+    NoVacantSlots,
 }
 
 impl EntityError {
@@ -65,6 +66,7 @@ impl fmt::Display for EntityError {
             }
             EntityError::Address(val) => write!(f, "Invalid address ({})", val),
             EntityError::Other(ref msg) => write!(f, "{}", msg),
+            EntityError::NoVacantSlots => write!(f, "No vacant slots"),
         }
     }
 }

@@ -607,10 +607,10 @@ impl Connection {
             return Ok(Maintain);
         }
 
-        let mut reader = &mut message.as_slice();
+        let reader = &mut message.as_slice();
 
         loop {
-            let cmd = match ServerCmd::deserialize(&mut reader) {
+            let cmd = match ServerCmd::deserialize(reader) {
                 Err(e) => {
                     error!("{}", e);
                     break;
@@ -1141,7 +1141,7 @@ where
                 match err {
                     // if the message is invalid, log it but don't quit
                     // TODO: this should probably disconnect
-                    NetError::InvalidData(msg) => error!("{}", msg),
+                    err @ NetError::InvalidData { .. } => error!("{}", err),
 
                     // other errors are fatal
                     e => return Err(e.into()),

@@ -50,6 +50,7 @@ serde_json = "1.0"
 shaderc = "0.8"
 slab = "0.4"
 smol_str = "0.2"
+snafu = { version = "0.8", features = ["unstable-provider-api"] }
 strum = "0.26"
 strum_macros = "0.26"
 thiserror = "1.0"

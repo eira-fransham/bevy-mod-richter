@@ -98,18 +98,18 @@ pub mod globals;
 mod ops;
 mod string_table;
 
-use std::{
-    error::Error,
-    fmt,
-    io::{Read, Seek, SeekFrom},
-};
+use std::io::{Read, Seek, SeekFrom};
 
-use crate::server::world::{EntityError, EntityTypeDef};
+use crate::{
+    common::{bsp::BspError, console::ConsoleError, net::NetError},
+    server::world::{EntityError, EntityTypeDef},
+};
 
 use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
+use snafu::{prelude::*, Backtrace};
 
 use self::{
     functions::{BuiltinFunctionId, FunctionDef, FunctionKind, Statement, MAX_ARGS},
@@ -141,65 +141,56 @@ const FUNCTION_SIZE: usize = 36;
 // the on-disk size of a global or field definition
 const DEF_SIZE: usize = 8;
 
-#[derive(Debug)]
+#[derive(Snafu, Debug)]
 pub enum ProgsError {
-    Io(::std::io::Error),
-    Globals(GlobalsError),
-    Entity(EntityError),
+    #[snafu(context(false))]
+    Io {
+        source: ::std::io::Error,
+        backtrace: Backtrace,
+    },
+    #[snafu(context(false))]
+    Globals {
+        source: GlobalsError,
+        backtrace: Backtrace,
+    },
+    #[snafu(context(false))]
+    Net {
+        source: NetError,
+        backtrace: Backtrace,
+    },
+    #[snafu(context(false))]
+    Console {
+        source: ConsoleError,
+        backtrace: Backtrace,
+    },
+    #[snafu(context(false))]
+    Entity {
+        source: EntityError,
+        backtrace: Backtrace,
+    },
+    #[snafu(context(false))]
+    Bsp {
+        source: BspError,
+        backtrace: Backtrace,
+    },
     CallStackOverflow,
     LocalStackOverflow,
-    Other(String),
+    #[snafu(display("{message}"))]
+    Other {
+        message: String,
+        backtrace: Backtrace,
+    },
 }
 
 impl ProgsError {
     pub fn with_msg<S>(msg: S) -> Self
     where
-        S: AsRef<str>,
+        S: Into<String>,
     {
-        ProgsError::Other(msg.as_ref().to_owned())
-    }
-}
-
-impl fmt::Display for ProgsError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use self::ProgsError::*;
-        match *self {
-            Io(ref err) => {
-                write!(f, "I/O error: ")?;
-                err.fmt(f)
-            }
-            Globals(ref err) => {
-                write!(f, "Globals error: ")?;
-                err.fmt(f)
-            }
-            Entity(ref err) => {
-                write!(f, "Entity error: ")?;
-                err.fmt(f)
-            }
-            CallStackOverflow => write!(f, "Call stack overflow"),
-            LocalStackOverflow => write!(f, "Local stack overflow"),
-            Other(ref msg) => write!(f, "{}", msg),
+        ProgsError::Other {
+            message: msg.into(),
+            backtrace: Backtrace::capture(),
         }
-    }
-}
-
-impl Error for ProgsError {}
-
-impl From<::std::io::Error> for ProgsError {
-    fn from(error: ::std::io::Error) -> Self {
-        ProgsError::Io(error)
-    }
-}
-
-impl From<GlobalsError> for ProgsError {
-    fn from(error: GlobalsError) -> Self {
-        ProgsError::Globals(error)
-    }
-}
-
-impl From<EntityError> for ProgsError {
-    fn from(error: EntityError) -> Self {
-        ProgsError::Entity(error)
     }
 }
 

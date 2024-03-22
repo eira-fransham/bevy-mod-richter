@@ -18,7 +18,7 @@
 mod entity;
 pub mod phys;
 
-use std::{collections::HashSet, iter, mem, ops::RangeBounds, slice::SliceIndex};
+use std::{collections::HashSet, iter, mem, ops::RangeBounds};
 
 use self::{
     entity::Entity,
@@ -201,6 +201,7 @@ struct AreaEntity {
 #[derive(Debug, Clone)]
 enum AreaEntitySlot {
     Vacant,
+    Reserved,
     Occupied(AreaEntity),
 }
 
@@ -211,11 +212,10 @@ pub struct World {
 
     area_nodes: ArrayVec<AreaNode, NUM_AREA_NODES>,
     pub entities: Entities,
-    last_entities: Entities,
     models: Vec<Model>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Entities {
     slots: im::Vector<AreaEntitySlot>,
 }
@@ -230,7 +230,7 @@ impl Entities {
     #[inline]
     pub fn get(&self, entity_id: EntityId) -> Option<&Entity> {
         match self.slots.get(entity_id.0)? {
-            AreaEntitySlot::Vacant => None,
+            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => None,
             AreaEntitySlot::Occupied(ref e) => Some(&e.entity),
         }
     }
@@ -244,10 +244,9 @@ impl Entities {
         }
 
         match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
-                "No entity at list entry {}",
-                entity_id.0
-            ))),
+            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id.0),
+            )),
             AreaEntitySlot::Occupied(ref e) => Ok(&e.entity),
         }
     }
@@ -261,10 +260,9 @@ impl Entities {
         }
 
         match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
-                "No entity at list entry {}",
-                entity_id.0
-            ))),
+            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id.0),
+            )),
             AreaEntitySlot::Occupied(ref mut e) => Ok(&mut e.entity),
         }
     }
@@ -278,6 +276,15 @@ impl Entities {
         match &mut self.slots[entity_id.0] {
             AreaEntitySlot::Occupied(ent) => &mut ent.entity,
             _ => unreachable!(),
+        }
+    }
+
+    pub fn remove(&mut self, entity_id: EntityId) -> Result<(), ProgsError> {
+        if let Some(AreaEntitySlot::Occupied(_)) = self.slots.get(entity_id.0) {
+            self.slots[entity_id.0] = AreaEntitySlot::Vacant;
+            Ok(())
+        } else {
+        Err(EntityError::Address(entity_id.0 as _).into())
         }
     }
 
@@ -330,21 +337,31 @@ impl Entities {
             .flatten()
     }
 
-    fn find_vacant_slot(&self) -> Result<usize, ()> {
+    fn find_vacant_slot(&self) -> Result<usize, ProgsError> {
         for (i, slot) in self.slots.iter().enumerate() {
             if let &AreaEntitySlot::Vacant = slot {
                 return Ok(i);
             }
         }
 
-        panic!("no vacant slots");
+        Err(EntityError::NoVacantSlots.into())
+    }
+
+    fn find_reserved_slot(&self) -> Result<usize, ProgsError> {
+        for (i, slot) in self.slots.iter().enumerate() {
+            if let &AreaEntitySlot::Reserved = slot {
+                return Ok(i);
+            }
+        }
+
+        Err(EntityError::NoVacantSlots.into())
     }
 
     pub fn alloc_uninitialized(
         &mut self,
         type_def: &EntityTypeDef,
     ) -> Result<EntityId, ProgsError> {
-        let slot_id = self.find_vacant_slot().unwrap();
+        let slot_id = self.find_vacant_slot()?;
 
         self.slots[slot_id] = AreaEntitySlot::Occupied(AreaEntity {
             entity: Entity::new(type_def),
@@ -353,6 +370,21 @@ impl Entities {
 
         Ok(EntityId(slot_id))
     }
+
+    pub fn alloc_uninitialized_reserved(
+        &mut self,
+        type_def: &EntityTypeDef,
+    ) -> Result<EntityId, ProgsError> {
+        let slot_id = self.find_reserved_slot()?;
+
+        self.slots[slot_id] = AreaEntitySlot::Occupied(AreaEntity {
+            entity: Entity::new(type_def),
+            area_id: None,
+        });
+
+        Ok(EntityId(slot_id))
+    }
+
     pub fn free(&mut self, entity_id: EntityId) -> Result<(), ProgsError> {
         // TODO: unlink entity from world
 
@@ -380,10 +412,9 @@ impl Entities {
         }
 
         match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
-                "No entity at list entry {}",
-                entity_id.0
-            ))),
+            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id.0),
+            )),
             AreaEntitySlot::Occupied(ref e) => Ok(e),
         }
     }
@@ -397,17 +428,16 @@ impl Entities {
         }
 
         match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
-                "No entity at list entry {}",
-                entity_id.0
-            ))),
+            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id.0),
+            )),
             AreaEntitySlot::Occupied(ref mut e) => Ok(e),
         }
     }
 }
 
 impl World {
-    pub fn create(
+    pub fn new(
         mut brush_models: Vec<Model>,
         type_def: EntityTypeDef,
         string_table: &mut StringTable,
@@ -442,31 +472,28 @@ impl World {
             FieldAddrFloat::MoveKind as i16,
         )?;
 
+        // TODO: Respect max players
         let slots = iter::once(AreaEntitySlot::Occupied(AreaEntity {
             entity: world_entity,
             area_id: None,
         }))
-        .chain(iter::repeat_n(AreaEntitySlot::Vacant, MAX_ENTITIES - 1))
+        .chain(iter::repeat_n(AreaEntitySlot::Reserved, 4))
+        .chain(iter::repeat(AreaEntitySlot::Vacant))
+        .take(MAX_ENTITIES)
         .collect();
 
         let entities = Entities { slots };
-        let last_entities = entities.clone();
 
         Ok(World {
             area_nodes,
             type_def,
-            last_entities,
             entities,
             models,
         })
     }
 
-    pub fn start_frame(&mut self) {
-        mem::swap(&mut self.entities, &mut self.last_entities);
-    }
-
-    pub fn diff(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.entities.diff(&self.last_entities)
+    pub fn diff<'a>(&'a self, other: &'a Entities) -> impl Iterator<Item = EntityId> + 'a {
+        self.entities.diff(other)
     }
 
     pub fn add_model(
@@ -508,6 +535,10 @@ impl World {
 
     pub fn alloc_uninitialized(&mut self) -> Result<EntityId, ProgsError> {
         self.entities.alloc_uninitialized(&self.type_def)
+    }
+
+    pub fn alloc_uninitialized_reserved(&mut self) -> Result<EntityId, ProgsError> {
+        self.entities.alloc_uninitialized_reserved(&self.type_def)
     }
 
     fn find_def<S>(&self, strs: &StringTable, name: S) -> Result<&FieldDef, ProgsError>
@@ -637,7 +668,9 @@ impl World {
                             }
 
                             match self.entities.slots[id] {
-                                AreaEntitySlot::Vacant => panic!("no entity with id {}", id),
+                                AreaEntitySlot::Vacant | AreaEntitySlot::Reserved => {
+                                    panic!("no entity with id {}", id)
+                                }
                                 AreaEntitySlot::Occupied(_) => (),
                             }
 
@@ -925,8 +958,7 @@ impl World {
                 let hull = BspCollisionHull::for_bounds(
                     self.entities.get(e_id).unwrap().min(&self.type_def)?,
                     self.entities.get(e_id).unwrap().max(&self.type_def)?,
-                )
-                .unwrap();
+                )?;
                 let offset = self.entities.get(e_id).unwrap().origin(&self.type_def)?;
 
                 Ok((hull, offset))
@@ -934,8 +966,7 @@ impl World {
         }
     }
 
-    // TODO: come up with a better name. This doesn't actually move the entity!
-    pub fn move_entity(
+    pub fn trace_entity_move(
         &mut self,
         e_id: EntityId,
         start: Vector3<f32>,

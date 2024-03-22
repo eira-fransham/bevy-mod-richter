@@ -559,7 +559,7 @@ impl ConnectListener {
 
         // high 4 bits must be 0x8000 (CONNECT_CONTROL)
         if control & !CONNECT_LENGTH_MASK != CONNECT_CONTROL {
-            return Err(NetError::InvalidData(format!(
+            return Err(NetError::invalid_data(format!(
                 "control value {:X}",
                 control & !CONNECT_LENGTH_MASK
             )));
@@ -568,7 +568,7 @@ impl ConnectListener {
         // low 4 bits must be total length of packet
         let control_len = (control & CONNECT_LENGTH_MASK) as usize;
         if control_len != len {
-            return Err(NetError::InvalidData(format!(
+            return Err(NetError::invalid_data(format!(
                 "Actual packet length ({}) differs from header value ({})",
                 len, control_len,
             )));
@@ -579,7 +579,7 @@ impl ConnectListener {
         let request_code = match RequestCode::from_u8(request_byte) {
             Some(r) => r,
             None => {
-                return Err(NetError::InvalidData(format!(
+                return Err(NetError::invalid_data(format!(
                     "request code {}",
                     request_byte
                 )))
@@ -678,7 +678,7 @@ impl ConnectSocket {
 
         // high 4 bits must be 0x8000 (CONNECT_CONTROL)
         if control & !CONNECT_LENGTH_MASK != CONNECT_CONTROL {
-            return Err(NetError::InvalidData(format!(
+            return Err(NetError::invalid_data(format!(
                 "control value {:X}",
                 control & !CONNECT_LENGTH_MASK
             )));
@@ -697,7 +697,7 @@ impl ConnectSocket {
         let response_code = match ResponseCode::from_u8(response_byte) {
             Some(r) => r,
             None => {
-                return Err(NetError::InvalidData(format!(
+                return Err(NetError::invalid_data(format!(
                     "response code {}",
                     response_byte
                 )))

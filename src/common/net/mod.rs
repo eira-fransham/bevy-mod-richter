@@ -40,6 +40,7 @@ use cgmath::{Deg, Vector3, Zero};
 use chrono::Duration;
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
+use snafu::{prelude::*, Backtrace};
 
 use super::util::QString;
 
@@ -83,49 +84,38 @@ pub struct ClientMessage {
     pub kind: ClientMessageKind,
 }
 
-#[derive(Debug)]
+#[derive(Snafu, Debug)]
 pub enum NetError {
-    Io(::std::io::Error),
-    InvalidData(String),
-    Other(String),
+    #[snafu(context(false))]
+    Io {
+        source: ::std::io::Error,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Invalid data: {msg}"))]
+    InvalidData { msg: String, backtrace: Backtrace },
+    #[snafu(display("{msg}"))]
+    Other { msg: String, backtrace: Backtrace },
 }
 
 impl NetError {
     pub fn with_msg<S>(msg: S) -> Self
     where
-        S: AsRef<str>,
+        S: Into<String>,
     {
-        NetError::Other(msg.as_ref().to_owned())
-    }
-}
-
-impl fmt::Display for NetError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            NetError::Io(ref err) => {
-                write!(f, "I/O error: ")?;
-                err.fmt(f)
-            }
-            NetError::InvalidData(ref msg) => write!(f, "Invalid data: {}", msg),
-            NetError::Other(ref msg) => write!(f, "{}", msg),
+        NetError::Other {
+            msg: msg.into(),
+            backtrace: Backtrace::capture(),
         }
     }
-}
 
-impl Error for NetError {
-    #[allow(deprecated)]
-    fn description(&self) -> &str {
-        match *self {
-            NetError::Io(ref err) => err.description(),
-            NetError::InvalidData(_) => "Invalid data",
-            NetError::Other(ref msg) => &msg,
+    pub fn invalid_data<S>(msg: S) -> Self
+    where
+        S: Into<String>,
+    {
+        NetError::Other {
+            msg: msg.into(),
+            backtrace: Backtrace::capture(),
         }
-    }
-}
-
-impl From<::std::io::Error> for NetError {
-    fn from(error: ::std::io::Error) -> Self {
-        NetError::Io(error)
     }
 }
 
@@ -372,7 +362,7 @@ impl TempEntity {
         let code = match TempEntityCode::from_u8(code_byte) {
             Some(c) => c,
             None => {
-                return Err(NetError::InvalidData(format!(
+                return Err(NetError::invalid_data(format!(
                     "Temp entity code {}",
                     code_byte
                 )))
@@ -1121,6 +1111,10 @@ impl ServerCmd {
     where
         R: BufRead,
     {
+        if !reader.has_data_left().unwrap() {
+            return Ok(None);
+        }
+
         let code = ServerCmdCode::read(reader)?;
 
         let code = match code {
@@ -1143,7 +1137,7 @@ impl ServerCmd {
                 let stat = match ClientStat::from_u8(stat_id) {
                     Some(c) => c,
                     None => {
-                        return Err(NetError::InvalidData(format!(
+                        return Err(NetError::invalid_data(format!(
                             "value for ClientStat: {}",
                             stat_id,
                         )))
@@ -1169,7 +1163,7 @@ impl ServerCmd {
                 let flags = match SoundFlags::from_bits(flags_bits) {
                     Some(f) => f,
                     None => {
-                        return Err(NetError::InvalidData(format!(
+                        return Err(NetError::invalid_data(format!(
                             "SoundFlags: {:b}",
                             flags_bits
                         )))
@@ -1240,7 +1234,7 @@ impl ServerCmd {
                 let game_type = match GameType::from_u8(game_type_code) {
                     Some(g) => g,
                     None => {
-                        return Err(NetError::InvalidData(format!(
+                        return Err(NetError::invalid_data(format!(
                             "Invalid game type ({})",
                             game_type_code
                         )))
@@ -1307,7 +1301,7 @@ impl ServerCmd {
                 let flags = match ClientUpdateFlags::from_bits(flags_bits) {
                     Some(f) => f,
                     None => {
-                        return Err(NetError::InvalidData(format!(
+                        return Err(NetError::invalid_data(format!(
                             "client update flags: {:b}",
                             flags_bits
                         )))
@@ -1358,7 +1352,7 @@ impl ServerCmd {
                 let items = match ItemFlags::from_bits(items_bits) {
                     Some(i) => i,
                     None => {
-                        return Err(NetError::InvalidData(format!(
+                        return Err(NetError::invalid_data(format!(
                             "ItemFlags: {:b}",
                             items_bits
                         )))
@@ -1524,7 +1518,7 @@ impl ServerCmd {
                 let paused = match reader.read_u8()? {
                     0 => false,
                     1 => true,
-                    x => return Err(NetError::InvalidData(format!("setpause: {}", x))),
+                    x => return Err(NetError::invalid_data(format!("setpause: {}", x))),
                 };
 
                 ServerCmd::SetPause { paused }
@@ -1535,7 +1529,7 @@ impl ServerCmd {
                 let stage = match SignOnStage::from_u8(stage_num) {
                     Some(s) => s,
                     None => {
-                        return Err(NetError::InvalidData(format!(
+                        return Err(NetError::invalid_data(format!(
                             "Invalid value for sign-on stage: {}",
                             stage_num
                         )))
@@ -2030,7 +2024,7 @@ impl ClientCmd {
         let code = match ClientCmdCode::from_u8(code_val) {
             Some(c) => c,
             None => {
-                return Err(NetError::InvalidData(format!(
+                return Err(NetError::invalid_data(format!(
                     "Invalid client command code: {}",
                     code_val
                 )))
@@ -2055,7 +2049,7 @@ impl ClientCmd {
                 let button_flags = match ButtonFlags::from_bits(button_flags_val) {
                     Some(bf) => bf,
                     None => {
-                        return Err(NetError::InvalidData(format!(
+                        return Err(NetError::invalid_data(format!(
                             "Invalid value for button flags: {}",
                             button_flags_val
                         )))
@@ -2342,7 +2336,7 @@ impl QSocket {
             let msg_kind = match MsgKind::from_u16(msg_kind_code) {
                 Some(f) => f,
                 None => {
-                    return Err(NetError::InvalidData(format!(
+                    return Err(NetError::invalid_data(format!(
                         "Invalid message kind: {}",
                         msg_kind_code
                     )))
@@ -2357,7 +2351,7 @@ impl QSocket {
 
             let field_len = reader.read_u16::<NetworkEndian>()?;
             if field_len as usize != packet_len {
-                return Err(NetError::InvalidData(format!(
+                return Err(NetError::invalid_data(format!(
                     "Length field and actual length differ ({} != {})",
                     field_len, packet_len
                 )));

@@ -23,7 +23,7 @@ pub mod world;
 
 use crate::{
     common::{
-        console::Registry,
+        console::{Registry, RunCmd},
         engine::{self, duration_from_f32, duration_to_f32},
         math::Hyperplane,
         model::Model,
@@ -50,7 +50,8 @@ use self::{
     },
     world::{
         phys::{self, CollideKind, CollisionFlags, Trace, TraceEndKind},
-        EntityFlags, EntitySolid, FieldAddrFloat, FieldAddrFunctionId, FieldAddrStringId, World,
+        Entities, EntityFlags, EntitySolid, FieldAddrFloat, FieldAddrFunctionId, FieldAddrStringId,
+        World,
     },
 };
 
@@ -63,6 +64,7 @@ use failure::bail;
 use hashbrown::HashMap;
 use num::FromPrimitive;
 use serde::Deserialize;
+use snafu::Report;
 
 const MAX_DATAGRAM: usize = 1024;
 const MAX_LIGHTSTYLES: usize = 64;
@@ -76,11 +78,15 @@ impl Plugin for SeismonServerPlugin {
             FixedUpdate,
             (
                 systems::recv_client_messages,
-                systems::server_spawn.pipe(|In(res)| {
-                    if let Err(e) = res {
-                        error!("Failed spawning server: {}", e);
-                    }
-                }),
+                systems::server_spawn.pipe(
+                    |In(res), mut commands: Commands, mut runcmd: EventWriter<RunCmd<'static>>| {
+                        if let Err(e) = res {
+                            error!("Failed spawning server: {}", Report::from_error(e));
+                            commands.remove_resource::<Session>();
+                            runcmd.send("startdemos".into());
+                        }
+                    },
+                ),
                 systems::server_update,
             )
                 .run_if(resource_exists::<Session>),
@@ -96,6 +102,7 @@ pub struct Client {
     name: QString,
     color: u8,
     state: ClientState,
+    sent_entities: Entities,
     // TODO: Per-client send
     buffer: Vec<u8>,
 }
@@ -105,6 +112,7 @@ impl Default for Client {
         Self {
             name: "player".into(),
             color: 0,
+            sent_entities: default(),
             state: ClientState::Connecting,
             buffer: default(),
         }
@@ -367,7 +375,7 @@ impl Session {
         mut registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), failure::Error> {
-        let client_entity = self.level.world.alloc_uninitialized()?;
+        let client_entity = self.level.world.alloc_uninitialized_reserved()?;
 
         let Some(client) = self.client_mut(slot) else {
             bail!("No such client {}", slot);
@@ -534,17 +542,17 @@ impl LevelState {
         let sound_precache = Precache::new();
         let mut model_precache = Precache::new();
 
+        model_precache.precache(&map_path);
+
         for model in models.iter() {
             let model_name = string_table.find_or_insert(model.name());
             let name = &*string_table.get(model_name).unwrap();
-            if name == "*0" {
-                model_precache.precache(&map_path);
-            } else {
+            if name != "*0" {
                 model_precache.precache(name);
             }
         }
 
-        let world = World::create(models, entity_def, &mut string_table).unwrap();
+        let world = World::new(models, entity_def, &mut string_table).unwrap();
         let entity_list = parse::entities(&entmap).unwrap();
 
         let mut level = LevelState {
@@ -606,6 +614,8 @@ impl LevelState {
         mut registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
+        use Opcode::*;
+
         let mut runaway = 10000;
 
         let exit_depth = self.cx.call_stack_depth();
@@ -629,15 +639,7 @@ impl LevelState {
             let b = statement.arg2;
             let c = statement.arg3;
 
-            debug!(
-                "              {:<9} {:>5} {:>5} {:>5}",
-                format!("{:?}", op),
-                a,
-                b,
-                c
-            );
-
-            use Opcode::*;
+            debug!("{:<9} {:>5} {:>5} {:>5}", format!("{:?}", op), a, b, c);
 
             // Y'all like jump tables?
             match op {
@@ -676,7 +678,8 @@ impl LevelState {
                         panic!("NULL function");
                     }
 
-                    let name_id = self.cx.function_def(f_to_call)?.name_id;
+                    let def = self.cx.function_def(f_to_call)?;
+                    let name_id = def.name_id;
                     let name = &self.string_table.get(name_id).unwrap().to_owned();
 
                     macro_rules! todo_builtin {
@@ -685,8 +688,9 @@ impl LevelState {
                         };
                     }
 
-                    if let FunctionKind::BuiltIn(b) = self.cx.function_def(f_to_call)?.kind {
-                        debug!("Calling built-in function {}", name);
+                    debug!("Calling function {} ({:?})", name, f_to_call);
+
+                    if let FunctionKind::BuiltIn(b) = def.kind {
                         use progs::functions::BuiltinFunctionId::*;
                         match b {
                             MakeVectors => self.globals.make_vectors()?,
@@ -992,8 +996,6 @@ impl LevelState {
         mut registry: Mut<Registry>,
         vfs: &Vfs,
     ) -> Result<(), ProgsError> {
-        self.world.start_frame();
-
         self.globals.store(GlobalAddrEntity::Self_, EntityId(0))?;
         self.globals.store(GlobalAddrEntity::Other, EntityId(0))?;
         self.globals
@@ -1023,7 +1025,7 @@ impl LevelState {
 
         let server_vars = registry
             .read_cvars::<ServerVars>()
-            .ok_or_else(|| ProgsError::Other(format!("Failed to read server cvars")))?;
+            .ok_or_else(|| ProgsError::with_msg(format!("Failed to read server cvars")))?;
 
         for ent_id in ent_ids {
             if self.globals.load(GlobalAddrFloat::ForceRetouch)? != 0.0 {
@@ -1048,8 +1050,7 @@ impl LevelState {
                 match self
                     .world
                     .entities
-                    .get(ent_id)
-                    .unwrap()
+                    .try_get(ent_id)?
                     .move_kind(&self.world.type_def)?
                 {
                     MoveKind::Walk => {
@@ -1215,13 +1216,12 @@ impl LevelState {
             max_velocity,
         } = registry
             .read_cvars()
-            .ok_or_else(|| ProgsError::Other(format!("Couldn't read server vars")))?;
+            .ok_or_else(|| ProgsError::with_msg(format!("Couldn't read server vars")))?;
 
         let in_freefall = !self
             .world
             .entities
-            .get(ent_id)
-            .unwrap()
+            .try_get(ent_id)?
             .flags(&self.world.type_def)?
             .intersects(EntityFlags::ON_GROUND | EntityFlags::FLY | EntityFlags::IN_WATER);
 
@@ -1229,8 +1229,7 @@ impl LevelState {
             let vel: Vector3<f32> = self
                 .world
                 .entities
-                .get(ent_id)
-                .unwrap()
+                .try_get(ent_id)?
                 .load(&self.world.type_def, FieldAddrVector::Velocity)?
                 .into();
 
@@ -1320,8 +1319,7 @@ impl LevelState {
         let init_velocity = self
             .world
             .entities
-            .get(ent_id)
-            .unwrap()
+            .try_get(ent_id)?
             .velocity(&self.world.type_def)?;
         let mut trace_velocity = init_velocity;
 
@@ -1332,8 +1330,7 @@ impl LevelState {
             let velocity = self
                 .world
                 .entities
-                .get(ent_id)
-                .unwrap()
+                .try_get(ent_id)?
                 .velocity(&self.world.type_def)?;
 
             if velocity.is_zero() {
@@ -1344,26 +1341,23 @@ impl LevelState {
             let orig = self
                 .world
                 .entities
-                .get(ent_id)
-                .unwrap()
+                .try_get(ent_id)?
                 .origin(&self.world.type_def)?;
             let end = orig + sim_time_f * velocity;
             let min = self
                 .world
                 .entities
-                .get(ent_id)
-                .unwrap()
+                .try_get(ent_id)?
                 .min(&self.world.type_def)?;
             let max = self
                 .world
                 .entities
-                .get(ent_id)
-                .unwrap()
+                .try_get(ent_id)?
                 .max(&self.world.type_def)?;
 
             let (trace, hit_entity) =
                 self.world
-                    .move_entity(ent_id, orig, min, max, end, CollideKind::Normal)?;
+                    .trace_entity_move(ent_id, orig, min, max, end, CollideKind::Normal)?;
 
             if trace.all_solid() {
                 // Entity is stuck in a wall.
@@ -1388,8 +1382,7 @@ impl LevelState {
                 trace_velocity = self
                     .world
                     .entities
-                    .get(ent_id)
-                    .unwrap()
+                    .try_get(ent_id)?
                     .velocity(&self.world.type_def)?;
             }
 
@@ -1413,8 +1406,7 @@ impl LevelState {
                 if self
                     .world
                     .entities
-                    .get(hit_entity)
-                    .unwrap()
+                    .try_get(hit_entity)?
                     .solid(&self.world.type_def)?
                     == EntitySolid::Bsp
                 {
@@ -1510,27 +1502,24 @@ impl LevelState {
         let origin = self
             .world
             .entities
-            .get(ent_id)
-            .unwrap()
+            .try_get(ent_id)?
             .origin(&self.world.type_def)?;
 
         let end = Vector3::new(origin.x, origin.y, origin.z - Self::DROP_TO_FLOOR_DIST);
         let min = self
             .world
             .entities
-            .get(ent_id)
-            .unwrap()
+            .try_get(ent_id)?
             .min(&self.world.type_def)?;
         let max = self
             .world
             .entities
-            .get(ent_id)
-            .unwrap()
+            .try_get(ent_id)?
             .max(&self.world.type_def)?;
 
         let (trace, collide_entity) =
             self.world
-                .move_entity(ent_id, origin, min, max, end, CollideKind::Normal)?;
+                .trace_entity_move(ent_id, origin, min, max, end, CollideKind::Normal)?;
         debug!("End position after drop: {:?}", trace.end_point());
 
         let drop_dist = 256.0;
@@ -1580,8 +1569,7 @@ impl LevelState {
             let trigger_touch = self
                 .world
                 .entities
-                .get(trigger_id)
-                .unwrap()
+                .try_get(trigger_id)?
                 .load(&self.world.type_def, FieldAddrFunctionId::Touch)?;
 
             self.globals.store(GlobalAddrEntity::Self_, trigger_id)?;
@@ -1614,14 +1602,12 @@ impl LevelState {
         let touch_a = self
             .world
             .entities
-            .get(ent_a)
-            .unwrap()
+            .try_get(ent_a)?
             .load(&self.world.type_def, FieldAddrFunctionId::Touch)?;
         let solid_a = self
             .world
             .entities
-            .get(ent_a)
-            .unwrap()
+            .try_get(ent_a)?
             .solid(&self.world.type_def)?;
         if touch_a.0 != 0 && solid_a != EntitySolid::Not {
             self.globals.store(GlobalAddrEntity::Self_, ent_a)?;
@@ -1633,14 +1619,12 @@ impl LevelState {
         let touch_b = self
             .world
             .entities
-            .get(ent_b)
-            .unwrap()
+            .try_get(ent_b)?
             .load(&self.world.type_def, FieldAddrFunctionId::Touch)?;
         let solid_b = self
             .world
             .entities
-            .get(ent_b)
-            .unwrap()
+            .try_get(ent_b)?
             .solid(&self.world.type_def)?;
         if touch_b.0 != 0 && solid_b != EntitySolid::Not {
             self.globals.store(GlobalAddrEntity::Self_, ent_b)?;
@@ -1682,8 +1666,7 @@ impl LevelState {
         let f = self
             .world
             .entities
-            .get(ent_id)
-            .unwrap()
+            .try_get(ent_id)?
             .get_float(&self.world.type_def, fld_ofs.0 as i16)?;
         self.globals.put_float(f, dest_ofs)?;
 
@@ -1702,8 +1685,7 @@ impl LevelState {
         let v = self
             .world
             .entities
-            .get(ent_id)
-            .unwrap()
+            .try_get(ent_id)?
             .get_vector(&self.world.type_def, ent_vector.0 as i16)?;
         self.globals.put_vector(v, dest_addr)?;
 
@@ -1721,8 +1703,7 @@ impl LevelState {
         let s = self
             .world
             .entities
-            .get(ent_id)
-            .unwrap()
+            .try_get(ent_id)?
             .string_id(&self.world.type_def, ent_string_id.0 as i16)?;
         self.globals.put_string_id(s, dest_addr)?;
 
@@ -1740,8 +1721,7 @@ impl LevelState {
         let e = self
             .world
             .entities
-            .get(ent_id)
-            .unwrap()
+            .try_get(ent_id)?
             .entity_id(&self.world.type_def, ent_entity_id.0 as i16)?;
         self.globals.put_entity_id(e, dest_addr)?;
 
@@ -1759,8 +1739,7 @@ impl LevelState {
         let f = self
             .world
             .entities
-            .get(ent_id)
-            .unwrap()
+            .try_get(ent_id)?
             .function_id(&self.world.type_def, fnc_function_id.0 as i16)?;
         self.globals.put_function_id(f, dest_addr)?;
 
@@ -2130,7 +2109,9 @@ impl LevelState {
         let match_str = self.globals.string_id(GLOBAL_ADDR_ARG_2 as i16)?;
 
         let Some(match_str) = self.string_table.get(match_str) else {
-            return Err(ProgsError::Other("Failed to find match string".to_owned()));
+            return Err(ProgsError::with_msg(
+                "Failed to find match string".to_owned(),
+            ));
         };
 
         let field = FieldAddrStringId::from_usize(field.0).unwrap();
@@ -2139,8 +2120,7 @@ impl LevelState {
             let Ok(field) = self
                 .world
                 .entities
-                .get(ent)
-                .unwrap()
+                .try_get(ent)?
                 .load(&self.world.type_def, field)
             else {
                 continue;
@@ -2174,8 +2154,7 @@ impl LevelState {
         let old_vel = self
             .world
             .entities
-            .get(this)
-            .unwrap()
+            .try_get(this)?
             .velocity(&self.world.type_def)
             .unwrap();
         self.world.entities.get_mut(this).unwrap().set_velocity(
@@ -2185,8 +2164,7 @@ impl LevelState {
         self.physics_step(this, Duration::try_seconds(1).unwrap(), vfs, registry)?;
         self.world
             .entities
-            .get_mut(this)
-            .unwrap()
+            .get_mut(this)?
             .set_velocity(&self.world.type_def, old_vel)?;
 
         self.globals
@@ -2199,13 +2177,15 @@ impl LevelState {
         self.globals
             .put_entity_id(EntityId(0), GLOBAL_ADDR_RETURN as i16)?;
 
-        Err(ProgsError::LocalStackOverflow)
+        // Err(ProgsError::LocalStackOverflow)
 
-        // Ok(())
+        Ok(())
     }
 
     pub fn builtin_make_static(&mut self) -> Result<(), ProgsError> {
-        let _ent = self.globals.entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
+        let ent = self.globals.entity_id(GLOBAL_ADDR_ARG_0 as i16)?;
+
+        self.world.entities.remove(ent)?;
 
         error!("TODO: MakeStatic");
 
@@ -2215,6 +2195,8 @@ impl LevelState {
 
 pub mod systems {
     use std::io;
+
+    use snafu::FromString as _;
 
     use crate::common::{
         console::{CmdName, RunCmd},
@@ -2346,7 +2328,7 @@ pub mod systems {
         mut server_messages: EventWriter<ServerMessage>,
         time: Res<Time<Virtual>>,
         vfs: Res<Vfs>,
-    ) -> Result<(), failure::Error> {
+    ) -> Result<(), ProgsError> {
         if !server.loading() {
             return Ok(());
         }
@@ -2359,7 +2341,8 @@ pub mod systems {
             let server = &mut *server;
             server.level.physics(
                 &server.persist.client_slots,
-                Duration::from_std(time.elapsed())?,
+                Duration::from_std(time.elapsed())
+                    .map_err(|e| ProgsError::with_msg(format!("{}", e)))?,
                 registry.reborrow(),
                 &*vfs,
             )?;
@@ -2460,67 +2443,43 @@ pub mod systems {
         };
 
         if send_diff {
-            let mut packet = io::Cursor::new(Vec::new());
-            for ent in server.level.world.diff() {
+            let mut packet = Vec::new();
+            for ent in server
+                .level
+                .world
+                .diff(&server.client(0).unwrap().sent_entities)
+            {
                 // TODO: Handle deletions
                 if server.level.world.entities.try_get(ent).is_err() {
                     continue;
                 }
 
+                let entity = server.level.world.entities.get(ent).unwrap();
+
                 let (ent_id, model_id, frame_id, colormap, skin_id, origin, angles) = (
                     ent.into(),
-                    server
-                        .level
-                        .world
-                        .entities
-                        .get(ent)
-                        .unwrap()
+                    entity
                         .get_float(
                             &server.level.world.type_def,
                             FieldAddrFloat::ModelIndex as i16,
                         )
                         .unwrap() as _,
-                    server
-                        .level
-                        .world
-                        .entities
-                        .get(ent)
-                        .unwrap()
+                    entity
                         .get_float(&server.level.world.type_def, FieldAddrFloat::FrameId as i16)
                         .unwrap() as _,
-                    server
-                        .level
-                        .world
-                        .entities
-                        .get(ent)
-                        .unwrap()
+                    entity
                         .get_float(
                             &server.level.world.type_def,
                             FieldAddrFloat::Colormap as i16,
                         )
                         .unwrap() as _,
-                    server
-                        .level
-                        .world
-                        .entities
-                        .get(ent)
-                        .unwrap()
+                    entity
                         .get_float(&server.level.world.type_def, FieldAddrFloat::SkinId as i16)
                         .unwrap() as _,
-                    server
-                        .level
-                        .world
-                        .entities
-                        .get(ent)
-                        .unwrap()
+                    entity
                         .get_vector(&server.level.world.type_def, FieldAddrVector::Origin as i16)
                         .unwrap(),
-                    server
-                        .level
-                        .world
-                        .entities
-                        .get(ent)
-                        .unwrap()
+                    entity
                         .get_vector(&server.level.world.type_def, FieldAddrVector::Angles as i16)
                         .unwrap(),
                 );
@@ -2552,7 +2511,9 @@ pub mod systems {
                 update.serialize(&mut packet).unwrap();
             }
 
-            server_messages.send(ServerMessage(packet.into_inner()));
+            server.client_mut(0).unwrap().sent_entities = server.level.world.entities.clone();
+
+            server_messages.send(ServerMessage(packet));
         }
     }
 }
