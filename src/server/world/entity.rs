@@ -272,6 +272,24 @@ pub enum FieldAddrStringId {
     Noise3Name = 104,
 }
 
+impl fmt::Display for FieldAddrStringId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ClassName => write!(f, "classname"),
+            Self::ModelName => write!(f, "modelname"),
+            Self::WeaponModelName => write!(f, "weaponmodelname"),
+            Self::NetName => write!(f, "netname"),
+            Self::Target => write!(f, "target"),
+            Self::TargetName => write!(f, "targetname"),
+            Self::Message => write!(f, "message"),
+            Self::Noise0Name => write!(f, "noise0name"),
+            Self::Noise1Name => write!(f, "noise1name"),
+            Self::Noise2Name => write!(f, "noise2name"),
+            Self::Noise3Name => write!(f, "noise3name"),
+        }
+    }
+}
+
 impl FieldAddr for FieldAddrStringId {
     type Value = StringId;
 

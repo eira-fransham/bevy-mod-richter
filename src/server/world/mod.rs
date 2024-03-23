@@ -344,11 +344,17 @@ impl Entities {
         self.slots
             .leaves()
             .zip(last.slots.leaves())
-            .filter(|(cur, last)| cur.as_ptr() != last.as_ptr())
-            .map(move |(cur, _)| {
+            .map(move |(cur, last)| {
                 let out = (cur_index..cur_index + cur.len()).map(EntityId);
                 cur_index += cur.len();
-                out
+                ((cur, out), last)
+            })
+            .filter_map(|((cur, out), last)| {
+                if cur.as_ptr() != last.as_ptr() {
+                    Some(out)
+                } else {
+                    None
+                }
             })
             .flatten()
     }
@@ -401,9 +407,7 @@ impl Entities {
         Ok(EntityId(slot_id))
     }
 
-    pub fn free(&mut self, entity_id: EntityId) -> Result<(), ProgsError> {
-        // TODO: unlink entity from world
-
+    fn free(&mut self, entity_id: EntityId) -> Result<(), ProgsError> {
         if entity_id.0 > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({:?})",
@@ -846,7 +850,7 @@ impl World {
             let model_index = ent.get_float(&self.type_def, FieldAddrFloat::ModelIndex as i16)?;
             if model_index != 0.0 {
                 // TODO: SV_FindTouchedLeafs
-                error!("TODO: SV_FindTouchedLeafs");
+                debug!("TODO: SV_FindTouchedLeafs");
             }
 
             solid = ent.solid(&self.type_def)?;

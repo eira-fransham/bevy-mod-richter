@@ -99,6 +99,7 @@ mod ops;
 mod string_table;
 
 use std::{
+    fmt,
     io::{Read, Seek, SeekFrom},
     iter,
 };
@@ -264,6 +265,21 @@ pub enum Type {
     QField = 5,
     QFunction = 6,
     QPointer = 7,
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::QVoid => write!(f, "void"),
+            Self::QString => write!(f, "string"),
+            Self::QFloat => write!(f, "float"),
+            Self::QVector => write!(f, "vector"),
+            Self::QEntity => write!(f, "entity"),
+            Self::QField => write!(f, "field"),
+            Self::QFunction => write!(f, "function"),
+            Self::QPointer => write!(f, "pointer"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -551,6 +567,21 @@ impl ExecutionContext {
             .chain(iter::once(self.current_function))
     }
 
+    pub fn print_backtrace(&self, string_table: &StringTable) {
+        for (depth, id) in self.backtrace().enumerate() {
+            let def = self.function_def(id).unwrap();
+
+            let name_id = def.name_id;
+            let name = string_table.get(name_id).unwrap();
+
+            println!("{}: {} - {:?}", depth, name, def.kind);
+        }
+    }
+
+    pub fn current_function(&self) -> FunctionId {
+        self.current_function
+    }
+
     pub fn find_function_by_name<S: AsRef<str>>(
         &mut self,
         string_table: &StringTable,
@@ -607,10 +638,12 @@ impl ExecutionContext {
                 .push(globals.get_bytes((def.arg_start + i) as i16)?);
         }
 
+        let mut dest = def.arg_start;
         for arg in 0..def.argc {
             for component in 0..def.argsz[arg] as usize {
                 let val = globals.get_bytes((GLOBAL_ADDR_ARG_0 + arg * 3 + component) as i16)?;
-                globals.put_bytes(val, def.arg_start as i16)?;
+                globals.put_bytes(val, dest as i16)?;
+                dest += 1;
             }
         }
 

@@ -16,6 +16,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use num_derive::FromPrimitive;
+use std::fmt;
 
 #[derive(Copy, Clone, Debug, FromPrimitive, PartialEq)]
 #[repr(i16)]
@@ -86,4 +87,77 @@ pub enum Opcode {
     Or = 63,
     BitAnd = 64,
     BitOr = 65,
+}
+
+impl fmt::Display for Opcode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Done => write!(f, "done"),
+            Self::MulF => write!(f, "mul_f"),
+            Self::MulV => write!(f, "mul_v"),
+            Self::MulFV => write!(f, "mul_f_v"),
+            Self::MulVF => write!(f, "mul_v_f"),
+            Self::Div => write!(f, "div"),
+            Self::AddF => write!(f, "add_f"),
+            Self::AddV => write!(f, "add_v"),
+            Self::SubF => write!(f, "sub_f"),
+            Self::SubV => write!(f, "sub_v"),
+            Self::EqF => write!(f, "eq_f"),
+            Self::EqV => write!(f, "eq_v"),
+            Self::EqS => write!(f, "eq_s"),
+            Self::EqEnt => write!(f, "eq_ent"),
+            Self::EqFnc => write!(f, "eq_fnc"),
+            Self::NeF => write!(f, "ne_f"),
+            Self::NeV => write!(f, "ne_v"),
+            Self::NeS => write!(f, "ne_s"),
+            Self::NeEnt => write!(f, "ne_ent"),
+            Self::NeFnc => write!(f, "ne_fnc"),
+            Self::Le => write!(f, "le"),
+            Self::Ge => write!(f, "ge"),
+            Self::Lt => write!(f, "lt"),
+            Self::Gt => write!(f, "gt"),
+            Self::LoadF => write!(f, "load_f"),
+            Self::LoadV => write!(f, "load_v"),
+            Self::LoadS => write!(f, "load_s"),
+            Self::LoadEnt => write!(f, "load_ent"),
+            Self::LoadFld => write!(f, "load_fld"),
+            Self::LoadFnc => write!(f, "load_fnc"),
+            Self::Address => write!(f, "address"),
+            Self::StoreF => write!(f, "store_f"),
+            Self::StoreV => write!(f, "store_v"),
+            Self::StoreS => write!(f, "store_s"),
+            Self::StoreEnt => write!(f, "store_ent"),
+            Self::StoreFld => write!(f, "store_fld"),
+            Self::StoreFnc => write!(f, "store_fnc"),
+            Self::StorePF => write!(f, "store_p_f"),
+            Self::StorePV => write!(f, "store_p_v"),
+            Self::StorePS => write!(f, "store_p_s"),
+            Self::StorePEnt => write!(f, "store_p_ent"),
+            Self::StorePFld => write!(f, "store_p_fld"),
+            Self::StorePFnc => write!(f, "store_p_fnc"),
+            Self::Return => write!(f, "return"),
+            Self::NotF => write!(f, "not_f"),
+            Self::NotV => write!(f, "not_v"),
+            Self::NotS => write!(f, "not_s"),
+            Self::NotEnt => write!(f, "not_ent"),
+            Self::NotFnc => write!(f, "not_fnc"),
+            Self::If => write!(f, "if"),
+            Self::IfNot => write!(f, "if_not"),
+            Self::Call0 => write!(f, "call0"),
+            Self::Call1 => write!(f, "call1"),
+            Self::Call2 => write!(f, "call2"),
+            Self::Call3 => write!(f, "call3"),
+            Self::Call4 => write!(f, "call4"),
+            Self::Call5 => write!(f, "call5"),
+            Self::Call6 => write!(f, "call6"),
+            Self::Call7 => write!(f, "call7"),
+            Self::Call8 => write!(f, "call8"),
+            Self::State => write!(f, "state"),
+            Self::Goto => write!(f, "goto"),
+            Self::And => write!(f, "and"),
+            Self::Or => write!(f, "or"),
+            Self::BitAnd => write!(f, "bit_and"),
+            Self::BitOr => write!(f, "bit_or"),
+        }
+    }
 }

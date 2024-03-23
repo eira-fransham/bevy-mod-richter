@@ -258,7 +258,7 @@ impl Globals {
                     // Err(GlobalsError::with_msg("type check failed"))
                     // TODO: QuakeC almost certainly does type punning, so we probably don't want to
                     //       completely error out.
-                    error!("Type check failed!");
+                    error!("Type check failed (expected {}, found {})", type_, d.type_);
                     Ok(())
                 }
             }
