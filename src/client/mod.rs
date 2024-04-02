@@ -321,6 +321,7 @@ enum ConnectionStatus {
 #[derive(Clone, Debug)]
 pub struct ConnectedState {
     pub model_precache: im::Vector<Model>,
+    pub worldmodel_id: usize,
 }
 
 /// Indicates the state of an active connection.
@@ -372,8 +373,11 @@ impl ConnectionKind {
         match self {
             Self::Server { reader, .. } => {
                 let mut out = Vec::new();
-                for ServerMessage(msg) in reader.read(events) {
-                    out.extend(msg);
+                for ServerMessage { client_id, packet } in reader.read(events) {
+                    // TODO: Actually use correct client id
+                    if *client_id == 0 {
+                        out.extend(packet);
+                    }
                 }
 
                 Ok(Some(ServerUpdate {
@@ -556,6 +560,7 @@ impl Connection {
                     // finished signing on, build world renderer
                     Done => ConnectionState::Connected(ConnectedState {
                         model_precache: self.state.models().clone(),
+                        worldmodel_id: self.state.worldmodel_id,
                     }),
                 }
             }
@@ -618,6 +623,19 @@ impl Connection {
                 Ok(Some(cmd)) => cmd,
                 Ok(None) => break,
             };
+
+            if !matches!(
+                cmd,
+                ServerCmd::SpawnBaseline { .. }
+                    | ServerCmd::TempEntity { .. }
+                    | ServerCmd::SpawnStatic { .. }
+                    | ServerCmd::Time { .. }
+                    | ServerCmd::FastUpdate(..)
+                    | ServerCmd::Sound { .. }
+            ) {
+                println!("{:#?}", cmd);
+            }
+
             match cmd {
                 ServerCmd::Bad => {
                     warn!("Invalid command from server")
@@ -689,7 +707,7 @@ impl Connection {
 
                 ServerCmd::LightStyle { id, value } => {
                     trace!("Inserting light style {} with value {}", id, &value);
-                    let _ = self.state.light_styles.insert(id, value);
+                    self.state.light_styles[id as usize] = value.to_str().into_owned();
                 }
 
                 ServerCmd::Particle {
@@ -808,18 +826,29 @@ impl Connection {
                     origin,
                     angles,
                 } => {
-                    self.state.spawn_entities(
-                        ent_id as usize,
-                        EntityState {
-                            model_id: model_id as usize,
-                            frame_id: frame_id as usize,
-                            colormap,
-                            skin_id: skin_id as usize,
-                            origin,
-                            angles,
-                            effects: EntityEffects::empty(),
-                        },
-                    )?;
+                    if ent_id == 0 {
+                        match &mut *state {
+                            ConnectionState::Connected(state) => {
+                                state.worldmodel_id = model_id as _
+                            }
+                            _ => {}
+                        }
+
+                        self.state.worldmodel_id = model_id as _;
+                    } else {
+                        self.state.spawn_entities(
+                            ent_id as usize,
+                            EntityState {
+                                model_id: model_id as usize,
+                                frame_id: frame_id as usize,
+                                colormap,
+                                skin_id: skin_id as usize,
+                                origin,
+                                angles,
+                                effects: EntityEffects::empty(),
+                            },
+                        )?;
+                    }
                 }
 
                 ServerCmd::SpawnStatic {
@@ -1194,7 +1223,7 @@ where
 pub struct Impulse(pub u8);
 
 mod systems {
-    use common::net::ClientMessageKind;
+    use common::net::MessageKind;
     use serde::Deserialize;
 
     use self::common::console::Registry;
@@ -1239,8 +1268,9 @@ mod systems {
                 let mut msg = Vec::new();
                 move_cmd.serialize(&mut msg)?;
                 client_events.send(ClientMessage {
+                    client_id: 0,
                     packet: msg,
-                    kind: ClientMessageKind::Unreliable,
+                    kind: MessageKind::Unreliable,
                 });
 
                 // TODO: Refresh input (e.g. mouse movement)
@@ -1436,12 +1466,15 @@ mod systems {
             ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::try_seconds(5).unwrap()),
         };
 
-        server_events.send(ServerMessage(qsock.recv_msg(blocking_mode)?));
+        server_events.send(ServerMessage {
+            client_id: 0,
+            packet: qsock.recv_msg(blocking_mode)?,
+        });
 
         for event in client_events.read() {
             match event.kind {
-                ClientMessageKind::Unreliable => qsock.send_msg_unreliable(&event.packet)?,
-                ClientMessageKind::Reliable => qsock.begin_send_msg(&event.packet)?,
+                MessageKind::Unreliable => qsock.send_msg_unreliable(&event.packet)?,
+                MessageKind::Reliable => qsock.begin_send_msg(&event.packet)?,
             }
         }
 

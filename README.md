@@ -48,6 +48,10 @@ command implementations are just regular systems which can access any resource o
 the Bevy rendergraph, although the rendering code itself is still mostly written by hand using wgpu, albeit in a much more
 extensible way than the original Richter implementation.
 
+Hosting a server has preliminary support - the server can run all the initialisation code in QuakeC, and it can
+load into any level from the original game. At the time of writing, input is unimplemented, but most physics routines and
+thinking are working. The server can communicate with the client locally, although remote clients are still unimplemented.
+
 Networking is untested since beginning the port, and I've been only using demos as a testcase. It is a priority to get this
 working again once the client update code is ported to use the ECS. I haven't touched most of the networking code, so in
 theory it should still work or only require minor changes.

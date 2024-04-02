@@ -17,7 +17,7 @@
 
 use std::{
     fmt,
-    io::{self, BufRead, BufReader, Read},
+    io::{self, BufRead},
     mem::{self, size_of},
     ops::{Deref, Not},
 };
@@ -50,6 +50,14 @@ impl Not for StringColor {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct QStr<'a> {
     pub raw: Cow<'a, [u8]>,
+}
+
+impl<'a> QStr<'a> {
+    pub fn into_owned(self) -> QString {
+        QStr {
+            raw: self.raw.into_owned().into(),
+        }
+    }
 }
 
 pub type QString = QStr<'static>;

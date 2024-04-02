@@ -568,13 +568,21 @@ impl ExecutionContext {
     }
 
     pub fn print_backtrace(&self, string_table: &StringTable) {
-        for (depth, id) in self.backtrace().enumerate() {
-            let def = self.function_def(id).unwrap();
+        let backtrace_var =
+            std::env::var("RUST_LIB_BACKTRACE").or_else(|_| std::env::var("RUST_BACKTRACE"));
+        let backtrace_enabled = match backtrace_var.as_deref() {
+            Err(_) | Ok("0") => false,
+            _ => true,
+        };
+        if backtrace_enabled {
+            for (depth, id) in self.backtrace().enumerate() {
+                let def = self.function_def(id).unwrap();
 
-            let name_id = def.name_id;
-            let name = string_table.get(name_id).unwrap();
+                let name_id = def.name_id;
+                let name = string_table.get(name_id).unwrap();
 
-            println!("{}: {} - {:?}", depth, name, def.kind);
+                println!("{}: {} - {:?}", depth, name, def.kind);
+            }
         }
     }
 
@@ -609,7 +617,7 @@ impl ExecutionContext {
         let def = self.functions.get_def(f)?;
         debug!(
             "Calling QuakeC function {}",
-            &*string_table.get(def.name_id).unwrap()
+            string_table.get(def.name_id).unwrap()
         );
 
         // save stack frame
@@ -667,7 +675,7 @@ impl ExecutionContext {
         let def = self.functions.get_def(self.current_function)?;
         debug!(
             "Returning from QuakeC function {}",
-            &*string_table.get(def.name_id).unwrap()
+            string_table.get(def.name_id).unwrap()
         );
 
         for i in (0..def.locals).rev() {

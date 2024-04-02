@@ -202,7 +202,7 @@ impl Functions {
             let f_name = strs.get(def.name_id).ok_or_else(|| {
                 ProgsError::with_msg(format!("No string with ID {:?}", def.name_id))
             })?;
-            if &*f_name == name.as_ref() {
+            if &*f_name == name.as_ref().as_bytes() {
                 return Ok(FunctionId(i));
             }
         }

@@ -15,6 +15,7 @@ use crate::{
 use super::*;
 
 pub fn register_commands(app: &mut App) {
+    // TODO: Implement `changelevel` (move to new level without resetting persistant state
     app.command(cmd_map.map(|res| -> ExecResult {
         if let Err(e) = res {
             format!("{}", e).into()
@@ -53,21 +54,21 @@ fn cmd_map(
     let progs = vfs.open("progs.dat")?;
     let progs = crate::server::progs::load(progs)?;
 
+    // TODO: Make `max_clients` a cvar
+    let new_session = Session::new(
+        bsp_name,
+        8,
+        registry.reborrow(),
+        &*vfs,
+        progs,
+        models,
+        entmap,
+    );
+
     if let Some(mut session) = session {
-        session.state = SessionState::Loading;
-        session.level =
-            LevelState::new(bsp_name, progs, models, entmap, registry.reborrow(), &*vfs);
+        *session = new_session;
     } else {
-        // TODO: Make `max_clients` a cvar
-        commands.insert_resource(Session::new(
-            bsp_name,
-            8,
-            registry.reborrow(),
-            &*vfs,
-            progs,
-            models,
-            entmap,
-        ));
+        commands.insert_resource(new_session);
     }
 
     client_events.clear();

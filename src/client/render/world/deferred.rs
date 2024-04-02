@@ -436,7 +436,7 @@ impl ViewNode for DeferredPass {
         }; MAX_LIGHTS];
 
         let mut light_count = 0;
-        for (light_id, light) in cl_state.iter_lights().enumerate() {
+        for (light_id, light) in cl_state.iter_lights().enumerate().take(MAX_LIGHTS) {
             light_count += 1;
             let light_origin = light.origin();
             let converted_origin = Vector3::new(-light_origin.y, light_origin.z, -light_origin.x);

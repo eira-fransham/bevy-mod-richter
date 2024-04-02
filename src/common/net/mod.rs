@@ -69,10 +69,13 @@ pub const MAX_ITEMS: usize = 32;
 pub const DEFAULT_VIEWHEIGHT: f32 = 22.0;
 
 #[derive(Event)]
-pub struct ServerMessage(pub Vec<u8>);
+pub struct ServerMessage {
+    pub client_id: usize,
+    pub packet: Vec<u8>,
+}
 
 #[derive(PartialEq, Eq, Copy, Clone, Hash, Default)]
-pub enum ClientMessageKind {
+pub enum MessageKind {
     #[default]
     Reliable,
     Unreliable,
@@ -80,8 +83,9 @@ pub enum ClientMessageKind {
 
 #[derive(Event, Default, Clone)]
 pub struct ClientMessage {
+    pub client_id: usize,
     pub packet: Vec<u8>,
-    pub kind: ClientMessageKind,
+    pub kind: MessageKind,
 }
 
 #[derive(Snafu, Debug)]
@@ -148,6 +152,27 @@ bitflags! {
         const SKIN = 1 << 12;
         const EFFECTS = 1 << 13;
         const LONG_ENTITY = 1 << 14;
+    }
+}
+
+impl UpdateFlags {
+    fn any_value(&self) -> bool {
+        !(*self
+            & (Self::ORIGIN_X
+                | Self::ORIGIN_Y
+                | Self::ORIGIN_Z
+                | Self::YAW
+                | Self::NO_LERP
+                | Self::FRAME
+                | Self::SIGNAL
+                | Self::PITCH
+                | Self::ROLL
+                | Self::MODEL
+                | Self::COLORMAP
+                | Self::SKIN
+                | Self::EFFECTS
+                | Self::ORIGIN_X))
+            .is_empty()
     }
 }
 
@@ -726,6 +751,10 @@ impl EntityUpdate {
         Ok(())
     }
 
+    pub fn any(&self) -> bool {
+        self.flags().any_value()
+    }
+
     pub fn long_entity(&self) -> bool {
         u8::try_from(self.ent_id).is_err()
     }
@@ -977,7 +1006,7 @@ pub enum ServerCmd {
     },
     LightStyle {
         id: u8,
-        value: String,
+        value: QString,
     },
     UpdateName {
         player_id: u8,
@@ -1274,7 +1303,10 @@ impl ServerCmd {
             BasicServerCmdCode::LightStyle => {
                 let id = reader.read_u8()?;
                 let value = util::read_cstring(reader)?.into_string();
-                ServerCmd::LightStyle { id, value }
+                ServerCmd::LightStyle {
+                    id,
+                    value: value.into(),
+                }
             }
 
             BasicServerCmdCode::UpdateName => {
@@ -1588,6 +1620,7 @@ impl ServerCmd {
         Ok(Some(cmd))
     }
 
+    #[inline(always)]
     pub fn serialize<W>(&self, writer: &mut W) -> Result<(), NetError>
     where
         W: Write,
@@ -1693,7 +1726,7 @@ impl ServerCmd {
 
             ServerCmd::LightStyle { id, ref value } => {
                 writer.write_u8(id)?;
-                writer.write_all(value.as_bytes())?;
+                writer.write_all(&*value)?;
                 writer.write_u8(0)?;
             }
 

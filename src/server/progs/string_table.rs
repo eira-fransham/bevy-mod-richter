@@ -1,4 +1,7 @@
-use crate::server::progs::{ProgsError, StringId};
+use crate::{
+    common::util::QStr,
+    server::progs::{ProgsError, StringId},
+};
 use dashmap::DashMap;
 use std::str;
 
@@ -58,7 +61,7 @@ impl StringTable {
         None
     }
 
-    pub fn get(&self, id: StringId) -> Option<&str> {
+    pub fn get(&self, id: StringId) -> Option<QStr<'_>> {
         let start = id.0;
 
         if start >= self.data.len() {
@@ -67,7 +70,7 @@ impl StringTable {
 
         if let Some(len) = self.lengths.get(&id) {
             let end = start + *len;
-            return str::from_utf8(&self.data[start..end]).ok();
+            return Some((&self.data[start..end]).into());
         }
 
         match self.data[start..]
@@ -79,7 +82,7 @@ impl StringTable {
             Some((len, _)) => {
                 self.lengths.insert(id, len);
                 let end = start + len;
-                str::from_utf8(&self.data[start..end]).ok()
+                Some((&self.data[start..end]).into())
             }
             None => panic!("string data not NUL-terminated!"),
         }

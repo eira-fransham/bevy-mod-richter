@@ -16,6 +16,7 @@ const MAX_PRECACHE_ENTRIES: usize = 256;
 // it's not currently possible to do { MAX_PRECACHE_PATH * N } where N is a
 // const generic parameter. In practice both models and sounds have a maximum
 // value of 256.
+// TODO: HashMap for fast lookup
 #[derive(Debug)]
 pub struct Precache {
     str_data: ArrayString<{ MAX_PRECACHE_PATH * MAX_PRECACHE_ENTRIES }>,
@@ -62,7 +63,7 @@ impl Precache {
     {
         let item = item.as_ref();
 
-        if item.is_empty() {
+        if item.is_empty() || item == "*0" {
             return;
         }
 

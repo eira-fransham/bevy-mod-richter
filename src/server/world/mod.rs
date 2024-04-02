@@ -338,35 +338,35 @@ impl Entities {
             })
     }
 
-    // TODO: Filter by entities that have actually changed?
     pub fn diff<'a>(&'a self, last: &'a Entities) -> impl Iterator<Item = EntityId> + 'a {
-        let mut cur_index = 0;
         self.slots
-            .leaves()
-            .zip(last.slots.leaves())
-            .map(move |(cur, last)| {
-                let out = (cur_index..cur_index + cur.len()).map(EntityId);
-                cur_index += cur.len();
-                ((cur, out), last)
-            })
-            .filter_map(|((cur, out), last)| {
-                if cur.as_ptr() != last.as_ptr() {
-                    Some(out)
-                } else {
-                    None
+            .iter()
+            .enumerate()
+            .zip(last.slots.iter().map(Some).chain(iter::repeat(None)))
+            .filter_map(|((i, cur), last)| match last {
+                Some(last) => {
+                    if matches!(cur, AreaEntitySlot::Occupied(_))
+                        || matches!(last, AreaEntitySlot::Occupied(_))
+                    {
+                        Some(EntityId(i))
+                    } else {
+                        None
+                    }
                 }
+                _ => None,
             })
-            .flatten()
     }
 
-    fn find_vacant_slot(&self) -> Result<usize, ProgsError> {
+    fn find_vacant_slot(&mut self) -> Result<usize, ProgsError> {
         for (i, slot) in self.slots.iter().enumerate() {
             if let &AreaEntitySlot::Vacant = slot {
                 return Ok(i);
             }
         }
 
-        Err(EntityError::NoVacantSlots.into())
+        self.slots.push_back(AreaEntitySlot::Vacant);
+
+        Ok(self.slots.len() - 1)
     }
 
     fn find_reserved_slot(&self) -> Result<usize, ProgsError> {
@@ -492,11 +492,11 @@ impl World {
             FieldAddrFloat::MoveKind as i16,
         )?;
 
-        // TODO: Respect max players
         let slots = iter::once(AreaEntitySlot::Occupied(AreaEntity {
             entity: world_entity,
             area_id: None,
         }))
+        // TODO: Respect max players
         .chain(iter::repeat_n(
             AreaEntitySlot::Reserved(Entity::new(&type_def)),
             8,
@@ -527,8 +527,8 @@ impl World {
     ) -> Result<(), ProgsError> {
         let name = strs.get(name_id).unwrap();
 
-        if name.ends_with(".bsp") {
-            let data = vfs.open(&*name).unwrap();
+        if name.ends_with(b".bsp") {
+            let data = vfs.open(name.to_str()).unwrap();
             let (mut brush_models, _) = bsp::load(data).unwrap();
             if brush_models.len() > 1 {
                 return Err(ProgsError::with_msg(
@@ -536,20 +536,20 @@ impl World {
                 ));
             }
             self.models.append(&mut brush_models);
-        } else if name.ends_with(".mdl") {
-            let data = vfs.open(&*name).unwrap();
+        } else if name.ends_with(b".mdl") {
+            let data = vfs.open(name.to_str()).unwrap();
             let alias_model = mdl::load(data).unwrap();
             self.models
-                .push(Model::from_alias_model(&*name, alias_model));
-        } else if name.ends_with(".spr") {
-            let data = vfs.open(&*name).unwrap();
+                .push(Model::from_alias_model(name.to_str(), alias_model));
+        } else if name.ends_with(b".spr") {
+            let data = vfs.open(name.to_str()).unwrap();
             let sprite_model = sprite::load(data);
             self.models
-                .push(Model::from_sprite_model(&*name, sprite_model));
+                .push(Model::from_sprite_model(name.to_str(), sprite_model));
         } else {
             return Err(ProgsError::with_msg(format!(
                 "Unrecognized model type: {}",
-                &*name
+                name
             )));
         }
 
@@ -574,7 +574,7 @@ impl World {
             .type_def
             .field_defs()
             .iter()
-            .find(|def| &*strs.get(def.name_id).unwrap() == name)
+            .find(|def| &*strs.get(def.name_id).unwrap() == name.as_bytes())
         {
             Some(d) => Ok(d),
             None => Err(ProgsError::with_msg(format!("no field with name {}", name))),

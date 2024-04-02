@@ -332,7 +332,7 @@ pub fn extract_world_renderer(
                 &*device,
                 &*queue,
                 state.model_precache.iter(),
-                1,
+                state.worldmodel_id,
             );
             match world_renderer {
                 // TODO: Actually track changes to the connection

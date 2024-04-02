@@ -638,6 +638,12 @@ impl Entity {
         Ok(self.get_addr(addr)?.read_f32::<LittleEndian>()?)
     }
 
+    /// Loads an `f32` from the given virtual address and converts it to a bool.
+    pub fn get_bool(&self, type_def: &EntityTypeDef, addr: i16) -> Result<bool, EntityError> {
+        self.type_check(type_def, addr as usize, Type::QFloat)?;
+        Ok(self.get_addr(addr)?.read_f32::<LittleEndian>()? != 0.)
+    }
+
     /// Stores an `f32` at the given virtual address.
     pub fn put_float(
         &mut self,
