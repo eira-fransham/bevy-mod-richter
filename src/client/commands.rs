@@ -2,6 +2,7 @@ use std::{collections::VecDeque, io::Read as _};
 
 use beef::Cow;
 use bevy::prelude::*;
+use clap::Parser;
 
 use crate::{
     common::{
@@ -22,44 +23,295 @@ use super::{
 };
 
 pub fn register_commands(app: &mut App) {
+    #[derive(Parser)]
+    #[command(name = "toggleconsole", about = "Open or close the console")]
+    struct ToggleConsole;
+
     // set up overlay/ui toggles
-    app.command("toggleconsole", cmd_toggleconsole, "TODO: Documentation");
-    app.command("togglemenu", cmd_togglemenu, "TODO: Documentation");
-
-    // set up connection console commands
-    app.command("connect", cmd_connect, "TODO: Documentation");
-    app.command("reconnect", cmd_reconnect, "TODO: Documentation");
-    app.command("disconnect", cmd_disconnect, "TODO: Documentation");
-
-    // set up demo playback
-    app.command("playdemo", cmd_playdemo, "TODO: Documentation");
-
-    app.command("startdemos", cmd_startdemos, "TODO: Documentation");
-
-    app.command("music", cmd_music, "TODO: Documentation");
-    app.command("music_stop", cmd_music_stop, "TODO: Documentation");
-    app.command("music_pause", cmd_music_pause, "TODO: Documentation");
-    app.command("music_resume", cmd_music_resume, "TODO: Documentation");
-
     app.command(
-        "echo",
-        |In(args): In<Box<[String]>>| -> ExecResult {
-            let msg = match args.len() {
-                0 => Cow::from(""),
-                _ => args.join(" ").into(),
-            };
+        |In(ToggleConsole), conn: Option<Res<Connection>>, mut focus: ResMut<InputFocus>| {
+            if conn.is_some() {
+                match &*focus {
+                    InputFocus::Menu | InputFocus::Game => *focus = InputFocus::Console,
+                    InputFocus::Console => *focus = InputFocus::Game,
+                }
+            } else {
+                match &*focus {
+                    InputFocus::Console => *focus = InputFocus::Menu,
+                    InputFocus::Menu => *focus = InputFocus::Console,
+                    InputFocus::Game => {
+                        unreachable!("Game focus is invalid when we are disconnected")
+                    }
+                }
+            }
 
-            msg.into()
+            default()
         },
-        "TODO: Documentation",
     );
 
-    // TODO: Implement alias
+    #[derive(Parser)]
+    #[command(name = "togglemenu", about = "Open or close the menu")]
+    struct ToggleMenu;
+
     app.command(
-        "alias",
-        move |In(args): In<Box<[String]>>, mut registry: ResMut<Registry>| -> ExecResult {
-            match &*args {
-                [] => {
+        |In(ToggleMenu), conn: Option<Res<Connection>>, mut focus: ResMut<InputFocus>| {
+            if conn.is_some() {
+                match &*focus {
+                    InputFocus::Game => *focus = InputFocus::Menu,
+                    InputFocus::Console => *focus = InputFocus::Menu,
+                    InputFocus::Menu => *focus = InputFocus::Game,
+                }
+            } else {
+                match &*focus {
+                    InputFocus::Console => *focus = InputFocus::Menu,
+                    InputFocus::Menu => *focus = InputFocus::Console,
+                    InputFocus::Game => {
+                        unreachable!("Game focus is invalid when we are disconnected")
+                    }
+                }
+            }
+            default()
+        },
+    );
+
+    #[derive(Parser)]
+    #[command(name = "connect", about = "Connect to a remote server")]
+    struct Connect {
+        remote: String,
+    }
+
+    // set up connection console commands
+    app.command(
+        |In(Connect { remote }), mut commands: Commands, mut focus: ResMut<InputFocus>| {
+            match connect(&remote) {
+                Ok((new_conn, new_state)) => {
+                    *focus = InputFocus::Game;
+                    commands.insert_resource(new_conn);
+                    commands.insert_resource(Connection::new_server());
+                    commands.insert_resource(new_state);
+                    default()
+                }
+                Err(e) => format!("{}", e).into(),
+            }
+        },
+    );
+
+    #[derive(Parser)]
+    #[command(name = "reconnect", about = "Reconnect to the current server")]
+    struct Reconnect;
+
+    app.command(
+        |In(Reconnect),
+         conn: Option<Res<Connection>>,
+         mut conn_state: ResMut<ConnectionState>,
+         mut focus: ResMut<InputFocus>| {
+            if conn.is_some() {
+                // TODO: clear client state
+                *conn_state = ConnectionState::SignOn(SignOnStage::Prespawn);
+                *focus = InputFocus::Game;
+                default()
+            } else {
+                // TODO: log message, e.g. "can't reconnect while disconnected"
+                "not connected".into()
+            }
+        },
+    );
+
+    #[derive(Parser)]
+    #[command(name = "reconnect", about = "Disconnect from the current server")]
+    struct Disconnect;
+
+    app.command(
+        |In(Disconnect),
+         mut commands: Commands,
+         conn: Option<Res<Connection>>,
+         mut focus: ResMut<InputFocus>| {
+            if conn.is_some() {
+                commands.remove_resource::<Connection>();
+                commands.remove_resource::<QSocket>();
+                *focus = InputFocus::Console;
+                default()
+            } else {
+                "not connected".into()
+            }
+        },
+    );
+
+    #[derive(Parser)]
+    #[command(name = "playdemo", about = "Play a specific demo")]
+    struct PlayDemo {
+        demo: String,
+    }
+
+    app.command(
+        |In(PlayDemo { demo }),
+         mut commands: Commands,
+         vfs: Res<Vfs>,
+         mut focus: ResMut<InputFocus>,
+         mut conn_state: ResMut<ConnectionState>| {
+            let (new_conn, new_state) = {
+                let mut demo_file = match vfs.open(format!("{}.dem", demo)) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        return format!("{}", e).into();
+                    }
+                };
+
+                match DemoServer::new(&mut demo_file) {
+                    Ok(d) => (
+                        Connection {
+                            kind: ConnectionKind::Demo(d),
+                            state: ClientState::new(),
+                        },
+                        ConnectionState::SignOn(SignOnStage::Prespawn),
+                    ),
+                    Err(e) => {
+                        return format!("{}", e).into();
+                    }
+                }
+            };
+
+            *focus = InputFocus::Game;
+
+            commands.insert_resource(new_conn);
+            *conn_state = new_state;
+
+            default()
+        },
+    );
+
+    #[derive(Parser)]
+    #[command(name = "startdemos", about = "Play a specific demo")]
+    struct StartDemos {
+        demos: Vec<String>,
+    }
+
+    app.command(
+        |In(StartDemos { demos }),
+         mut commands: Commands,
+         vfs: Res<Vfs>,
+         mut demo_queue: ResMut<DemoQueue>,
+         mut focus: ResMut<InputFocus>,
+         mut conn_state: ResMut<ConnectionState>,
+         server: Option<Res<Session>>| {
+            if !demos.is_empty() {
+                *demo_queue = DemoQueue::new(demos);
+            } else {
+                demo_queue.reset();
+            }
+
+            // Only actually start playing the demos if we aren't already running a server
+            // (this appears to be Quake's expected behaviour?)
+            if server.is_none() {
+                let (new_conn, new_state) = match demo_queue.next() {
+                    Some(demo) => {
+                        let mut demo_file = match vfs
+                            .open(format!("{}.dem", demo))
+                            .or_else(|_| vfs.open(format!("demos/{}.dem", demo)))
+                        {
+                            Ok(f) => f,
+                            Err(e) => {
+                                // log the error, dump the demo queue and disconnect
+                                return format!("{}", e).into();
+                            }
+                        };
+
+                        match DemoServer::new(&mut demo_file) {
+                            Ok(d) => (
+                                Connection {
+                                    kind: ConnectionKind::Demo(d),
+                                    state: ClientState::new(),
+                                },
+                                ConnectionState::SignOn(SignOnStage::Prespawn),
+                            ),
+                            Err(e) => {
+                                return format!("{}", e).into();
+                            }
+                        }
+                    }
+                    None => return "".into(),
+                };
+
+                commands.insert_resource(new_conn);
+                *conn_state = new_state;
+                *focus = InputFocus::Game;
+            }
+
+            default()
+        },
+    );
+
+    #[derive(Parser)]
+    #[command(name = "music", about = "Play a named music track")]
+    struct Music {
+        #[arg(value_name = "TRACKNAME")]
+        track: String,
+    }
+
+    app.command(|In(Music { track }), mut events: EventWriter<MixerEvent>| {
+        events.send(MixerEvent::StartMusic(Some(MusicSource::Named(track))));
+        default()
+    });
+
+    // TODO: Make these subcommands of `music`, with aliases
+    #[derive(Parser)]
+    #[command(name = "music_stop", about = "Stop the current music track")]
+    struct MusicStop;
+
+    app.command(|In(MusicStop), mut events: EventWriter<MixerEvent>| {
+        events.send(MixerEvent::StopMusic);
+        default()
+    });
+
+    // TODO: Make these subcommands of `music`, with aliases
+    #[derive(Parser)]
+    #[command(
+        name = "music_pause",
+        about = "Pause playback of the current music track"
+    )]
+    struct MusicPause;
+
+    app.command(|In(MusicPause), mut events: EventWriter<MixerEvent>| {
+        events.send(MixerEvent::PauseMusic);
+        default()
+    });
+
+    // TODO: Make these subcommands of `music`, with aliases
+    #[derive(Parser)]
+    #[command(
+        name = "music_resume",
+        about = "Resume playback of the current music track"
+    )]
+    struct MusicResume;
+
+    app.command(|In(MusicResume), mut events: EventWriter<MixerEvent>| {
+        events.send(MixerEvent::StartMusic(None));
+        default()
+    });
+
+    #[derive(Parser)]
+    #[command(name = "echo", about = "Echo to the console")]
+    struct Echo {
+        args: Vec<String>,
+    }
+
+    app.command(|In(Echo { args })| args.join(" ").trim().to_owned().into());
+
+    #[derive(Parser)]
+    #[command(name = "alias", about = "Make an alias command")]
+    struct Alias {
+        alias_name: Option<String>,
+        commands: Option<String>,
+    }
+
+    app.command(
+        |In(Alias {
+             alias_name,
+             commands,
+         }),
+         mut registry: ResMut<Registry>| {
+            match (alias_name, commands) {
+                (None, None) => {
                     let aliases = registry.aliases();
 
                     // TODO: There's probably a better way to do this
@@ -84,96 +336,92 @@ pub fn register_commands(app: &mut App) {
                     out.into()
                 }
 
-                [from, to, ..] => {
-                    registry.alias(from.clone(), to.clone());
+                (Some(from), Some(to)) => {
+                    registry.alias(from, to);
 
                     default()
                 }
 
+                // TODO: Alias info for just one alias
                 _ => String::new().into(),
             }
         },
-        "TODO: Documentation",
     );
 
-    app.command(
-        "find",
-        move |In(args): In<Box<[String]>>, cmds: Res<Registry>| -> ExecResult {
-            match args.len() {
-                1 => {
-                    // Take every item starting with the target.
-                    let it = cmds
-                        .all_names()
-                        .skip_while(|item| !item.starts_with(&args[0]))
-                        .take_while(|item| item.starts_with(&args[0]))
-                        .collect::<Vec<_>>()
-                        .join("\n");
+    #[derive(Parser)]
+    #[command(name = "find", about = "Find a command by name")]
+    struct Find {
+        pattern: String,
+    }
 
-                    it.into()
-                }
+    app.command(move |In(Find { pattern }), cmds: Res<Registry>| {
+        // Take every item starting with the target.
+        let it = cmds
+            .all_names()
+            .skip_while(|item| !item.starts_with(&pattern))
+            .take_while(|item| item.starts_with(&pattern))
+            .collect::<Vec<_>>()
+            .join("\n");
 
-                _ => "usage: find <cvar or command>".into(),
-            }
-        },
-        "TODO: Documentation",
-    );
+        it.into()
+    });
 
-    app.command(
-        "exec",
-        move |In(args): In<Box<[String]>>, vfs: Res<Vfs>| {
-            match args.len() {
-                // exec (filename): execute a script file
-                1 => {
-                    let mut script_file = match vfs.open(&args[0]) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            return ExecResult {
-                                output: format!("Couldn't exec {}: {:?}", args[0], e).into(),
-                                ..default()
-                            };
-                        }
-                    };
+    #[derive(Parser)]
+    #[command(name = "exec", about = "Execute a cfg file")]
+    struct Exec {
+        #[arg(required = true)]
+        cfgs: Vec<String>,
+    }
 
-                    let mut script = String::new();
-                    // TODO: Error handling
-                    script_file.read_to_string(&mut script).unwrap();
+    app.command(move |In(Exec { cfgs }), vfs: Res<Vfs>| {
+        let mut script = String::new();
 
-                    let script = match RunCmd::parse_many(&*script) {
-                        Ok(commands) => commands,
-                        Err(e) => {
-                            return ExecResult {
-                                output: format!("Couldn't exec {}: {:?}", args[0], e).into(),
-                                ..default()
-                            }
-                        }
-                    };
-
-                    let extra_commands = Box::new(
-                        script
-                            .into_iter()
-                            .map(RunCmd::into_owned)
-                            .collect::<Vec<_>>()
-                            .into_iter(),
-                    );
-
-                    ExecResult {
-                        extra_commands,
+        for cfg in &cfgs {
+            let mut script_file = match vfs.open(&cfg) {
+                Ok(s) => s,
+                Err(e) => {
+                    return ExecResult {
+                        output: format!("Couldn't exec {}: {:?}", cfg, e).into(),
                         ..default()
-                    }
+                    };
                 }
+            };
 
-                _ => ExecResult {
-                    output: format!("exec (filename): execute a script file").into(),
+            // TODO: Error handling
+            script_file.read_to_string(&mut script).unwrap();
+            script.push('\n');
+        }
+
+        let script = match RunCmd::parse_many(&*script) {
+            Ok(commands) => commands,
+            Err(e) => {
+                return ExecResult {
+                    output: format!("Couldn't exec: {}", e).into(),
                     ..default()
-                },
+                }
             }
-        },
-        "Execute commands from a script file",
-    );
+        };
+
+        let extra_commands = Box::new(
+            script
+                .into_iter()
+                .map(RunCmd::into_owned)
+                .collect::<Vec<_>>()
+                .into_iter(),
+        );
+
+        ExecResult {
+            extra_commands,
+            ..default()
+        }
+    });
+
+    #[derive(Parser)]
+    #[command(name = "bf", about = "Flash the screen")]
+    struct Bf;
 
     app.command(
-        "bf",
-        move |In(_): In<Box<[String]>>, conn: Option<ResMut<Connection>>| -> ExecResult {
+        move |In(Bf), conn: Option<ResMut<Connection>>| -> ExecResult {
             if let Some(mut conn) = conn {
                 conn.state.color_shifts[ColorShiftCode::Bonus as usize] = ColorShift {
                     dest_color: [215, 186, 69],
@@ -182,244 +430,20 @@ pub fn register_commands(app: &mut App) {
             }
             default()
         },
-        "Set extra color shifts",
     );
-}
 
-// implements the "toggleconsole" command
-pub fn cmd_toggleconsole(
-    In(_): In<Box<[String]>>,
-    conn: Option<Res<Connection>>,
-    mut focus: ResMut<InputFocus>,
-) -> ExecResult {
-    if conn.is_some() {
-        match &*focus {
-            InputFocus::Menu | InputFocus::Game => *focus = InputFocus::Console,
-            InputFocus::Console => *focus = InputFocus::Game,
-        }
-    } else {
-        match &*focus {
-            InputFocus::Console => *focus = InputFocus::Menu,
-            InputFocus::Menu => *focus = InputFocus::Console,
-            InputFocus::Game => unreachable!("Game focus is invalid when we are disconnected"),
-        }
+    #[derive(Parser)]
+    #[command(name = "name", about = "Set the player name")]
+    struct Name {
+        new_name: String,
     }
 
-    default()
-}
-
-// implements the "togglemenu" command
-pub fn cmd_togglemenu(
-    In(_): In<Box<[String]>>,
-    conn: Option<Res<Connection>>,
-    mut focus: ResMut<InputFocus>,
-) -> ExecResult {
-    if conn.is_some() {
-        match &*focus {
-            InputFocus::Game => *focus = InputFocus::Menu,
-            InputFocus::Console => *focus = InputFocus::Menu,
-            InputFocus::Menu => *focus = InputFocus::Game,
-        }
-    } else {
-        match &*focus {
-            InputFocus::Console => *focus = InputFocus::Menu,
-            InputFocus::Menu => *focus = InputFocus::Console,
-            InputFocus::Game => unreachable!("Game focus is invalid when we are disconnected"),
-        }
-    }
-    default()
-}
-
-// TODO: this will hang while connecting. ideally, input should be handled in a
-// separate thread so the OS doesn't think the client has gone unresponsive.
-pub fn cmd_connect(
-    In(args): In<Box<[String]>>,
-    mut commands: Commands,
-    mut focus: ResMut<InputFocus>,
-) -> ExecResult {
-    if args.len() < 1 {
-        // TODO: print to console
-        return "usage: connect <server_ip>:<server_port>".into();
-    }
-
-    match connect(&*args[0]) {
-        Ok((new_conn, new_state)) => {
-            *focus = InputFocus::Game;
-            commands.insert_resource(new_conn);
-            commands.insert_resource(Connection::new_server());
-            commands.insert_resource(new_state);
-            default()
-        }
-        Err(e) => format!("{}", e).into(),
-    }
-}
-
-pub fn cmd_reconnect(
-    In(_): In<Box<[String]>>,
-    conn: Option<Res<Connection>>,
-    mut conn_state: ResMut<ConnectionState>,
-    mut focus: ResMut<InputFocus>,
-) -> ExecResult {
-    if conn.is_some() {
-        // TODO: clear client state
-        *conn_state = ConnectionState::SignOn(SignOnStage::Prespawn);
-        *focus = InputFocus::Game;
-        default()
-    } else {
-        // TODO: log message, e.g. "can't reconnect while disconnected"
-        "not connected".into()
-    }
-}
-
-pub fn cmd_disconnect(
-    In(_): In<Box<[String]>>,
-    mut commands: Commands,
-    conn: Option<Res<Connection>>,
-    mut focus: ResMut<InputFocus>,
-) -> ExecResult {
-    if conn.is_some() {
-        commands.remove_resource::<Connection>();
-        commands.remove_resource::<QSocket>();
-        *focus = InputFocus::Console;
-        default()
-    } else {
-        "not connected".into()
-    }
-}
-
-pub fn cmd_playdemo(
-    In(args): In<Box<[String]>>,
-    mut commands: Commands,
-    vfs: Res<Vfs>,
-    mut focus: ResMut<InputFocus>,
-    mut conn_state: ResMut<ConnectionState>,
-) -> ExecResult {
-    if args.len() != 1 {
-        return "usage: playdemo [DEMOFILE]".into();
-    }
-
-    let demo = &args[0];
-
-    let (new_conn, new_state) = {
-        let mut demo_file = match vfs.open(format!("{}.dem", demo)) {
-            Ok(f) => f,
-            Err(e) => {
-                return format!("{}", e).into();
+    app.command(
+        move |In(Name { new_name }), mut registry: ResMut<Registry>| -> ExecResult {
+            match registry.set_cvar_raw("_cl_name", new_name.into()) {
+                Ok(_) => default(),
+                Err(e) => format!("Error: {}", e).into(),
             }
-        };
-
-        match DemoServer::new(&mut demo_file) {
-            Ok(d) => (
-                Connection {
-                    kind: ConnectionKind::Demo(d),
-                    state: ClientState::new(),
-                },
-                ConnectionState::SignOn(SignOnStage::Prespawn),
-            ),
-            Err(e) => {
-                return format!("{}", e).into();
-            }
-        }
-    };
-
-    *focus = InputFocus::Game;
-
-    commands.insert_resource(new_conn);
-    *conn_state = new_state;
-
-    default()
-}
-
-pub fn cmd_startdemos(
-    In(args): In<Box<[String]>>,
-    mut commands: Commands,
-    vfs: Res<Vfs>,
-    mut focus: ResMut<InputFocus>,
-    mut conn_state: ResMut<ConnectionState>,
-    server: Option<Res<Session>>,
-) -> ExecResult {
-    if args.len() == 0 {
-        return "usage: startdemos [DEMOS]".into();
-    }
-
-    let mut demo_queue = args
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect::<VecDeque<_>>();
-
-    // Only actually start playing the demos if we aren't already running a server
-    // (this appears to be Quake's expected behaviour?)
-    if server.is_none() {
-        let (new_conn, new_state) = match demo_queue.pop_front() {
-            Some(demo) => {
-                let mut demo_file = match vfs
-                    .open(format!("{}.dem", demo))
-                    .or_else(|_| vfs.open(format!("demos/{}.dem", demo)))
-                {
-                    Ok(f) => f,
-                    Err(e) => {
-                        // log the error, dump the demo queue and disconnect
-                        return format!("{}", e).into();
-                    }
-                };
-
-                match DemoServer::new(&mut demo_file) {
-                    Ok(d) => (
-                        Connection {
-                            kind: ConnectionKind::Demo(d),
-                            state: ClientState::new(),
-                        },
-                        ConnectionState::SignOn(SignOnStage::Prespawn),
-                    ),
-                    Err(e) => {
-                        return format!("{}", e).into();
-                    }
-                }
-            }
-
-            // if there are no more demos in the queue, disconnect
-            None => return "usage: startdemos [DEMOS]".into(),
-        };
-
-        commands.insert_resource(new_conn);
-        *conn_state = new_state;
-        *focus = InputFocus::Game;
-    }
-
-    commands.insert_resource(DemoQueue(demo_queue));
-    default()
-}
-
-pub fn cmd_music(In(args): In<Box<[String]>>, world: &mut World) -> ExecResult {
-    if args.len() != 1 {
-        return "usage: music [TRACKNAME]".into();
-    }
-
-    world.send_event(MixerEvent::StartMusic(Some(MusicSource::Named(
-        args[0].to_owned(),
-    ))));
-    // TODO: Handle failure correctly
-    // match res {
-    //     Ok(()) => String::new(),
-    //     Err(e) => {
-    //         music_player.stop(commands);
-    //         format!("{}", e)
-    //     }
-    // }
-    default()
-}
-
-pub fn cmd_music_stop(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
-    world.send_event(MixerEvent::StopMusic);
-    default()
-}
-
-pub fn cmd_music_pause(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
-    world.send_event(MixerEvent::PauseMusic);
-    default()
-}
-
-pub fn cmd_music_resume(In(_): In<Box<[String]>>, world: &mut World) -> ExecResult {
-    world.send_event(MixerEvent::StartMusic(None));
-    default()
+        },
+    );
 }

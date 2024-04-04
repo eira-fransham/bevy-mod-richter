@@ -15,8 +15,6 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{rc::Rc, sync::Arc};
-
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
@@ -49,7 +47,7 @@ impl Statement {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Debug, Copy, Clone, Default, PartialEq)]
 #[repr(C)]
 pub struct FunctionId(pub usize);
 
@@ -204,7 +202,7 @@ impl Functions {
             let f_name = strs.get(def.name_id).ok_or_else(|| {
                 ProgsError::with_msg(format!("No string with ID {:?}", def.name_id))
             })?;
-            if &*f_name == name.as_ref() {
+            if &*f_name == name.as_ref().as_bytes() {
                 return Ok(FunctionId(i));
             }
         }

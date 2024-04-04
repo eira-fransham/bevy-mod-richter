@@ -165,7 +165,7 @@ impl ViewNode for InitPass {
                         &camera,
                         cl_state.time(),
                         cl_state.iter_visible_entities(),
-                        lightstyle_values.as_deref().unwrap_or_default(),
+                        &lightstyle_values,
                         render_vars,
                     );
 

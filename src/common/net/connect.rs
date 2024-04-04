@@ -559,7 +559,7 @@ impl ConnectListener {
 
         // high 4 bits must be 0x8000 (CONNECT_CONTROL)
         if control & !CONNECT_LENGTH_MASK != CONNECT_CONTROL {
-            return Err(NetError::InvalidData(format!(
+            return Err(NetError::invalid_data(format!(
                 "control value {:X}",
                 control & !CONNECT_LENGTH_MASK
             )));
@@ -568,7 +568,7 @@ impl ConnectListener {
         // low 4 bits must be total length of packet
         let control_len = (control & CONNECT_LENGTH_MASK) as usize;
         if control_len != len {
-            return Err(NetError::InvalidData(format!(
+            return Err(NetError::invalid_data(format!(
                 "Actual packet length ({}) differs from header value ({})",
                 len, control_len,
             )));
@@ -579,7 +579,7 @@ impl ConnectListener {
         let request_code = match RequestCode::from_u8(request_byte) {
             Some(r) => r,
             None => {
-                return Err(NetError::InvalidData(format!(
+                return Err(NetError::invalid_data(format!(
                     "request code {}",
                     request_byte
                 )))
@@ -588,7 +588,7 @@ impl ConnectListener {
 
         let request = match request_code {
             RequestCode::Connect => {
-                let game_name = util::read_cstring(&mut reader).into_string();
+                let game_name = util::read_cstring(&mut reader)?.into_string();
                 let proto_ver = reader.read_u8()?;
                 Request::Connect(RequestConnect {
                     game_name,
@@ -597,7 +597,7 @@ impl ConnectListener {
             }
 
             RequestCode::ServerInfo => {
-                let game_name = util::read_cstring(&mut reader).into_string();
+                let game_name = util::read_cstring(&mut reader)?.into_string();
                 Request::ServerInfo(RequestServerInfo { game_name })
             }
 
@@ -607,7 +607,7 @@ impl ConnectListener {
             }
 
             RequestCode::RuleInfo => {
-                let prev_cvar = util::read_cstring(&mut reader).into_string();
+                let prev_cvar = util::read_cstring(&mut reader)?.into_string();
                 Request::RuleInfo(RequestRuleInfo { prev_cvar })
             }
         };
@@ -678,7 +678,7 @@ impl ConnectSocket {
 
         // high 4 bits must be 0x8000 (CONNECT_CONTROL)
         if control & !CONNECT_LENGTH_MASK != CONNECT_CONTROL {
-            return Err(NetError::InvalidData(format!(
+            return Err(NetError::invalid_data(format!(
                 "control value {:X}",
                 control & !CONNECT_LENGTH_MASK
             )));
@@ -697,7 +697,7 @@ impl ConnectSocket {
         let response_code = match ResponseCode::from_u8(response_byte) {
             Some(r) => r,
             None => {
-                return Err(NetError::InvalidData(format!(
+                return Err(NetError::invalid_data(format!(
                     "response code {}",
                     response_byte
                 )))
@@ -711,14 +711,14 @@ impl ConnectSocket {
             }
 
             ResponseCode::Reject => {
-                let message = util::read_cstring(&mut reader);
+                let message = util::read_cstring(&mut reader)?;
                 Response::Reject(ResponseReject { message })
             }
 
             ResponseCode::ServerInfo => {
-                let address = util::read_cstring(&mut reader).into_string();
-                let hostname = util::read_cstring(&mut reader).into_string();
-                let levelname = util::read_cstring(&mut reader).into_string();
+                let address = util::read_cstring(&mut reader)?.into_string();
+                let hostname = util::read_cstring(&mut reader)?.into_string();
+                let levelname = util::read_cstring(&mut reader)?.into_string();
                 let client_count = reader.read_u8()?;
                 let client_max = reader.read_u8()?;
                 let protocol_version = reader.read_u8()?;

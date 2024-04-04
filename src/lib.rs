@@ -16,7 +16,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #![deny(unused_must_use)]
-#![feature(extract_if, iter_repeat_n, type_alias_impl_trait)]
+#![feature(
+    extract_if,
+    iter_repeat_n,
+    type_alias_impl_trait,
+    buf_read_has_data_left,
+    error_generic_member_access
+)]
 // TODO: Is this necessary?
 #![recursion_limit = "256"]
 

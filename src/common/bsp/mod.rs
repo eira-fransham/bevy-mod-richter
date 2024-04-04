@@ -381,7 +381,7 @@ impl BspCollisionHull {
             mins, maxs
         );
 
-        if mins.x >= maxs.x || mins.y >= maxs.y || mins.z >= maxs.z {
+        if mins.x > maxs.x || mins.y > maxs.y || mins.z > maxs.z {
             return Err(BspError::with_msg("min bound exceeds max bound"));
         }
 

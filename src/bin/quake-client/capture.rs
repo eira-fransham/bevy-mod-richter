@@ -1,3 +1,4 @@
+use clap::Parser;
 use crossbeam_channel::{Receiver, Sender};
 use std::{
     collections::BTreeMap,
@@ -9,12 +10,32 @@ use std::{
 use bevy::{prelude::*, render::view::screenshot::ScreenshotManager, window::PrimaryWindow};
 use chrono::Utc;
 use image::RgbImage;
-use seismon::common::console::{ExecResult, RegisterCmdExt as _};
+use seismon::common::console::RegisterCmdExt as _;
 
 pub struct CapturePlugin;
 
 impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
+        #[derive(Parser)]
+        #[command(name = "screenshot", about = "Take a screenshot")]
+        struct Screenshot {
+            path: Option<PathBuf>,
+        }
+
+        #[derive(Parser)]
+        #[command(name = "startvideo", about = "Start recording a video")]
+        struct StartVideo {
+            path: Option<PathBuf>,
+            #[arg(long)]
+            width: Option<u32>,
+            #[arg(long)]
+            height: Option<u32>,
+        }
+
+        #[derive(Parser)]
+        #[command(name = "stopvideo", about = "Stop recording")]
+        struct StopVideo;
+
         app.add_systems(
             Update,
             (
@@ -23,145 +44,118 @@ impl Plugin for CapturePlugin {
             ),
         )
         .command(
-            "screenshot",
-            cmd_screenshot,
-            "Take a screenshot of the primary window",
+            |In(Screenshot { path }),
+             window: Query<Entity, With<PrimaryWindow>>,
+             mut screenshot_manager: ResMut<ScreenshotManager>| {
+                let Ok(window) = window.get_single() else {
+                    return "Can't find primary window".to_owned().into();
+                };
+
+                let path = match path {
+                    // TODO: make default path configurable
+                    None => {
+                        PathBuf::from(format!("richter-{}.png", Utc::now().format("%FT%H-%M-%S")))
+                    }
+                    Some(path) => path,
+                };
+
+                match screenshot_manager.save_screenshot_to_disk(window, path) {
+                    Ok(()) => default(),
+                    Err(e) => format!("Couldn't take screenshot: {}", e).into(),
+                }
+            },
         )
         .command(
-            "startvideo",
-            cmd_startvideo,
-            "Start recording a video of the screen",
+            |In(StartVideo {
+                 path,
+                 width,
+                 height,
+             }),
+             mut commands: Commands,
+             window: Query<&Window, With<PrimaryWindow>>,
+             ctx: Option<Res<VideoCtx>>| {
+                fn ceil_to(x: u32, to: u32) -> u32 {
+                    let x = x + (to - 1);
+                    x - (x % to)
+                }
+
+                const LONGEST_SIDE: u32 = 800;
+                const FPS: f64 = 30.;
+
+                if ctx.is_some() {
+                    return "Already recording video".into();
+                }
+
+                let mut path = match path {
+                    // TODO: make default path configurable
+                    None => {
+                        PathBuf::from(format!("richter-{}.mp4", Utc::now().format("%FT%H-%M-%S")))
+                    }
+                    Some(path) => path,
+                };
+                if path.extension().is_none() {
+                    path.set_extension("mp4");
+                }
+
+                let aspect_ratio = window
+                    .get_single()
+                    .map(|w| w.width() / w.height())
+                    .unwrap_or(4. / 3.);
+                let size = match (width, height) {
+                    (Some(w), Some(h)) => [w, h],
+                    (Some(w), None) => [w, (w as f32 / aspect_ratio) as u32],
+                    (None, Some(h)) => [(h as f32 * aspect_ratio) as u32, h],
+                    (None, None) => {
+                        if aspect_ratio < 1. {
+                            [(LONGEST_SIDE as f32 * aspect_ratio) as u32, LONGEST_SIDE]
+                        } else {
+                            [LONGEST_SIDE, (LONGEST_SIDE as f32 / aspect_ratio) as u32]
+                        }
+                    }
+                };
+                let [w, h] = size.map(|x| ceil_to(x, 10));
+
+                let out = format!("Recording a video ({}x{}) to {}", w, h, path.display());
+
+                let (sender, receiver) = crossbeam_channel::unbounded::<VideoFrame>();
+                let frame_time = Duration::from_secs_f64(FPS.recip());
+
+                let encoder = video_rs::Encoder::new(
+                    &path.into(),
+                    video_rs::EncoderSettings::for_h264_yuv420p(w as _, h as _, true),
+                )
+                .unwrap();
+
+                commands.insert_resource(VideoCtx {
+                    send_frame: sender,
+                    size: (w, h),
+                    frame_time,
+                    last_time: None,
+                    cur_frame: 0,
+                    closed: Arc::new(false.into()),
+                });
+
+                commands.insert_resource(VideoCtxRecv {
+                    recv_frame: Some(receiver),
+                    frame_buf: default(),
+                    encoder,
+                    frame_time: video_rs::Time::from_nth_of_a_second(FPS as _),
+                    cur_frame: 0,
+                });
+
+                out.into()
+            },
         )
         .command(
-            "stopvideo",
-            cmd_stopvideo,
-            "Stop recording a video of the screen",
+            |In(StopVideo), mut commands: Commands, ctx: Option<Res<VideoCtx>>| {
+                if ctx.is_some() {
+                    commands.remove_resource::<VideoCtx>();
+                    default()
+                } else {
+                    "Error: no video recording in progress".into()
+                }
+            },
         );
-    }
-}
-
-/// Implements the "screenshot" command.
-///
-/// This function returns a boxed closure which sets the `screenshot_path`
-/// argument to `Some` when called.
-fn cmd_screenshot(
-    In(args): In<Box<[String]>>,
-    window: Query<Entity, With<PrimaryWindow>>,
-    mut screenshot_manager: ResMut<ScreenshotManager>,
-) -> ExecResult {
-    let Ok(window) = window.get_single() else {
-        return "Can't find primary window".to_owned().into();
-    };
-
-    let path = match &*args {
-        // TODO: make default path configurable
-        [] => PathBuf::from(format!("richter-{}.png", Utc::now().format("%FT%H-%M-%S"))),
-        [path] => PathBuf::from(path),
-        _ => {
-            return "Usage: screenshot [PATH]".to_owned().into();
-        }
-    };
-
-    match screenshot_manager.save_screenshot_to_disk(window, path) {
-        Ok(()) => default(),
-        Err(e) => format!("Couldn't take screenshot: {}", e).into(),
-    }
-}
-
-/// Implements the "screenshot" command.
-///
-/// This function returns a boxed closure which sets the `screenshot_path`
-/// argument to `Some` when called.
-fn cmd_startvideo(
-    In(args): In<Box<[String]>>,
-    mut commands: Commands,
-    window: Query<&Window, With<PrimaryWindow>>,
-    ctx: Option<Res<VideoCtx>>,
-) -> ExecResult {
-    fn round_to_nearest(x: u32, to: u32) -> u32 {
-        let y = to - 1;
-        (x + y) & !y
-    }
-
-    const LONGEST_SIDE: usize = 800;
-    const FPS: f64 = 30.;
-
-    if ctx.is_some() {
-        return "Already recording video".into();
-    }
-
-    let (mut path, longest_side) = match &*args {
-        // TODO: make default path configurable
-        [] => (
-            PathBuf::from(format!("richter-{}.mp4", Utc::now().format("%FT%H-%M-%S"))),
-            LONGEST_SIDE,
-        ),
-        [path] => (PathBuf::from(path), LONGEST_SIDE),
-        [path, resolution] => (
-            PathBuf::from(path),
-            resolution.parse::<usize>().unwrap_or(LONGEST_SIDE),
-        ),
-        _ => {
-            return "Usage: startvideo [PATH] [RESOLUTION]".to_owned().into();
-        }
-    };
-    path.set_extension("mp4");
-
-    let aspect_ratio = window
-        .get_single()
-        .map(|w| w.width() / w.height())
-        .unwrap_or(4. / 3.);
-    let (w, h) = if aspect_ratio > 1. {
-        (longest_side as f32, longest_side as f32 / aspect_ratio)
-    } else {
-        (longest_side as f32 * aspect_ratio, longest_side as f32)
-    };
-    let (w, h) = (
-        round_to_nearest(w as u32, 10),
-        round_to_nearest(h as u32, 10),
-    );
-
-    let out = format!("Recording a video ({}x{}) to {}", w, h, path.display());
-
-    let (sender, receiver) = crossbeam_channel::unbounded::<VideoFrame>();
-    let frame_time = Duration::from_secs_f64(FPS.recip());
-
-    let encoder = video_rs::Encoder::new(
-        &path.into(),
-        video_rs::EncoderSettings::for_h264_yuv420p(w as _, h as _, true),
-    )
-    .unwrap();
-
-    commands.insert_resource(VideoCtx {
-        send_frame: sender,
-        size: (w, h),
-        frame_time,
-        last_time: None,
-        cur_frame: 0,
-        closed: Arc::new(false.into()),
-    });
-
-    commands.insert_resource(VideoCtxRecv {
-        recv_frame: Some(receiver),
-        frame_buf: default(),
-        encoder,
-        frame_time: video_rs::Time::from_nth_of_a_second(FPS as _),
-        cur_frame: 0,
-    });
-
-    out.into()
-}
-
-fn cmd_stopvideo(
-    In(_): In<Box<[String]>>,
-    mut commands: Commands,
-    ctx: Option<Res<VideoCtx>>,
-) -> ExecResult {
-    if ctx.is_some() {
-        commands.remove_resource::<VideoCtx>();
-        default()
-    } else {
-        "Error: no video recording in progress".into()
     }
 }
 
@@ -230,7 +224,7 @@ mod systems {
                 let image = image
                     .try_into_dynamic()
                     .unwrap()
-                    .resize(size.0, size.1, FilterType::Nearest)
+                    .resize_to_fill(size.0, size.1, FilterType::Nearest)
                     .into_rgb8();
 
                 if let Err(_) = sender.send(VideoFrame { image, frame_id }) {

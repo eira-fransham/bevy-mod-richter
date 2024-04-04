@@ -37,7 +37,7 @@ use self::{
     sound::{MixerEvent, SeismonSoundPlugin},
 };
 
-use std::{collections::VecDeque, io::BufReader, mem, net::ToSocketAddrs, path::PathBuf};
+use std::{iter, mem, net::ToSocketAddrs, ops::Range, path::PathBuf};
 
 use crate::{
     client::{
@@ -50,7 +50,7 @@ use crate::{
     },
     common::{
         self,
-        console::{ConsoleError, ConsoleOutput, SeismonConsolePlugin},
+        console::{ConsoleError, ConsoleOutput, RunCmd, SeismonConsolePlugin},
         engine,
         model::{Model, ModelError},
         net::{
@@ -314,6 +314,7 @@ enum ConnectionStatus {
 #[derive(Clone, Debug)]
 pub struct ConnectedState {
     pub model_precache: im::Vector<Model>,
+    pub worldmodel_id: usize,
 }
 
 /// Indicates the state of an active connection.
@@ -365,8 +366,11 @@ impl ConnectionKind {
         match self {
             Self::Server { reader, .. } => {
                 let mut out = Vec::new();
-                for ServerMessage(msg) in reader.read(events) {
-                    out.extend(msg);
+                for ServerMessage { client_id, packet } in reader.read(events) {
+                    // TODO: Actually use correct client id
+                    if *client_id == 0 {
+                        out.extend(packet);
+                    }
                 }
 
                 Ok(Some(ServerUpdate {
@@ -406,6 +410,12 @@ impl ConnectionKind {
             Self::Server { .. } => false,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct ClientVars<'a> {
+    pub name: &'a str,
+    pub color: u8,
 }
 
 /// A connection to a game server of some kind.
@@ -480,6 +490,7 @@ impl Connection {
 
     fn handle_signon(
         &mut self,
+        client_vars: &ClientVars,
         mut state: Mut<ConnectionState>,
         new_stage: SignOnStage,
     ) -> Result<(), ClientError> {
@@ -503,11 +514,15 @@ impl Connection {
                         ClientInfo => {
                             // TODO: fill in client info here
                             ClientCmd::StringCmd {
-                                cmd: format!("name \"{}\"\n", "UNNAMED"),
+                                cmd: format!("name \"{}\"\n", &client_vars.name),
                             }
                             .serialize(compose)?;
                             ClientCmd::StringCmd {
-                                cmd: format!("color {} {}", 0, 0),
+                                cmd: format!(
+                                    "color {} {}",
+                                    client_vars.color >> 4,
+                                    client_vars.color & ((1 << 4) - 1)
+                                ),
                             }
                             .serialize(compose)?;
                             // TODO: need default spawn parameters?
@@ -538,6 +553,7 @@ impl Connection {
                     // finished signing on, build world renderer
                     Done => ConnectionState::Connected(ConnectedState {
                         model_precache: self.state.models().clone(),
+                        worldmodel_id: self.state.worldmodel_id,
                     }),
                 }
             }
@@ -559,8 +575,10 @@ impl Connection {
         asset_server: &AssetServer,
         server_events: &Events<ServerMessage>,
         mixer_events: &mut EventWriter<MixerEvent>,
+        console_commands: &mut EventWriter<RunCmd<'static>>,
         mut console_output: Mut<ConsoleOutput>,
         kick_vars: KickVars,
+        client_vars: ClientVars,
     ) -> Result<ConnectionStatus, ClientError> {
         use ConnectionStatus::*;
 
@@ -588,13 +606,19 @@ impl Connection {
             return Ok(Maintain);
         }
 
-        let mut reader = BufReader::new(message.as_slice());
+        let reader = &mut message.as_slice();
 
-        while let Some(cmd) = ServerCmd::deserialize(&mut reader)? {
+        loop {
+            let cmd = match ServerCmd::deserialize(reader) {
+                Err(e) => {
+                    error!("{}", e);
+                    break;
+                }
+                Ok(Some(cmd)) => cmd,
+                Ok(None) => break,
+            };
+
             match cmd {
-                // TODO: have an error for this instead of panicking
-                // once all other commands have placeholder handlers, just error
-                // in the wildcard branch
                 ServerCmd::Bad => {
                     warn!("Invalid command from server")
                 }
@@ -636,7 +660,7 @@ impl Connection {
 
                 ServerCmd::FastUpdate(ent_update) => {
                     // first update signals the last sign-on stage
-                    self.handle_signon(state.reborrow(), SignOnStage::Done)?;
+                    self.handle_signon(&client_vars, state.reborrow(), SignOnStage::Done)?;
 
                     let ent_id = ent_update.ent_id as usize;
                     self.state.update_entity(ent_id, ent_update)?;
@@ -665,7 +689,7 @@ impl Connection {
 
                 ServerCmd::LightStyle { id, value } => {
                     trace!("Inserting light style {} with value {}", id, &value);
-                    let _ = self.state.light_styles.insert(id, value);
+                    self.state.light_styles[id as usize] = value.to_str().into_owned();
                 }
 
                 ServerCmd::Particle {
@@ -736,7 +760,7 @@ impl Connection {
                 }
 
                 ServerCmd::SignOnStage { stage } => {
-                    self.handle_signon(state.reborrow(), stage)?;
+                    self.handle_signon(&client_vars, state.reborrow(), stage)?;
                 }
 
                 ServerCmd::Sound {
@@ -755,7 +779,7 @@ impl Connection {
                     );
 
                     if entity_id as usize >= self.state.entities.len() {
-                        warn!(
+                        error!(
                             "server tried to start sound on nonexistent entity {}",
                             entity_id
                         );
@@ -784,18 +808,29 @@ impl Connection {
                     origin,
                     angles,
                 } => {
-                    self.state.spawn_entities(
-                        ent_id as usize,
-                        EntityState {
-                            model_id: model_id as usize,
-                            frame_id: frame_id as usize,
-                            colormap,
-                            skin_id: skin_id as usize,
-                            origin,
-                            angles,
-                            effects: EntityEffects::empty(),
-                        },
-                    )?;
+                    if ent_id == 0 {
+                        match &mut *state {
+                            ConnectionState::Connected(state) => {
+                                state.worldmodel_id = model_id as _
+                            }
+                            _ => {}
+                        }
+
+                        self.state.worldmodel_id = model_id as _;
+                    } else {
+                        self.state.spawn_entities(
+                            ent_id as usize,
+                            EntityState {
+                                model_id: model_id as usize,
+                                frame_id: frame_id as usize,
+                                colormap,
+                                skin_id: skin_id as usize,
+                                origin,
+                                angles,
+                                effects: EntityEffects::empty(),
+                            },
+                        )?;
+                    }
                 }
 
                 ServerCmd::SpawnStatic {
@@ -843,10 +878,12 @@ impl Connection {
                 }
 
                 ServerCmd::TempEntity { temp_entity } => {
-                    self.state.spawn_temp_entity(mixer_events, &temp_entity)
+                    self.state.spawn_temp_entity(mixer_events, &temp_entity);
                 }
 
-                ServerCmd::StuffText { text: _text } => {} // todo!("Reimplement console"), // console.append_text(text),
+                ServerCmd::StuffText { text } => {
+                    console_commands.send(text.to_str().parse().unwrap());
+                }
 
                 ServerCmd::Time { time } => {
                     self.state.msg_times[1] = self.state.msg_times[0];
@@ -974,11 +1011,13 @@ impl Connection {
         from_server: &Events<ServerMessage>,
         to_server: &mut EventWriter<ClientMessage>,
         mixer_events: &mut EventWriter<MixerEvent>,
+        console_commands: &mut EventWriter<RunCmd<'static>>,
         mut console: Mut<ConsoleOutput>,
         idle_vars: IdleVars,
         kick_vars: KickVars,
         roll_vars: RollVars,
         bob_vars: BobVars,
+        client_vars: ClientVars,
         cl_nolerp: bool,
         sv_gravity: f32,
     ) -> Result<ConnectionStatus, ClientError> {
@@ -995,8 +1034,10 @@ impl Connection {
             asset_server,
             from_server,
             mixer_events,
+            console_commands,
             console.reborrow(),
             kick_vars,
+            client_vars,
         )? {
             ConnectionStatus::Maintain => {}
             // if Disconnect or NextDemo, delegate up the chain
@@ -1052,8 +1093,39 @@ impl Connection {
     }
 }
 
-#[derive(Resource, ExtractResource, Clone, Default)]
-pub struct DemoQueue(pub VecDeque<String>);
+#[derive(Resource, ExtractResource, Clone)]
+pub struct DemoQueue {
+    values: Vec<String>,
+    indices: iter::Peekable<iter::Cycle<Range<usize>>>,
+}
+
+impl Default for DemoQueue {
+    fn default() -> Self {
+        Self::new(default())
+    }
+}
+
+impl DemoQueue {
+    pub fn new(inner: Vec<String>) -> Self {
+        let range = (0..inner.len()).cycle().peekable();
+        Self {
+            values: inner,
+            indices: range,
+        }
+    }
+
+    pub fn next(&mut self) -> Option<&str> {
+        self.indices.next().map(|i| &self.values[i][..])
+    }
+
+    pub fn index(&mut self) -> Option<usize> {
+        self.indices.peek().copied()
+    }
+
+    pub fn reset(&mut self) {
+        self.indices = (0..self.values.len()).cycle().peekable();
+    }
+}
 
 fn connect<A>(server_addrs: A) -> Result<(QSocket, ConnectionState), ClientError>
 where
@@ -1084,7 +1156,7 @@ where
                 match err {
                     // if the message is invalid, log it but don't quit
                     // TODO: this should probably disconnect
-                    NetError::InvalidData(msg) => error!("{}", msg),
+                    err @ NetError::InvalidData { .. } => error!("{}", err),
 
                     // other errors are fatal
                     e => return Err(e.into()),
@@ -1137,7 +1209,7 @@ where
 pub struct Impulse(pub u8);
 
 mod systems {
-    use common::net::ClientMessageKind;
+    use common::net::MessageKind;
     use serde::Deserialize;
 
     use self::common::console::Registry;
@@ -1182,8 +1254,9 @@ mod systems {
                 let mut msg = Vec::new();
                 move_cmd.serialize(&mut msg)?;
                 client_events.send(ClientMessage {
+                    client_id: 0,
                     packet: msg,
-                    kind: ClientMessageKind::Unreliable,
+                    kind: MessageKind::Unreliable,
                 });
 
                 // TODO: Refresh input (e.g. mouse movement)
@@ -1213,6 +1286,7 @@ mod systems {
         from_server: Res<Events<ServerMessage>>,
         mut to_server: EventWriter<ClientMessage>,
         mut console: ResMut<ConsoleOutput>,
+        mut console_commands: EventWriter<RunCmd<'static>>,
         mut demo_queue: ResMut<DemoQueue>,
         mut focus: ResMut<InputFocus>,
         mut conn: Option<ResMut<Connection>>,
@@ -1236,6 +1310,17 @@ mod systems {
         let bob_vars: BobVars = cvars
             .read_cvars()
             .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
+        // `serde_lexpr` doesn't allow us to configure deserialising strings and doesn't recognise symbols
+        // as valid strings, so we need to use `.value().as_name()` and can't use `read_cvars`.
+        let client_vars: ClientVars = ClientVars {
+            name: cvars
+                .get_cvar("_cl_name")
+                .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?
+                .value()
+                .as_name()
+                .unwrap_or("player"),
+            color: cvars.read_cvar("_cl_color")?,
+        };
 
         let status = match conn.as_deref_mut() {
             Some(ref mut conn) => conn.frame(
@@ -1250,11 +1335,13 @@ mod systems {
                 &*from_server,
                 &mut to_server,
                 &mut mixer_events,
+                &mut console_commands,
                 console.reborrow(),
                 idle_vars,
                 kick_vars,
                 roll_vars,
                 bob_vars,
+                client_vars,
                 disable_lerp != 0.,
                 gravity,
             )?,
@@ -1271,14 +1358,8 @@ mod systems {
                     Disconnect => None,
 
                     // get the next demo from the queue
-                    NextDemo => {
-                        // Prevent the demo queue borrow from lasting too long
-                        let next = {
-                            let next = demo_queue.0.pop_front();
-
-                            next
-                        };
-                        match next {
+                    NextDemo => loop {
+                        match demo_queue.next() {
                             Some(demo) => {
                                 // TODO: Extract this to a separate function so we don't duplicate the logic to find the demos in different places
                                 let mut demo_file = match vfs
@@ -1289,28 +1370,33 @@ mod systems {
                                     Err(e) => {
                                         // log the error, dump the demo queue and disconnect
                                         console.println(format!("{}", e), time);
-                                        demo_queue.0.clear();
-                                        None
+
+                                        match demo_queue.index() {
+                                            Some(0) => break None,
+                                            _ => continue,
+                                        }
                                     }
                                 };
 
-                                demo_file.as_mut().and_then(|df| match DemoServer::new(df) {
-                                    Ok(d) => Some(Connection {
-                                        kind: ConnectionKind::Demo(d),
-                                        state: ClientState::new(),
-                                    }),
-                                    Err(e) => {
-                                        console.println(format!("{}", e), time);
-                                        demo_queue.0.clear();
-                                        None
+                                break demo_file.as_mut().and_then(|df| {
+                                    match DemoServer::new(df) {
+                                        Ok(d) => Some(Connection {
+                                            kind: ConnectionKind::Demo(d),
+                                            state: ClientState::new(),
+                                        }),
+                                        Err(e) => {
+                                            console.println(format!("{}", e), time);
+                                            demo_queue.reset();
+                                            None
+                                        }
                                     }
-                                })
+                                });
                             }
 
                             // if there are no more demos in the queue, disconnect
-                            None => None,
+                            None => break None,
                         }
-                    }
+                    },
 
                     // covered in first match
                     Maintain => unreachable!(),
@@ -1368,12 +1454,15 @@ mod systems {
             ConnectionState::SignOn(_) => BlockingMode::Timeout(Duration::try_seconds(5).unwrap()),
         };
 
-        server_events.send(ServerMessage(qsock.recv_msg(blocking_mode)?));
+        server_events.send(ServerMessage {
+            client_id: 0,
+            packet: qsock.recv_msg(blocking_mode)?,
+        });
 
         for event in client_events.read() {
             match event.kind {
-                ClientMessageKind::Unreliable => qsock.send_msg_unreliable(&event.packet)?,
-                ClientMessageKind::Reliable => qsock.begin_send_msg(&event.packet)?,
+                MessageKind::Unreliable => qsock.send_msg_unreliable(&event.packet)?,
+                MessageKind::Reliable => qsock.begin_send_msg(&event.packet)?,
             }
         }
 

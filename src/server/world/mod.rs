@@ -18,7 +18,11 @@
 mod entity;
 pub mod phys;
 
-use std::{collections::HashSet, iter, ops::RangeBounds, slice::SliceIndex};
+use std::{
+    collections::HashSet,
+    iter,
+    ops::{Bound, RangeBounds},
+};
 
 use self::{
     entity::Entity,
@@ -201,6 +205,7 @@ struct AreaEntity {
 #[derive(Debug, Clone)]
 enum AreaEntitySlot {
     Vacant,
+    Reserved(Entity),
     Occupied(AreaEntity),
 }
 
@@ -214,9 +219,9 @@ pub struct World {
     models: Vec<Model>,
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Entities {
-    slots: Vec<AreaEntitySlot>,
+    slots: im::Vector<AreaEntitySlot>,
 }
 
 impl Entities {
@@ -227,10 +232,11 @@ impl Entities {
     /// This method panics if `entity_id` does not refer to a valid slot or if
     /// the slot is vacant.
     #[inline]
-    pub fn get(&self, entity_id: EntityId) -> &Entity {
-        match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant => panic!("no such entity: {:?}", entity_id),
-            AreaEntitySlot::Occupied(ref e) => &e.entity,
+    pub fn get(&self, entity_id: EntityId) -> Option<&Entity> {
+        match self.slots.get(entity_id.0)? {
+            AreaEntitySlot::Vacant => None,
+            AreaEntitySlot::Reserved(entity) => Some(entity),
+            AreaEntitySlot::Occupied(e) => Some(&e.entity),
         }
     }
 
@@ -242,12 +248,13 @@ impl Entities {
             )));
         }
 
-        match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
+        match self.slots.get(entity_id.0) {
+            None | Some(AreaEntitySlot::Vacant) => Err(ProgsError::with_msg(format!(
                 "No entity at list entry {}",
                 entity_id.0
             ))),
-            AreaEntitySlot::Occupied(ref e) => Ok(&e.entity),
+            Some(AreaEntitySlot::Reserved(entity)) => Ok(entity),
+            Some(AreaEntitySlot::Occupied(e)) => Ok(&e.entity),
         }
     }
 
@@ -259,12 +266,34 @@ impl Entities {
             )));
         }
 
-        match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
+        match self.slots.get_mut(entity_id.0) {
+            None | Some(AreaEntitySlot::Vacant) => Err(ProgsError::with_msg(format!(
                 "No entity at list entry {}",
                 entity_id.0
             ))),
-            AreaEntitySlot::Occupied(ref mut e) => Ok(&mut e.entity),
+            Some(AreaEntitySlot::Reserved(entity)) => Ok(entity),
+            Some(AreaEntitySlot::Occupied(e)) => Ok(&mut e.entity),
+        }
+    }
+
+    pub fn insert(&mut self, entity_id: EntityId, type_def: &EntityTypeDef) -> &mut Entity {
+        self.slots[entity_id.0] = AreaEntitySlot::Occupied(AreaEntity {
+            entity: Entity::new(type_def),
+            area_id: None,
+        });
+
+        match &mut self.slots[entity_id.0] {
+            AreaEntitySlot::Occupied(ent) => &mut ent.entity,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn remove(&mut self, entity_id: EntityId) -> Result<(), ProgsError> {
+        if let Some(AreaEntitySlot::Occupied(_)) = self.slots.get(entity_id.0) {
+            self.slots[entity_id.0] = AreaEntitySlot::Vacant;
+            Ok(())
+        } else {
+            Err(EntityError::Address(entity_id.0 as _).into())
         }
     }
 
@@ -272,51 +301,89 @@ impl Entities {
         matches!(self.slots[entity_id.0], AreaEntitySlot::Occupied(_))
     }
 
-    pub fn list(&self, list: &mut Vec<EntityId>) {
-        for (id, slot) in self.slots.iter().enumerate() {
-            if let &AreaEntitySlot::Occupied(_) = slot {
-                list.push(EntityId(id));
-            }
-        }
+    pub fn list(&self) -> impl Iterator<Item = EntityId> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| matches!(slot, &AreaEntitySlot::Occupied(_)))
+            .map(|(id, _)| EntityId(id))
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.range(..)
     }
 
-    pub fn range<'a, R>(&'a self, range: R) -> impl Iterator<Item = EntityId> + 'a
+    pub fn range<R>(&self, range: R) -> impl Iterator<Item = EntityId> + '_
     where
-        R: SliceIndex<[AreaEntitySlot]>,
-        R::Output: AsRef<[AreaEntitySlot]> + 'a,
+        R: RangeBounds<usize>,
     {
-        self.slots[range]
-            .as_ref()
-            .iter()
+        let start = match range.start_bound() {
+            Bound::Unbounded => 0,
+            Bound::Excluded(bound) => *bound + 1,
+            Bound::Included(bound) => *bound,
+        };
+        self.slots
+            .focus()
+            .narrow(range)
+            .into_iter()
             .enumerate()
-            .filter_map(|(id, slot)| {
+            .filter_map(move |(id, slot)| {
                 if let &AreaEntitySlot::Occupied(_) = slot {
-                    Some(EntityId(id))
+                    Some(EntityId(id + start))
                 } else {
                     None
                 }
             })
     }
 
-    fn find_vacant_slot(&self) -> Result<usize, ()> {
+    pub fn diff<'a>(&'a self, last: &'a Entities) -> impl Iterator<Item = EntityId> + 'a {
+        self.slots
+            .iter()
+            .enumerate()
+            .zip(last.slots.iter().map(Some).chain(iter::repeat(None)))
+            .filter_map(|((i, cur), last)| match last {
+                Some(last) => {
+                    if matches!(cur, AreaEntitySlot::Occupied(_))
+                        || matches!(last, AreaEntitySlot::Occupied(_))
+                    {
+                        Some(EntityId(i))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+    }
+
+    fn find_vacant_slot(&mut self) -> Result<usize, ProgsError> {
         for (i, slot) in self.slots.iter().enumerate() {
             if let &AreaEntitySlot::Vacant = slot {
                 return Ok(i);
             }
         }
 
-        panic!("no vacant slots");
+        self.slots.push_back(AreaEntitySlot::Vacant);
+
+        Ok(self.slots.len() - 1)
+    }
+
+    fn find_reserved_slot(&self) -> Result<usize, ProgsError> {
+        for (i, slot) in self.slots.iter().enumerate() {
+            if let &AreaEntitySlot::Reserved(_) = slot {
+                return Ok(i);
+            }
+        }
+
+        Err(EntityError::NoVacantSlots.into())
     }
 
     pub fn alloc_uninitialized(
         &mut self,
         type_def: &EntityTypeDef,
     ) -> Result<EntityId, ProgsError> {
-        let slot_id = self.find_vacant_slot().unwrap();
+        let slot_id = self.find_vacant_slot()?;
 
         self.slots[slot_id] = AreaEntitySlot::Occupied(AreaEntity {
             entity: Entity::new(type_def),
@@ -325,9 +392,22 @@ impl Entities {
 
         Ok(EntityId(slot_id))
     }
-    pub fn free(&mut self, entity_id: EntityId) -> Result<(), ProgsError> {
-        // TODO: unlink entity from world
 
+    pub fn alloc_uninitialized_reserved(
+        &mut self,
+        type_def: &EntityTypeDef,
+    ) -> Result<EntityId, ProgsError> {
+        let slot_id = self.find_reserved_slot()?;
+
+        self.slots[slot_id] = AreaEntitySlot::Occupied(AreaEntity {
+            entity: Entity::new(type_def),
+            area_id: None,
+        });
+
+        Ok(EntityId(slot_id))
+    }
+
+    fn free(&mut self, entity_id: EntityId) -> Result<(), ProgsError> {
         if entity_id.0 > self.slots.len() {
             return Err(ProgsError::with_msg(format!(
                 "Invalid entity ID ({:?})",
@@ -352,10 +432,9 @@ impl Entities {
         }
 
         match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
-                "No entity at list entry {}",
-                entity_id.0
-            ))),
+            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved(_) => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id.0),
+            )),
             AreaEntitySlot::Occupied(ref e) => Ok(e),
         }
     }
@@ -369,17 +448,16 @@ impl Entities {
         }
 
         match self.slots[entity_id.0] {
-            AreaEntitySlot::Vacant => Err(ProgsError::with_msg(format!(
-                "No entity at list entry {}",
-                entity_id.0
-            ))),
+            AreaEntitySlot::Vacant | AreaEntitySlot::Reserved(_) => Err(ProgsError::with_msg(
+                format!("No entity at list entry {}", entity_id.0),
+            )),
             AreaEntitySlot::Occupied(ref mut e) => Ok(e),
         }
     }
 }
 
 impl World {
-    pub fn create(
+    pub fn new(
         mut brush_models: Vec<Model>,
         type_def: EntityTypeDef,
         string_table: &mut StringTable,
@@ -418,15 +496,27 @@ impl World {
             entity: world_entity,
             area_id: None,
         }))
-        .chain(iter::repeat_n(AreaEntitySlot::Vacant, MAX_ENTITIES - 1))
+        // TODO: Respect max players
+        .chain(iter::repeat_n(
+            AreaEntitySlot::Reserved(Entity::new(&type_def)),
+            8,
+        ))
+        .chain(iter::repeat(AreaEntitySlot::Vacant))
+        .take(MAX_ENTITIES)
         .collect();
+
+        let entities = Entities { slots };
 
         Ok(World {
             area_nodes,
             type_def,
-            entities: Entities { slots },
+            entities,
             models,
         })
+    }
+
+    pub fn diff<'a>(&'a self, other: &'a Entities) -> impl Iterator<Item = EntityId> + 'a {
+        self.entities.diff(other)
     }
 
     pub fn add_model(
@@ -437,8 +527,8 @@ impl World {
     ) -> Result<(), ProgsError> {
         let name = strs.get(name_id).unwrap();
 
-        if name.ends_with(".bsp") {
-            let data = vfs.open(&*name).unwrap();
+        if name.ends_with(b".bsp") {
+            let data = vfs.open(name.to_str()).unwrap();
             let (mut brush_models, _) = bsp::load(data).unwrap();
             if brush_models.len() > 1 {
                 return Err(ProgsError::with_msg(
@@ -446,20 +536,20 @@ impl World {
                 ));
             }
             self.models.append(&mut brush_models);
-        } else if name.ends_with(".mdl") {
-            let data = vfs.open(&*name).unwrap();
+        } else if name.ends_with(b".mdl") {
+            let data = vfs.open(name.to_str()).unwrap();
             let alias_model = mdl::load(data).unwrap();
             self.models
-                .push(Model::from_alias_model(&*name, alias_model));
-        } else if name.ends_with(".spr") {
-            let data = vfs.open(&*name).unwrap();
+                .push(Model::from_alias_model(name.to_str(), alias_model));
+        } else if name.ends_with(b".spr") {
+            let data = vfs.open(name.to_str()).unwrap();
             let sprite_model = sprite::load(data);
             self.models
-                .push(Model::from_sprite_model(&*name, sprite_model));
+                .push(Model::from_sprite_model(name.to_str(), sprite_model));
         } else {
             return Err(ProgsError::with_msg(format!(
                 "Unrecognized model type: {}",
-                &*name
+                name
             )));
         }
 
@@ -468,6 +558,10 @@ impl World {
 
     pub fn alloc_uninitialized(&mut self) -> Result<EntityId, ProgsError> {
         self.entities.alloc_uninitialized(&self.type_def)
+    }
+
+    pub fn alloc_uninitialized_reserved(&mut self) -> Result<EntityId, ProgsError> {
+        self.entities.alloc_uninitialized_reserved(&self.type_def)
     }
 
     fn find_def<S>(&self, strs: &StringTable, name: S) -> Result<&FieldDef, ProgsError>
@@ -480,7 +574,7 @@ impl World {
             .type_def
             .field_defs()
             .iter()
-            .find(|def| &*strs.get(def.name_id).unwrap() == name)
+            .find(|def| &*strs.get(def.name_id).unwrap() == name.as_bytes())
         {
             Some(d) => Ok(d),
             None => Err(ProgsError::with_msg(format!("no field with name {}", name))),
@@ -535,6 +629,7 @@ impl World {
         &mut self,
         string_table: &mut StringTable,
         map: HashMap<&str, &str>,
+        // functions: &Functions,
     ) -> Result<EntityId, ProgsError> {
         let mut ent = Entity::new(&self.type_def);
 
@@ -559,7 +654,11 @@ impl World {
                 "light" => {
                     // more fun hacks brought to you by Carmack & Friends
                     let def = self.find_def(&string_table, "light_lev")?;
-                    ent.put_float(&self.type_def, val.parse().unwrap(), def.offset as i16)?;
+                    ent.put_float(
+                        &self.type_def,
+                        val.trim().parse().unwrap(),
+                        def.offset as i16,
+                    )?;
                 }
 
                 k => {
@@ -589,19 +688,18 @@ impl World {
                             let id: usize = val.parse().unwrap();
 
                             if id > MAX_ENTITIES {
-                                panic!("out-of-bounds entity access");
-                            }
-
-                            match self.entities.slots[id] {
-                                AreaEntitySlot::Vacant => panic!("no entity with id {}", id),
-                                AreaEntitySlot::Occupied(_) => (),
+                                return Err(ProgsError::with_msg("out-of-bounds entity access"));
                             }
 
                             ent.put_entity_id(&self.type_def, EntityId(id), def.offset as i16)?
                         }
-                        Type::QField => panic!("attempted to store field of type Field in entity"),
+                        Type::QField => {
+                            return Err(ProgsError::with_msg(
+                                "attempted to store field of type Field in entity",
+                            ));
+                        }
                         Type::QFunction => {
-                            // TODO: need to validate this against function table
+                            error!("TODO: Implement set field function ({})", val);
                         }
                     }
                 }
@@ -627,12 +725,9 @@ impl World {
         ent_id: EntityId,
         area_id: usize,
     ) -> Result<(), ProgsError> {
-        // if this entity has been removed or freed, do nothing
-        if let AreaEntitySlot::Vacant = self.entities.slots[ent_id.0] {
+        let Some(ent) = self.entities.get(ent_id) else {
             return Ok(());
-        }
-
-        let ent = self.entities.get(ent_id);
+        };
 
         'next_trigger: for trigger_id in self.area_nodes[area_id].triggers.iter().copied() {
             if trigger_id == ent_id {
@@ -640,7 +735,9 @@ impl World {
                 continue;
             }
 
-            let trigger = self.entities.get(trigger_id);
+            let Some(trigger) = self.entities.get(trigger_id) else {
+                continue;
+            };
 
             let trigger_touch = trigger.load(&self.type_def, FieldAddrFunctionId::Touch)?;
             if trigger_touch == FunctionId(0) || trigger.solid(&self.type_def)? == EntitySolid::Not
@@ -753,7 +850,7 @@ impl World {
             let model_index = ent.get_float(&self.type_def, FieldAddrFloat::ModelIndex as i16)?;
             if model_index != 0.0 {
                 // TODO: SV_FindTouchedLeafs
-                error!("TODO: SV_FindTouchedLeafs");
+                debug!("TODO: SV_FindTouchedLeafs");
             }
 
             solid = ent.solid(&self.type_def)?;
@@ -830,20 +927,26 @@ impl World {
         min: Vector3<f32>,
         max: Vector3<f32>,
     ) -> Result<(BspCollisionHull, Vector3<f32>), ProgsError> {
-        let solid = self.entities.get(e_id).solid(&self.type_def)?;
+        let solid = self.entities.get(e_id).unwrap().solid(&self.type_def)?;
         debug!("Entity solid type: {:?}", solid);
 
         match solid {
             EntitySolid::Bsp => {
-                if self.entities.get(e_id).move_kind(&self.type_def)? != MoveKind::Push {
+                if self.entities.get(e_id).unwrap().move_kind(&self.type_def)? != MoveKind::Push {
                     return Err(ProgsError::with_msg(format!(
                         "Brush entities must have MoveKind::Push (has {:?})",
-                        self.entities.get(e_id).move_kind(&self.type_def,)
+                        self.entities.get(e_id).unwrap().move_kind(&self.type_def,)
                     )));
                 }
 
                 let size = max - min;
-                match self.models[self.entities.get(e_id).model_index(&self.type_def)?].kind() {
+                match self.models[self
+                    .entities
+                    .get(e_id)
+                    .unwrap()
+                    .model_index(&self.type_def)?]
+                .kind()
+                {
                     ModelKind::Brush(bmodel) => {
                         let hull_index;
 
@@ -861,8 +964,8 @@ impl World {
 
                         let hull = bmodel.hull(hull_index).unwrap();
 
-                        let offset =
-                            hull.min() - min + self.entities.get(e_id).origin(&self.type_def)?;
+                        let offset = hull.min() - min
+                            + self.entities.get(e_id).unwrap().origin(&self.type_def)?;
 
                         Ok((hull, offset))
                     }
@@ -874,19 +977,17 @@ impl World {
 
             _ => {
                 let hull = BspCollisionHull::for_bounds(
-                    self.entities.get(e_id).min(&self.type_def)?,
-                    self.entities.get(e_id).max(&self.type_def)?,
-                )
-                .unwrap();
-                let offset = self.entities.get(e_id).origin(&self.type_def)?;
+                    self.entities.get(e_id).unwrap().min(&self.type_def)?,
+                    self.entities.get(e_id).unwrap().max(&self.type_def)?,
+                )?;
+                let offset = self.entities.get(e_id).unwrap().origin(&self.type_def)?;
 
                 Ok((hull, offset))
             }
         }
     }
 
-    // TODO: come up with a better name. This doesn't actually move the entity!
-    pub fn move_entity(
+    pub fn trace_entity_move(
         &mut self,
         e_id: EntityId,
         start: Vector3<f32>,
@@ -901,7 +1002,7 @@ impl World {
         );
 
         debug!("Collision test: Entity {} with world entity", e_id.0);
-        let world_trace = self.collide_move_with_entity(EntityId(0), start, min, max, end)?;
+        let world_trace = self.trace(start, min, max, end)?;
 
         debug!(
             "End position after collision test with world hull: {:?}",
@@ -972,7 +1073,7 @@ impl World {
                 }
             }
 
-            match self.entities.get(*touch).solid(&self.type_def)? {
+            match self.entities.get(*touch).unwrap().solid(&self.type_def)? {
                 // if the other entity has no collision, skip it
                 EntitySolid::Not => continue,
 
@@ -994,16 +1095,18 @@ impl World {
 
             // if bounding boxes never intersect, skip this entity
             for i in 0..3 {
-                if collide.move_min[i] > self.entities.get(*touch).abs_max(&self.type_def)?[i]
-                    || collide.move_max[i] < self.entities.get(*touch).abs_min(&self.type_def)?[i]
+                if collide.move_min[i]
+                    > self.entities.get(*touch).unwrap().abs_max(&self.type_def)?[i]
+                    || collide.move_max[i]
+                        < self.entities.get(*touch).unwrap().abs_min(&self.type_def)?[i]
                 {
                     continue;
                 }
             }
 
             if let Some(e) = collide.e_id {
-                if self.entities.get(e).size(&self.type_def)?[0] != 0.0
-                    && self.entities.get(*touch).size(&self.type_def)?[0] == 0.0
+                if self.entities.get(e).unwrap().size(&self.type_def)?[0] != 0.0
+                    && self.entities.get(*touch).unwrap().size(&self.type_def)?[0] == 0.0
                 {
                     continue;
                 }
@@ -1015,8 +1118,8 @@ impl World {
 
             if let Some(e) = collide.e_id {
                 // don't collide against owner or owned entities
-                if self.entities.get(*touch).owner(&self.type_def)? == e
-                    || self.entities.get(e).owner(&self.type_def)? == *touch
+                if self.entities.get(*touch).unwrap().owner(&self.type_def)? == e
+                    || self.entities.get(e).unwrap().owner(&self.type_def)? == *touch
                 {
                     continue;
                 }
@@ -1026,6 +1129,7 @@ impl World {
             let tmp_trace = if self
                 .entities
                 .get(*touch)
+                .unwrap()
                 .flags(&self.type_def)?
                 .contains(EntityFlags::MONSTER)
             {
@@ -1092,5 +1196,16 @@ impl World {
             .trace(start - offset, end - offset)
             .unwrap()
             .adjust(offset))
+    }
+
+    // TODO: This doesn't take entities into account
+    pub fn trace(
+        &self,
+        start: Vector3<f32>,
+        min: Vector3<f32>,
+        max: Vector3<f32>,
+        end: Vector3<f32>,
+    ) -> Result<Trace, ProgsError> {
+        self.collide_move_with_entity(EntityId(0), start, min, max, end)
     }
 }

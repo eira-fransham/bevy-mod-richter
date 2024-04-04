@@ -99,18 +99,21 @@ mod ops;
 mod string_table;
 
 use std::{
-    error::Error,
     fmt,
     io::{Read, Seek, SeekFrom},
-    rc::Rc,
+    iter,
 };
 
-use crate::server::world::{EntityError, EntityTypeDef};
+use crate::{
+    common::{bsp::BspError, console::ConsoleError, net::NetError},
+    server::world::{EntityError, EntityTypeDef},
+};
 
 use bevy::prelude::*;
 use byteorder::{LittleEndian, ReadBytesExt};
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
+use snafu::{prelude::*, Backtrace};
 
 use self::{
     functions::{BuiltinFunctionId, FunctionDef, FunctionKind, Statement, MAX_ARGS},
@@ -142,65 +145,60 @@ const FUNCTION_SIZE: usize = 36;
 // the on-disk size of a global or field definition
 const DEF_SIZE: usize = 8;
 
-#[derive(Debug)]
+#[derive(Snafu, Debug)]
 pub enum ProgsError {
-    Io(::std::io::Error),
-    Globals(GlobalsError),
-    Entity(EntityError),
-    CallStackOverflow,
-    LocalStackOverflow,
-    Other(String),
+    #[snafu(context(false))]
+    Io {
+        source: ::std::io::Error,
+        backtrace: Backtrace,
+    },
+    #[snafu(context(false))]
+    Globals {
+        source: GlobalsError,
+        backtrace: Backtrace,
+    },
+    #[snafu(context(false))]
+    Net {
+        source: NetError,
+        backtrace: Backtrace,
+    },
+    #[snafu(context(false))]
+    Console {
+        source: ConsoleError,
+        backtrace: Backtrace,
+    },
+    #[snafu(context(false))]
+    Entity {
+        source: EntityError,
+        backtrace: Backtrace,
+    },
+    #[snafu(context(false))]
+    Bsp {
+        source: BspError,
+        backtrace: Backtrace,
+    },
+    CallStackOverflow {
+        backtrace: Backtrace,
+    },
+    LocalStackOverflow {
+        backtrace: Backtrace,
+    },
+    #[snafu(display("{message}"))]
+    Other {
+        message: String,
+        backtrace: Backtrace,
+    },
 }
 
 impl ProgsError {
     pub fn with_msg<S>(msg: S) -> Self
     where
-        S: AsRef<str>,
+        S: Into<String>,
     {
-        ProgsError::Other(msg.as_ref().to_owned())
-    }
-}
-
-impl fmt::Display for ProgsError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use self::ProgsError::*;
-        match *self {
-            Io(ref err) => {
-                write!(f, "I/O error: ")?;
-                err.fmt(f)
-            }
-            Globals(ref err) => {
-                write!(f, "Globals error: ")?;
-                err.fmt(f)
-            }
-            Entity(ref err) => {
-                write!(f, "Entity error: ")?;
-                err.fmt(f)
-            }
-            CallStackOverflow => write!(f, "Call stack overflow"),
-            LocalStackOverflow => write!(f, "Local stack overflow"),
-            Other(ref msg) => write!(f, "{}", msg),
+        ProgsError::Other {
+            message: msg.into(),
+            backtrace: Backtrace::capture(),
         }
-    }
-}
-
-impl Error for ProgsError {}
-
-impl From<::std::io::Error> for ProgsError {
-    fn from(error: ::std::io::Error) -> Self {
-        ProgsError::Io(error)
-    }
-}
-
-impl From<GlobalsError> for ProgsError {
-    fn from(error: GlobalsError) -> Self {
-        ProgsError::Globals(error)
-    }
-}
-
-impl From<EntityError> for ProgsError {
-    fn from(error: EntityError) -> Self {
-        ProgsError::Entity(error)
     }
 }
 
@@ -229,6 +227,12 @@ impl StringId {
 #[derive(Copy, Clone, Debug, Default, Eq, Hash, PartialEq)]
 #[repr(C)]
 pub struct EntityId(pub usize);
+
+impl From<EntityId> for u16 {
+    fn from(other: EntityId) -> Self {
+        other.0 as _
+    }
+}
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
@@ -261,6 +265,21 @@ pub enum Type {
     QField = 5,
     QFunction = 6,
     QPointer = 7,
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::QVoid => write!(f, "void"),
+            Self::QString => write!(f, "string"),
+            Self::QFloat => write!(f, "float"),
+            Self::QVector => write!(f, "vector"),
+            Self::QEntity => write!(f, "entity"),
+            Self::QField => write!(f, "field"),
+            Self::QFunction => write!(f, "function"),
+            Self::QPointer => write!(f, "pointer"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -541,6 +560,36 @@ impl ExecutionContext {
         self.call_stack.len()
     }
 
+    pub fn backtrace(&self) -> impl Iterator<Item = FunctionId> + '_ {
+        self.call_stack
+            .iter()
+            .map(|StackFrame { func_id, .. }| *func_id)
+            .chain(iter::once(self.current_function))
+    }
+
+    pub fn print_backtrace(&self, string_table: &StringTable) {
+        let backtrace_var =
+            std::env::var("RUST_LIB_BACKTRACE").or_else(|_| std::env::var("RUST_BACKTRACE"));
+        let backtrace_enabled = match backtrace_var.as_deref() {
+            Err(_) | Ok("0") => false,
+            _ => true,
+        };
+        if backtrace_enabled {
+            for (depth, id) in self.backtrace().enumerate() {
+                let def = self.function_def(id).unwrap();
+
+                let name_id = def.name_id;
+                let name = string_table.get(name_id).unwrap();
+
+                println!("{}: {} - {:?}", depth, name, def.kind);
+            }
+        }
+    }
+
+    pub fn current_function(&self) -> FunctionId {
+        self.current_function
+    }
+
     pub fn find_function_by_name<S: AsRef<str>>(
         &mut self,
         string_table: &StringTable,
@@ -553,6 +602,12 @@ impl ExecutionContext {
         self.functions.get_def(id)
     }
 
+    pub fn reset(&mut self) {
+        self.call_stack.clear();
+        self.local_stack.clear();
+        self.current_function = FunctionId(0);
+    }
+
     pub fn enter_function(
         &mut self,
         string_table: &StringTable,
@@ -562,7 +617,7 @@ impl ExecutionContext {
         let def = self.functions.get_def(f)?;
         debug!(
             "Calling QuakeC function {}",
-            &*string_table.get(def.name_id).unwrap()
+            string_table.get(def.name_id).unwrap()
         );
 
         // save stack frame
@@ -573,12 +628,16 @@ impl ExecutionContext {
 
         // check call stack overflow
         if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
-            return Err(ProgsError::CallStackOverflow);
+            return Err(ProgsError::CallStackOverflow {
+                backtrace: Backtrace::capture(),
+            });
         }
 
         // preemptively check local stack overflow
         if self.local_stack.len() + def.locals > MAX_LOCAL_STACK_DEPTH {
-            return Err(ProgsError::LocalStackOverflow);
+            return Err(ProgsError::LocalStackOverflow {
+                backtrace: Backtrace::capture(),
+            });
         }
 
         // save locals to stack
@@ -587,10 +646,12 @@ impl ExecutionContext {
                 .push(globals.get_bytes((def.arg_start + i) as i16)?);
         }
 
+        let mut dest = def.arg_start;
         for arg in 0..def.argc {
             for component in 0..def.argsz[arg] as usize {
                 let val = globals.get_bytes((GLOBAL_ADDR_ARG_0 + arg * 3 + component) as i16)?;
-                globals.put_bytes(val, def.arg_start as i16)?;
+                globals.put_bytes(val, dest as i16)?;
+                dest += 1;
             }
         }
 
@@ -614,7 +675,7 @@ impl ExecutionContext {
         let def = self.functions.get_def(self.current_function)?;
         debug!(
             "Returning from QuakeC function {}",
-            &*string_table.get(def.name_id).unwrap()
+            string_table.get(def.name_id).unwrap()
         );
 
         for i in (0..def.locals).rev() {

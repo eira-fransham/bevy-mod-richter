@@ -15,10 +15,13 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-use std::{cell::RefCell, error::Error, fmt, iter, rc::Rc, sync::Arc};
+use std::{error::Error, fmt, iter};
 
 use crate::{
-    common::{engine::duration_to_f32, net::EntityState},
+    common::{
+        engine::duration_to_f32,
+        net::{EntityEffects, EntityState},
+    },
     server::{
         progs::{EntityId, FieldDef, FunctionId, ProgsError, StringId, StringTable, Type},
         world::phys::MoveKind,
@@ -29,9 +32,8 @@ use arrayvec::ArrayString;
 use bevy::prelude::*;
 use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use cgmath::Vector3;
+use cgmath::{Deg, Vector3};
 use chrono::Duration;
-use im::Vector;
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 use parking_lot::Mutex;
@@ -46,6 +48,7 @@ pub enum EntityError {
     Io(::std::io::Error),
     Address(isize),
     Other(String),
+    NoVacantSlots,
 }
 
 impl EntityError {
@@ -66,6 +69,7 @@ impl fmt::Display for EntityError {
             }
             EntityError::Address(val) => write!(f, "Invalid address ({})", val),
             EntityError::Other(ref msg) => write!(f, "{}", msg),
+            EntityError::NoVacantSlots => write!(f, "No vacant slots"),
         }
     }
 }
@@ -271,6 +275,24 @@ pub enum FieldAddrStringId {
     Noise3Name = 104,
 }
 
+impl fmt::Display for FieldAddrStringId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ClassName => write!(f, "classname"),
+            Self::ModelName => write!(f, "modelname"),
+            Self::WeaponModelName => write!(f, "weaponmodelname"),
+            Self::NetName => write!(f, "netname"),
+            Self::Target => write!(f, "target"),
+            Self::TargetName => write!(f, "targetname"),
+            Self::Message => write!(f, "message"),
+            Self::Noise0Name => write!(f, "noise0name"),
+            Self::Noise1Name => write!(f, "noise1name"),
+            Self::Noise2Name => write!(f, "noise2name"),
+            Self::Noise3Name => write!(f, "noise3name"),
+        }
+    }
+}
+
 impl FieldAddr for FieldAddrStringId {
     type Value = StringId;
 
@@ -469,7 +491,7 @@ pub enum EntitySolid {
 
 #[derive(Debug, Clone)]
 pub struct Entity {
-    addrs: Vector<[u8; 4]>,
+    addrs: im::Vector<[u8; 4]>,
 
     pub leaf_count: usize,
     pub leaf_ids: [usize; MAX_ENT_LEAVES],
@@ -515,6 +537,41 @@ impl Entity {
             }
             None => Ok(()),
         }
+    }
+
+    pub fn state(&self, type_def: &EntityTypeDef) -> Option<EntityState> {
+        let (model_id, frame_id, colormap, skin_id, effects, origin, angles) = (
+            self.get_float(type_def, FieldAddrFloat::ModelIndex as i16)
+                .ok()? as _,
+            self.get_float(type_def, FieldAddrFloat::FrameId as i16)
+                .ok()? as _,
+            self.get_float(type_def, FieldAddrFloat::Colormap as i16)
+                .ok()? as _,
+            self.get_float(type_def, FieldAddrFloat::SkinId as i16)
+                .ok()? as _,
+            EntityEffects::from_bits(
+                self.get_float(type_def, FieldAddrFloat::SkinId as i16)
+                    .ok()? as _,
+            )?,
+            self.get_vector(type_def, FieldAddrVector::Origin as i16)
+                .ok()?
+                .into(),
+            self.get_vector(type_def, FieldAddrVector::Angles as i16)
+                .ok()?,
+        );
+
+        let angles: Vector3<f32> = angles.into();
+        let angles = angles.map(Deg);
+
+        Some(EntityState {
+            model_id,
+            frame_id,
+            colormap,
+            skin_id,
+            origin,
+            angles,
+            effects,
+        })
     }
 
     /// Returns a reference to the memory at the given address.
@@ -617,6 +674,12 @@ impl Entity {
     pub fn get_float(&self, type_def: &EntityTypeDef, addr: i16) -> Result<f32, EntityError> {
         self.type_check(type_def, addr as usize, Type::QFloat)?;
         Ok(self.get_addr(addr)?.read_f32::<LittleEndian>()?)
+    }
+
+    /// Loads an `f32` from the given virtual address and converts it to a bool.
+    pub fn get_bool(&self, type_def: &EntityTypeDef, addr: i16) -> Result<bool, EntityError> {
+        self.type_check(type_def, addr as usize, Type::QFloat)?;
+        Ok(self.get_addr(addr)?.read_f32::<LittleEndian>()? != 0.)
     }
 
     /// Stores an `f32` at the given virtual address.

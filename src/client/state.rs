@@ -49,6 +49,8 @@ const CACHED_SOUND_NAMES: &[&str] = &[
     "wizard/hit.wav",
 ];
 
+const MAX_LIGHT_STYLES: usize = 64;
+
 #[derive(Clone)]
 pub struct PlayerInfo {
     pub name: QString,
@@ -67,6 +69,8 @@ pub struct ClientState {
 
     // model precache
     pub models: im::Vector<Model>,
+
+    pub worldmodel_id: usize,
 
     // name-to-id map
     pub model_names: im::HashMap<String, usize>,
@@ -91,7 +95,7 @@ pub struct ClientState {
     // visible entities, rebuilt per-frame
     pub visible_entity_ids: im::Vector<usize>,
 
-    pub light_styles: HashMap<u8, String>,
+    pub light_styles: im::Vector<String>,
 
     // various values relevant to the player and level (see common::net::ClientStat)
     pub stats: [i32; MAX_STATS],
@@ -138,6 +142,7 @@ impl ClientState {
         ClientState {
             rng: SmallRng::from_entropy(),
             models: iter::once(Model::none()).collect(),
+            worldmodel_id: 1,
             model_names: default(),
             sounds: default(),
             cached_sounds: default(),
@@ -148,7 +153,7 @@ impl ClientState {
             beams: [None; MAX_BEAMS],
             particles: Particles::new(),
             visible_entity_ids: default(),
-            light_styles: default(),
+            light_styles: iter::repeat_n("".into(), MAX_LIGHT_STYLES).collect(),
             stats: [0; MAX_STATS],
             max_players: 0,
             player_info: default(),
@@ -567,18 +572,18 @@ impl ClientState {
         self.view
             .set_view_height(update.view_height.unwrap_or(net::DEFAULT_VIEWHEIGHT));
         self.view
-            .set_ideal_pitch(update.ideal_pitch.unwrap_or(Deg(0.0)));
+            .set_ideal_pitch(update.ideal_pitch.unwrap_or(Deg(0.)));
         self.view.set_punch_angles(Angles {
-            pitch: update.punch_pitch.unwrap_or(Deg(0.0)),
-            roll: update.punch_roll.unwrap_or(Deg(0.0)),
-            yaw: update.punch_yaw.unwrap_or(Deg(0.0)),
+            pitch: update.punch_pitch.unwrap_or(Deg(0.)),
+            roll: update.punch_roll.unwrap_or(Deg(0.)),
+            yaw: update.punch_yaw.unwrap_or(Deg(0.)),
         });
 
         // store old velocity
         self.msg_velocity[1] = self.msg_velocity[0];
-        self.msg_velocity[0].x = update.velocity_x.unwrap_or(0.0);
-        self.msg_velocity[0].y = update.velocity_y.unwrap_or(0.0);
-        self.msg_velocity[0].z = update.velocity_z.unwrap_or(0.0);
+        self.msg_velocity[0].x = update.velocity_x.unwrap_or_default();
+        self.msg_velocity[0].y = update.velocity_y.unwrap_or_default();
+        self.msg_velocity[0].z = update.velocity_z.unwrap_or_default();
 
         let item_diff = update.items - self.items;
         if !item_diff.is_empty() {
@@ -596,9 +601,10 @@ impl ClientState {
         self.on_ground = update.on_ground;
         self.in_water = update.in_water;
 
-        self.stats[ClientStat::WeaponFrame as usize] = update.weapon_frame.unwrap_or(0) as i32;
-        self.stats[ClientStat::Armor as usize] = update.armor.unwrap_or(0) as i32;
-        self.stats[ClientStat::Weapon as usize] = update.weapon.unwrap_or(0) as i32;
+        self.stats[ClientStat::WeaponFrame as usize] =
+            update.weapon_frame.unwrap_or_default() as i32;
+        self.stats[ClientStat::Armor as usize] = update.armor.unwrap_or_default() as i32;
+        self.stats[ClientStat::Weapon as usize] = update.weapon.unwrap_or_default() as i32;
         self.stats[ClientStat::Health as usize] = update.health as i32;
         self.stats[ClientStat::Ammo as usize] = update.ammo as i32;
         self.stats[ClientStat::Shells as usize] = update.ammo_shells as i32;
@@ -755,9 +761,9 @@ impl ClientState {
     // ID since the lookup table is relatively sparse.
     pub fn spawn_entities(&mut self, id: usize, baseline: EntityState) -> Result<(), ClientError> {
         // don't clobber existing entities
-        if id < self.entities.len() {
-            Err(ClientError::EntityExists(id))?;
-        }
+        // if id < self.entities.len() {
+        //     Err(ClientError::EntityExists(id))?;
+        // }
 
         // spawn intermediate entities (uninitialized)
         self.entities.extend((self.entities.len()..id).map(|i| {
@@ -779,19 +785,19 @@ impl ClientState {
         if id >= self.entities.len() {
             let baseline = EntityState {
                 origin: Vector3::new(
-                    update.origin_x.unwrap_or(0.0),
-                    update.origin_y.unwrap_or(0.0),
-                    update.origin_z.unwrap_or(0.0),
+                    update.origin_x.unwrap_or_default(),
+                    update.origin_y.unwrap_or_default(),
+                    update.origin_z.unwrap_or_default(),
                 ),
                 angles: Vector3::new(
-                    update.pitch.unwrap_or(Deg(0.0)),
-                    update.yaw.unwrap_or(Deg(0.0)),
-                    update.roll.unwrap_or(Deg(0.0)),
+                    update.pitch.unwrap_or(Deg(0.)),
+                    update.yaw.unwrap_or(Deg(0.)),
+                    update.roll.unwrap_or(Deg(0.)),
                 ),
-                model_id: update.model_id.unwrap_or(0) as usize,
-                frame_id: update.frame_id.unwrap_or(0) as usize,
-                colormap: update.colormap.unwrap_or(0),
-                skin_id: update.skin_id.unwrap_or(0) as usize,
+                model_id: update.model_id.unwrap_or_default() as usize,
+                frame_id: update.frame_id.unwrap_or_default() as usize,
+                colormap: update.colormap.unwrap_or_default(),
+                skin_id: update.skin_id.unwrap_or_default() as usize,
                 effects: EntityEffects::empty(),
             };
 
@@ -1243,31 +1249,24 @@ impl ClientState {
         )
     }
 
-    pub fn lightstyle_values(&self) -> Result<ArrayVec<f32, 64>, ClientError> {
-        let mut values = ArrayVec::new();
+    pub fn lightstyle_values(&self) -> ArrayVec<f32, MAX_LIGHT_STYLES> {
+        let float_time = engine::duration_to_f32(self.time);
+        // 'z' - 'a' = 25, so divide by 12.5 to get range [0, 2]
+        let factor = ((b'z' - b'a') as f32 / 2.).recip();
+        self.light_styles
+            .iter()
+            .map(move |ls| {
+                let frame = if ls.len() == 0 {
+                    None
+                } else {
+                    Some((float_time * 10.0) as usize % ls.len())
+                };
 
-        for lightstyle_id in 0..64 {
-            match self.light_styles.get(&lightstyle_id) {
-                Some(ls) => {
-                    let float_time = engine::duration_to_f32(self.time);
-                    let frame = if ls.len() == 0 {
-                        None
-                    } else {
-                        Some((float_time * 10.0) as usize % ls.len())
-                    };
-
-                    values.push(match frame {
-                        // 'z' - 'a' = 25, so divide by 12.5 to get range [0, 2]
-                        Some(f) => (ls.as_bytes()[f] - 'a' as u8) as f32 / 12.5,
-                        None => 1.0,
-                    })
-                }
-
-                None => Err(ClientError::NoSuchLightmapAnimation(lightstyle_id as usize))?,
-            }
-        }
-
-        Ok(values)
+                frame
+                    .map(|f| (ls.as_bytes()[f] - b'a') as f32 * factor)
+                    .unwrap_or(1.)
+            })
+            .collect()
     }
 
     pub fn intermission(&self) -> Option<&IntermissionKind> {
