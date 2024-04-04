@@ -112,7 +112,7 @@ cargo +nightly run --release --manifest-path /path/to/seismon --bin quake-client
       - [x] Animated textures
       - [x] Alternate animated textures
       - [x] Liquid texture warping
-      - [ ] Sky texture scrolling (currently partial support)
+      - [x] Sky texture scrolling
     - [x] Lightmaps
     - [x] Occlusion culling
   - Alias model (`.mdl`) rendering
