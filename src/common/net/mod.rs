@@ -576,6 +576,37 @@ impl EntityState {
             effects: EntityEffects::empty(),
         }
     }
+
+    pub fn spawn_baseline(&self, ent_id: u16) -> ServerCmd {
+        ServerCmd::SpawnBaseline {
+            ent_id,
+            model_id: self.model_id as _,
+            frame_id: self.frame_id as _,
+            colormap: self.colormap,
+            skin_id: self.skin_id as _,
+            origin: self.origin,
+            angles: self.angles,
+        }
+    }
+
+    pub fn make_update(&self, ent_id: u16, baseline: &Self) -> EntityUpdate {
+        EntityUpdate {
+            ent_id,
+            model_id: Some(self.model_id as _).filter(|v| *v != baseline.model_id as u8),
+            frame_id: Some(self.frame_id as _).filter(|v| *v != baseline.frame_id as u8),
+            colormap: Some(self.colormap as _).filter(|v| *v != baseline.colormap as u8),
+            skin_id: Some(self.skin_id as _).filter(|v| *v != baseline.skin_id as u8),
+            effects: Some(self.effects).filter(|v| *v != baseline.effects),
+            origin_x: Some(self.origin[0]).filter(|v| *v != baseline.origin[0]),
+            pitch: Some(self.angles[0]).filter(|v| *v != baseline.angles[0]),
+            origin_y: Some(self.origin[1]).filter(|v| *v != baseline.origin[1]),
+            yaw: Some(self.angles[1]).filter(|v| *v != baseline.angles[1]),
+            origin_z: Some(self.origin[2]).filter(|v| *v != baseline.origin[2]),
+            roll: Some(self.angles[2]).filter(|v| *v != baseline.angles[2]),
+            // TODO: When should this be set?
+            no_lerp: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

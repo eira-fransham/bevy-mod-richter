@@ -1002,7 +1002,7 @@ impl World {
         );
 
         debug!("Collision test: Entity {} with world entity", e_id.0);
-        let world_trace = self.collide_move_with_entity(EntityId(0), start, min, max, end)?;
+        let world_trace = self.trace(start, min, max, end)?;
 
         debug!(
             "End position after collision test with world hull: {:?}",
@@ -1196,5 +1196,16 @@ impl World {
             .trace(start - offset, end - offset)
             .unwrap()
             .adjust(offset))
+    }
+
+    // TODO: This doesn't take entities into account
+    pub fn trace(
+        &self,
+        start: Vector3<f32>,
+        min: Vector3<f32>,
+        max: Vector3<f32>,
+        end: Vector3<f32>,
+    ) -> Result<Trace, ProgsError> {
+        self.collide_move_with_entity(EntityId(0), start, min, max, end)
     }
 }

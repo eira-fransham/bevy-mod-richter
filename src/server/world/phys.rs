@@ -51,8 +51,9 @@ pub enum MoveKind {
     Bounce = 10,
 }
 
-#[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, FromPrimitive, PartialEq, Default)]
 pub enum CollideKind {
+    #[default]
     Normal = 0,
     NoMonsters = 1,
     Missile = 2,
@@ -238,6 +239,20 @@ impl Trace {
             end,
             contents,
             start_solid,
+        }
+    }
+
+    pub fn plane(&self) -> Option<&Hyperplane> {
+        match &self.end.kind {
+            TraceEndKind::Boundary(boundary) => Some(&boundary.plane),
+            _ => None,
+        }
+    }
+
+    pub fn plane_dist(&self) -> Option<f32> {
+        match &self.end.kind {
+            TraceEndKind::Boundary(boundary) => Some(boundary.ratio),
+            _ => None,
         }
     }
 

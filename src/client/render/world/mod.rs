@@ -507,8 +507,15 @@ impl WorldRenderer {
             &state.world_bind_groups()[BindGroupLayoutId::PerEntity as usize],
             &[self.world_uniform_block.offset()],
         );
-        self.worldmodel_renderer
-            .record_draw(state, pass, &bump, time, camera, 0);
+        // HACK: Hardcoded frame time (TODO: Actually track frame number)
+        self.worldmodel_renderer.record_draw(
+            state,
+            pass,
+            &bump,
+            time,
+            camera,
+            ((engine::duration_to_f32(time) + (0.05 / 2.)) / 0.05) as usize,
+        );
 
         // draw entities
         info!("Drawing entities");

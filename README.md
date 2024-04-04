@@ -9,6 +9,9 @@ written in a modern ECS style, has a modern deferred and pipelined rendering sys
 framework. The engine is built of a set of plugins, and much of the work could be extracted to work in other games,
 especially the console. Work to extract these pieces out is ongoing.
 
+To my knowledge, this is the first full from-scratch rewrite of Quake 1, i.e. not built on top of the Quake 1 source code
+release.
+
 Bevy has a lot of features related to rendering, audio and state management that in my [previous Quake-related project](https://github.com/eira-fransham/goeld)
 had to be implement manually - specifically, tonemapping/HDR and pipelined rendering. The audio system has also been completely
 overhauled, and I even implemented a rewrite of Bevy's default audio framework to allow adding custom DSP effects using
@@ -26,7 +29,7 @@ Based on [Richter](https://github.com/cormac-obrien/richter) by Cormac O'Brien, 
 be at feature parity with Richter but as refactoring work is ongoing some things may be broken temporarily. Started as a quick
 project to make Richter run on macOS, but ended up with 10,000 lines added and 7500 lines removed.
 
-![alt tag](content/preview.gif)
+![Preview of demo playback](content/preview.gif)
 
 ### Goals
 
@@ -50,9 +53,17 @@ extensible way than the original Richter implementation.
 
 Hosting a server has preliminary support - the server can run all the initialisation code in QuakeC, and it can
 load into any level from the original game. At the time of writing, input is unimplemented, but most physics routines and
-thinking are working. The server can communicate with the client locally, although remote clients are still unimplemented.
+thinking are implemented. Clients can send movement information, but that information is not used yet. The server can
+communicate with the client locally, although remote clients are still unimplemented. At time of writing there seems to be
+a bug where enemies are either not appearing or being immediately killed. Work on the server is the current highest priority
+task. Here is an example of the client connected to the local Seismon server running `e1m2`:
 
-Networking is untested since beginning the port, and I've been only using demos as a testcase. It is a priority to get this
+![Preview of running server](content/seismon-server.gif)
+
+`map` works the first time, although there are still bugs when changing maps (presumably due to state being incorrectly carried
+over between map runs), and `changelevel` is still unimplemented.
+
+Networking is untested since beginning the rewrite, and I've been only using demos as a testcase. It is a priority to get this
 working again once the client update code is ported to use the ECS. I haven't touched most of the networking code, so in
 theory it should still work or only require minor changes.
 

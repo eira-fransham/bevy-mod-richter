@@ -572,18 +572,18 @@ impl ClientState {
         self.view
             .set_view_height(update.view_height.unwrap_or(net::DEFAULT_VIEWHEIGHT));
         self.view
-            .set_ideal_pitch(update.ideal_pitch.unwrap_or(Deg(0.0)));
+            .set_ideal_pitch(update.ideal_pitch.unwrap_or(Deg(0.)));
         self.view.set_punch_angles(Angles {
-            pitch: update.punch_pitch.unwrap_or(Deg(0.0)),
-            roll: update.punch_roll.unwrap_or(Deg(0.0)),
-            yaw: update.punch_yaw.unwrap_or(Deg(0.0)),
+            pitch: update.punch_pitch.unwrap_or(Deg(0.)),
+            roll: update.punch_roll.unwrap_or(Deg(0.)),
+            yaw: update.punch_yaw.unwrap_or(Deg(0.)),
         });
 
         // store old velocity
         self.msg_velocity[1] = self.msg_velocity[0];
-        self.msg_velocity[0].x = update.velocity_x.unwrap_or(0.0);
-        self.msg_velocity[0].y = update.velocity_y.unwrap_or(0.0);
-        self.msg_velocity[0].z = update.velocity_z.unwrap_or(0.0);
+        self.msg_velocity[0].x = update.velocity_x.unwrap_or_default();
+        self.msg_velocity[0].y = update.velocity_y.unwrap_or_default();
+        self.msg_velocity[0].z = update.velocity_z.unwrap_or_default();
 
         let item_diff = update.items - self.items;
         if !item_diff.is_empty() {
@@ -601,9 +601,10 @@ impl ClientState {
         self.on_ground = update.on_ground;
         self.in_water = update.in_water;
 
-        self.stats[ClientStat::WeaponFrame as usize] = update.weapon_frame.unwrap_or(0) as i32;
-        self.stats[ClientStat::Armor as usize] = update.armor.unwrap_or(0) as i32;
-        self.stats[ClientStat::Weapon as usize] = update.weapon.unwrap_or(0) as i32;
+        self.stats[ClientStat::WeaponFrame as usize] =
+            update.weapon_frame.unwrap_or_default() as i32;
+        self.stats[ClientStat::Armor as usize] = update.armor.unwrap_or_default() as i32;
+        self.stats[ClientStat::Weapon as usize] = update.weapon.unwrap_or_default() as i32;
         self.stats[ClientStat::Health as usize] = update.health as i32;
         self.stats[ClientStat::Ammo as usize] = update.ammo as i32;
         self.stats[ClientStat::Shells as usize] = update.ammo_shells as i32;
@@ -784,19 +785,19 @@ impl ClientState {
         if id >= self.entities.len() {
             let baseline = EntityState {
                 origin: Vector3::new(
-                    update.origin_x.unwrap_or(0.0),
-                    update.origin_y.unwrap_or(0.0),
-                    update.origin_z.unwrap_or(0.0),
+                    update.origin_x.unwrap_or_default(),
+                    update.origin_y.unwrap_or_default(),
+                    update.origin_z.unwrap_or_default(),
                 ),
                 angles: Vector3::new(
-                    update.pitch.unwrap_or(Deg(0.0)),
-                    update.yaw.unwrap_or(Deg(0.0)),
-                    update.roll.unwrap_or(Deg(0.0)),
+                    update.pitch.unwrap_or(Deg(0.)),
+                    update.yaw.unwrap_or(Deg(0.)),
+                    update.roll.unwrap_or(Deg(0.)),
                 ),
-                model_id: update.model_id.unwrap_or(0) as usize,
-                frame_id: update.frame_id.unwrap_or(0) as usize,
-                colormap: update.colormap.unwrap_or(0),
-                skin_id: update.skin_id.unwrap_or(0) as usize,
+                model_id: update.model_id.unwrap_or_default() as usize,
+                frame_id: update.frame_id.unwrap_or_default() as usize,
+                colormap: update.colormap.unwrap_or_default(),
+                skin_id: update.skin_id.unwrap_or_default() as usize,
                 effects: EntityEffects::empty(),
             };
 

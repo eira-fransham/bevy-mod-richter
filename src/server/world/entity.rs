@@ -18,7 +18,10 @@
 use std::{error::Error, fmt, iter};
 
 use crate::{
-    common::{engine::duration_to_f32, net::EntityState},
+    common::{
+        engine::duration_to_f32,
+        net::{EntityEffects, EntityState},
+    },
     server::{
         progs::{EntityId, FieldDef, FunctionId, ProgsError, StringId, StringTable, Type},
         world::phys::MoveKind,
@@ -29,7 +32,7 @@ use arrayvec::ArrayString;
 use bevy::prelude::*;
 use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use cgmath::Vector3;
+use cgmath::{Deg, Vector3};
 use chrono::Duration;
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
@@ -534,6 +537,41 @@ impl Entity {
             }
             None => Ok(()),
         }
+    }
+
+    pub fn state(&self, type_def: &EntityTypeDef) -> Option<EntityState> {
+        let (model_id, frame_id, colormap, skin_id, effects, origin, angles) = (
+            self.get_float(type_def, FieldAddrFloat::ModelIndex as i16)
+                .ok()? as _,
+            self.get_float(type_def, FieldAddrFloat::FrameId as i16)
+                .ok()? as _,
+            self.get_float(type_def, FieldAddrFloat::Colormap as i16)
+                .ok()? as _,
+            self.get_float(type_def, FieldAddrFloat::SkinId as i16)
+                .ok()? as _,
+            EntityEffects::from_bits(
+                self.get_float(type_def, FieldAddrFloat::SkinId as i16)
+                    .ok()? as _,
+            )?,
+            self.get_vector(type_def, FieldAddrVector::Origin as i16)
+                .ok()?
+                .into(),
+            self.get_vector(type_def, FieldAddrVector::Angles as i16)
+                .ok()?,
+        );
+
+        let angles: Vector3<f32> = angles.into();
+        let angles = angles.map(Deg);
+
+        Some(EntityState {
+            model_id,
+            frame_id,
+            colormap,
+            skin_id,
+            origin,
+            angles,
+            effects,
+        })
     }
 
     /// Returns a reference to the memory at the given address.

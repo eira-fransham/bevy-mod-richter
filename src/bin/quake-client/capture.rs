@@ -74,9 +74,9 @@ impl Plugin for CapturePlugin {
              mut commands: Commands,
              window: Query<&Window, With<PrimaryWindow>>,
              ctx: Option<Res<VideoCtx>>| {
-                fn round_to_nearest(x: u32, to: u32) -> u32 {
-                    let y = to - 1;
-                    (x + y) & !y
+                fn ceil_to(x: u32, to: u32) -> u32 {
+                    let x = x + (to - 1);
+                    x - (x % to)
                 }
 
                 const LONGEST_SIDE: u32 = 800;
@@ -102,22 +102,18 @@ impl Plugin for CapturePlugin {
                     .map(|w| w.width() / w.height())
                     .unwrap_or(4. / 3.);
                 let size = match (width, height) {
-                    (Some(w), Some(h)) => [
-                        round_to_nearest(w as u32, 10),
-                        round_to_nearest(h as u32, 10),
-                    ],
-                    (Some(w), None) => [w, (aspect_ratio * w as f32) as u32],
-
-                    (None, Some(h)) => [(h as f32 / aspect_ratio) as u32, h],
+                    (Some(w), Some(h)) => [w, h],
+                    (Some(w), None) => [w, (w as f32 / aspect_ratio) as u32],
+                    (None, Some(h)) => [(h as f32 * aspect_ratio) as u32, h],
                     (None, None) => {
-                        if aspect_ratio > 1. {
-                            [(LONGEST_SIDE as f32 / aspect_ratio) as u32, LONGEST_SIDE]
+                        if aspect_ratio < 1. {
+                            [(LONGEST_SIDE as f32 * aspect_ratio) as u32, LONGEST_SIDE]
                         } else {
-                            [LONGEST_SIDE, (aspect_ratio / LONGEST_SIDE as f32) as u32]
+                            [LONGEST_SIDE, (LONGEST_SIDE as f32 / aspect_ratio) as u32]
                         }
                     }
                 };
-                let [w, h] = size.map(|x| round_to_nearest(x, 10));
+                let [w, h] = size.map(|x| ceil_to(x, 10));
 
                 let out = format!("Recording a video ({}x{}) to {}", w, h, path.display());
 
@@ -228,7 +224,7 @@ mod systems {
                 let image = image
                     .try_into_dynamic()
                     .unwrap()
-                    .resize(size.0, size.1, FilterType::Nearest)
+                    .resize_to_fill(size.0, size.1, FilterType::Nearest)
                     .into_rgb8();
 
                 if let Err(_) = sender.send(VideoFrame { image, frame_id }) {

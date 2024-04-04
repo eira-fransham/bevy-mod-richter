@@ -37,13 +37,7 @@ use self::{
     sound::{MixerEvent, SeismonSoundPlugin},
 };
 
-use std::{
-    io::{self, BufReader},
-    iter, mem,
-    net::ToSocketAddrs,
-    ops::Range,
-    path::PathBuf,
-};
+use std::{iter, mem, net::ToSocketAddrs, ops::Range, path::PathBuf};
 
 use crate::{
     client::{
@@ -56,7 +50,7 @@ use crate::{
     },
     common::{
         self,
-        console::{ConsoleError, ConsoleOutput, SeismonConsolePlugin},
+        console::{ConsoleError, ConsoleOutput, RunCmd, SeismonConsolePlugin},
         engine,
         model::{Model, ModelError},
         net::{
@@ -68,7 +62,6 @@ use crate::{
         util::QString,
         vfs::{Vfs, VfsError},
     },
-    server::Client,
 };
 use cgmath::{Deg, Vector3};
 
@@ -582,6 +575,7 @@ impl Connection {
         asset_server: &AssetServer,
         server_events: &Events<ServerMessage>,
         mixer_events: &mut EventWriter<MixerEvent>,
+        console_commands: &mut EventWriter<RunCmd<'static>>,
         mut console_output: Mut<ConsoleOutput>,
         kick_vars: KickVars,
         client_vars: ClientVars,
@@ -623,18 +617,6 @@ impl Connection {
                 Ok(Some(cmd)) => cmd,
                 Ok(None) => break,
             };
-
-            if !matches!(
-                cmd,
-                ServerCmd::SpawnBaseline { .. }
-                    | ServerCmd::TempEntity { .. }
-                    | ServerCmd::SpawnStatic { .. }
-                    | ServerCmd::Time { .. }
-                    | ServerCmd::FastUpdate(..)
-                    | ServerCmd::Sound { .. }
-            ) {
-                println!("{:#?}", cmd);
-            }
 
             match cmd {
                 ServerCmd::Bad => {
@@ -797,7 +779,7 @@ impl Connection {
                     );
 
                     if entity_id as usize >= self.state.entities.len() {
-                        warn!(
+                        error!(
                             "server tried to start sound on nonexistent entity {}",
                             entity_id
                         );
@@ -896,10 +878,12 @@ impl Connection {
                 }
 
                 ServerCmd::TempEntity { temp_entity } => {
-                    self.state.spawn_temp_entity(mixer_events, &temp_entity)
+                    self.state.spawn_temp_entity(mixer_events, &temp_entity);
                 }
 
-                ServerCmd::StuffText { text: _text } => {} // todo!("Reimplement console"), // console.append_text(text),
+                ServerCmd::StuffText { text } => {
+                    console_commands.send(text.to_str().parse().unwrap());
+                }
 
                 ServerCmd::Time { time } => {
                     self.state.msg_times[1] = self.state.msg_times[0];
@@ -1027,6 +1011,7 @@ impl Connection {
         from_server: &Events<ServerMessage>,
         to_server: &mut EventWriter<ClientMessage>,
         mixer_events: &mut EventWriter<MixerEvent>,
+        console_commands: &mut EventWriter<RunCmd<'static>>,
         mut console: Mut<ConsoleOutput>,
         idle_vars: IdleVars,
         kick_vars: KickVars,
@@ -1049,6 +1034,7 @@ impl Connection {
             asset_server,
             from_server,
             mixer_events,
+            console_commands,
             console.reborrow(),
             kick_vars,
             client_vars,
@@ -1300,6 +1286,7 @@ mod systems {
         from_server: Res<Events<ServerMessage>>,
         mut to_server: EventWriter<ClientMessage>,
         mut console: ResMut<ConsoleOutput>,
+        mut console_commands: EventWriter<RunCmd<'static>>,
         mut demo_queue: ResMut<DemoQueue>,
         mut focus: ResMut<InputFocus>,
         mut conn: Option<ResMut<Connection>>,
@@ -1348,6 +1335,7 @@ mod systems {
                 &*from_server,
                 &mut to_server,
                 &mut mixer_events,
+                &mut console_commands,
                 console.reborrow(),
                 idle_vars,
                 kick_vars,
