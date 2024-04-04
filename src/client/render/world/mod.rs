@@ -280,6 +280,7 @@ pub struct FrameUniforms {
     lightmap_anim_frames: [Vector4<f32>; 16],
     camera_pos: Vector4<f32>,
     time: f32,
+    sky_time: f32,
 
     // TODO: pack flags into a bit string
     r_lightmap: UniformBool,
@@ -421,7 +422,9 @@ impl WorldRenderer {
         I: Iterator<Item = &'a ClientEntity>,
     {
         trace!("Updating frame uniform buffer");
-        queue.write_buffer(state.frame_uniform_buffer(), 0, unsafe { any_as_bytes(&FrameUniforms {
+        let time_secs = engine::duration_to_f32(time);
+        queue.write_buffer(state.frame_uniform_buffer(), 0, unsafe {
+            any_as_bytes(&FrameUniforms {
                 lightmap_anim_frames: {
                     let mut frames = [Vector4::<f32>::unit_x(); 16];
                     for i in 0..16 {
@@ -430,15 +433,16 @@ impl WorldRenderer {
                                 lightstyle_values[i * j],
                                 lightstyle_values[i * j + 1],
                                 lightstyle_values[i * j + 2],
-                                lightstyle_values[i * j + 3]
+                                lightstyle_values[i * j + 3],
                             );
                         }
                     }
                     frames
                 },
                 camera_pos: camera.origin.extend(1.0),
-                time: engine::duration_to_f32(time),
-                r_lightmap: UniformBool::new(render_vars.lightmap),
+                time: time_secs,
+                sky_time: time_secs * render_vars.sky_scroll_speed as f32,
+                r_lightmap: UniformBool::new(render_vars.lightmap != 0),
             })
         });
 

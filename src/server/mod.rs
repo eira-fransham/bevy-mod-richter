@@ -1028,9 +1028,7 @@ impl LevelState {
     ) -> Result<(), ProgsError> {
         self.start_frame(registry.reborrow(), vfs)?;
 
-        let server_vars = registry
-            .read_cvars::<ServerVars>()
-            .ok_or_else(|| ProgsError::with_msg(format!("Failed to read server cvars")))?;
+        let server_vars = registry.read_cvars::<ServerVars>()?;
 
         for ent_id in self.world.entities.list() {
             if self.globals.load(GlobalAddrFloat::ForceRetouch)? != 0.0 {
@@ -1248,9 +1246,7 @@ impl LevelState {
         let ServerVars {
             gravity,
             max_velocity,
-        } = registry
-            .read_cvars()
-            .ok_or_else(|| ProgsError::with_msg(format!("Couldn't read server vars")))?;
+        } = registry.read_cvars()?;
 
         let in_freefall = !self
             .world

@@ -881,9 +881,12 @@ impl Connection {
                     self.state.spawn_temp_entity(mixer_events, &temp_entity);
                 }
 
-                ServerCmd::StuffText { text } => {
-                    console_commands.send(text.to_str().parse().unwrap());
-                }
+                ServerCmd::StuffText { text } => match text.to_str().parse() {
+                    Ok(parsed) => {
+                        console_commands.send(parsed);
+                    }
+                    Err(err) => console_output.println(format!("{}", err), self.state.msg_times[0]),
+                },
 
                 ServerCmd::Time { time } => {
                     self.state.msg_times[1] = self.state.msg_times[0];
@@ -1295,27 +1298,19 @@ mod systems {
         let NetworkVars {
             disable_lerp,
             gravity,
-        } = cvars
-            .read_cvars()
-            .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
-        let idle_vars: IdleVars = cvars
-            .read_cvars()
-            .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
-        let kick_vars: KickVars = cvars
-            .read_cvars()
-            .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
-        let roll_vars: RollVars = cvars
-            .read_cvars()
-            .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
-        let bob_vars: BobVars = cvars
-            .read_cvars()
-            .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?;
+        } = cvars.read_cvars().map_err(|c| ClientError::Cvar(c))?;
+        let idle_vars: IdleVars = cvars.read_cvars().map_err(|c| ClientError::Cvar(c))?;
+        let kick_vars: KickVars = cvars.read_cvars().map_err(|c| ClientError::Cvar(c))?;
+        let roll_vars: RollVars = cvars.read_cvars().map_err(|c| ClientError::Cvar(c))?;
+        let bob_vars: BobVars = cvars.read_cvars().map_err(|c| ClientError::Cvar(c))?;
         // `serde_lexpr` doesn't allow us to configure deserialising strings and doesn't recognise symbols
         // as valid strings, so we need to use `.value().as_name()` and can't use `read_cvars`.
         let client_vars: ClientVars = ClientVars {
             name: cvars
                 .get_cvar("_cl_name")
-                .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid))?
+                .ok_or(ClientError::Cvar(ConsoleError::CvarParseInvalid {
+                    backtrace: snafu::Backtrace::capture(),
+                }))?
                 .value()
                 .as_name()
                 .unwrap_or("player"),

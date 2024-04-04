@@ -407,10 +407,10 @@ impl ViewNode for DeferredPass {
         // if client is fully connected, draw world
         let camera = match kind {
             RenderConnectionKind::Demo => {
-                cl_state.demo_camera(width as f32 / height as f32, Deg(render_vars.fov))
+                cl_state.demo_camera(width as f32 / height as f32, Deg(render_vars.fov as _))
             }
             RenderConnectionKind::Server => {
-                cl_state.camera(width as f32 / height as f32, Deg(render_vars.fov))
+                cl_state.camera(width as f32 / height as f32, Deg(render_vars.fov as _))
             }
         };
 

@@ -26,6 +26,7 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     vec4 light_anim_frames[16];
     vec4 camera_pos;
     float time;
+    float sky_time;
 } frame_uniforms;
 
 // convert from Quake coordinates

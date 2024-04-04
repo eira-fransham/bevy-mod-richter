@@ -741,11 +741,13 @@ impl GraphicsState {
     }
 }
 
-#[derive(Resource, Deserialize)]
+#[derive(Debug, Resource, Deserialize)]
 pub struct RenderVars {
     pub fov: f32,
     #[serde(rename(deserialize = "r_lightmap"))]
-    pub lightmap: bool,
+    pub lightmap: u8,
+    #[serde(rename(deserialize = "r_sky_scollspeed"))]
+    pub sky_scroll_speed: f32,
     #[serde(rename(deserialize = "r_msaa_samples"))]
     pub msaa_samples: u32,
 }
@@ -754,7 +756,8 @@ impl Default for RenderVars {
     fn default() -> Self {
         Self {
             fov: 90.,
-            lightmap: false,
+            lightmap: 0,
+            sky_scroll_speed: 32.,
             msaa_samples: 1,
         }
     }

@@ -36,6 +36,11 @@ pub fn register_cvars(app: &mut App) {
         "set the multi-sampled anti-aliasing sample count",
     )
     .cvar(
+        "r_sky_scollspeed",
+        "32",
+        "Skybox texture scroll speed (in texels)",
+    )
+    .cvar(
         "post_blendmode",
         "softlight",
         "Sets the blend mode for postprocess color shift",

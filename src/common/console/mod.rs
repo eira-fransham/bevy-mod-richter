@@ -41,11 +41,11 @@ use clap::{FromArgMatches, Parser};
 use hashbrown::{hash_map::Entry, HashMap};
 use liner::{Editor, EditorContext, Emacs, Key, KeyBindings, KeyMap as _, Prompt, Tty};
 use serde::{
-    de::{value::StrDeserializer, MapAccess},
+    de::{value::StrDeserializer, Error, Expected, MapAccess, Unexpected},
     Deserializer,
 };
 use serde_lexpr::Value;
-use thiserror::Error;
+use snafu::{prelude::*, Backtrace};
 use wgpu::{Extent3d, TextureDimension};
 
 use crate::client::{
@@ -201,20 +201,22 @@ impl Plugin for SeismonConsolePlugin {
 
 pub type CName = Cow<'static, str>;
 
-#[derive(Error, Debug)]
+#[derive(Snafu, Debug)]
 pub enum ConsoleError {
-    #[error("{0}")]
-    CmdError(CName),
-    #[error("Could not parse cvar: {name} = \"{value}\"")]
+    #[snafu(display("{error}"))]
+    CmdError { error: CName },
+    #[snafu(display("Could not parse cvar: {name} = \"{value}\""))]
     CvarParseFailed { name: CName, value: Value },
-    #[error("Could not parse cvar")]
-    CvarParseInvalid,
-    #[error("No such command: {0}")]
-    NoSuchCommand(CName),
-    #[error("No such alias: {0}")]
-    NoSuchAlias(CName),
-    #[error("No such cvar: {0}")]
-    NoSuchCvar(CName),
+    #[snafu(display("Could not parse cvar"), context(false))]
+    CvarFieldParseFailed { source: serde::de::value::Error },
+    #[snafu(display("Could not parse cvar"))]
+    CvarParseInvalid { backtrace: Backtrace },
+    #[snafu(display("No such command: {cmd}"))]
+    NoSuchCommand { cmd: CName },
+    #[snafu(display("No such alias: {name}"))]
+    NoSuchAlias { name: CName },
+    #[snafu(display("No such cvar: {name}"))]
+    NoSuchCvar { name: CName },
 }
 
 impl serde::de::Error for ConsoleError {
@@ -223,30 +225,44 @@ impl serde::de::Error for ConsoleError {
     where
         T: std::fmt::Display,
     {
-        Self::CmdError(format!("{}", msg).into())
+        Self::CmdError {
+            error: format!("{}", msg).into(),
+        }
     }
 
-    // Provided methods
-    fn invalid_type(_: serde::de::Unexpected<'_>, _: &dyn serde::de::Expected) -> Self {
-        ConsoleError::CvarParseInvalid
+    #[cold]
+    fn invalid_type(unexp: Unexpected, exp: &dyn Expected) -> Self {
+        serde::de::value::Error::invalid_type(unexp, exp).into()
     }
-    fn invalid_value(_: serde::de::Unexpected<'_>, _: &dyn serde::de::Expected) -> Self {
-        ConsoleError::CvarParseInvalid
+
+    #[cold]
+    fn invalid_value(unexp: Unexpected, exp: &dyn Expected) -> Self {
+        serde::de::value::Error::invalid_value(unexp, exp).into()
     }
-    fn invalid_length(_: usize, _: &dyn serde::de::Expected) -> Self {
-        ConsoleError::CvarParseInvalid
+
+    #[cold]
+    fn invalid_length(len: usize, exp: &dyn Expected) -> Self {
+        serde::de::value::Error::invalid_length(len, exp).into()
     }
-    fn unknown_variant(_: &str, _: &'static [&'static str]) -> Self {
-        ConsoleError::CvarParseInvalid
+
+    #[cold]
+    fn unknown_variant(variant: &str, expected: &'static [&'static str]) -> Self {
+        serde::de::value::Error::unknown_variant(variant, expected).into()
     }
-    fn unknown_field(_: &str, _: &'static [&'static str]) -> Self {
-        ConsoleError::CvarParseInvalid
+
+    #[cold]
+    fn unknown_field(field: &str, expected: &'static [&'static str]) -> Self {
+        serde::de::value::Error::unknown_field(field, expected).into()
     }
-    fn missing_field(_: &'static str) -> Self {
-        ConsoleError::CvarParseInvalid
+
+    #[cold]
+    fn missing_field(field: &'static str) -> Self {
+        serde::de::value::Error::missing_field(field).into()
     }
-    fn duplicate_field(_: &'static str) -> Self {
-        ConsoleError::CvarParseInvalid
+
+    #[cold]
+    fn duplicate_field(field: &'static str) -> Self {
+        serde::de::value::Error::duplicate_field(field).into()
     }
 }
 
@@ -822,7 +838,9 @@ impl Registry {
 
                 Ok(())
             }
-            None => Err(ConsoleError::NoSuchCommand(name.to_owned().into())),
+            None => Err(ConsoleError::NoSuchCommand {
+                cmd: name.to_owned().into(),
+            }),
         }
     }
 
@@ -842,7 +860,9 @@ impl Registry {
                     ..
                 } = overlays.last().unwrap_or(cmd)
                 else {
-                    return Err(ConsoleError::NoSuchAlias(name.to_owned().into()));
+                    return Err(ConsoleError::NoSuchAlias {
+                        name: name.to_owned().into(),
+                    });
                 };
                 if overlays.pop().is_none() {
                     self.commands.remove(name);
@@ -850,7 +870,9 @@ impl Registry {
 
                 Ok(())
             }
-            None => Err(ConsoleError::NoSuchAlias(name.to_owned().into())),
+            None => Err(ConsoleError::NoSuchAlias {
+                name: name.to_owned().into(),
+            }),
         }
     }
 
@@ -913,9 +935,11 @@ impl Registry {
     where
         N: AsRef<str>,
     {
-        let (cvar, on_set) = self
-            .get_cvar_mut(name.as_ref())
-            .ok_or_else(|| ConsoleError::NoSuchCvar(name.as_ref().to_owned().into()))?;
+        let (cvar, on_set) =
+            self.get_cvar_mut(name.as_ref())
+                .ok_or_else(|| ConsoleError::NoSuchCvar {
+                    name: name.as_ref().to_owned().into(),
+                })?;
 
         let to_insert = if let Some(sys) = on_set {
             if cvar.value.is_some() {
@@ -940,9 +964,11 @@ impl Registry {
     where
         N: AsRef<str>,
     {
-        let (cvar, on_set) = self
-            .get_cvar_mut(name.as_ref())
-            .ok_or_else(|| ConsoleError::NoSuchCvar(name.as_ref().to_owned().into()))?;
+        let (cvar, on_set) =
+            self.get_cvar_mut(name.as_ref())
+                .ok_or_else(|| ConsoleError::NoSuchCvar {
+                    name: name.as_ref().to_owned().into(),
+                })?;
 
         let to_insert = if let Some(sys) = on_set {
             if cvar.value.as_ref().unwrap_or(&cvar.default) != &value {
@@ -969,7 +995,10 @@ impl Registry {
         N: AsRef<str>,
         V: AsRef<str>,
     {
-        let value = Value::from_str(value.as_ref()).map_err(|_| ConsoleError::CvarParseInvalid)?;
+        let value =
+            Value::from_str(value.as_ref()).map_err(|_| ConsoleError::CvarParseInvalid {
+                backtrace: Backtrace::capture(),
+            })?;
         self.set_cvar_raw(name, value)
     }
 
@@ -981,7 +1010,9 @@ impl Registry {
         let name = name.as_ref();
         let cvar = self
             .get_cvar(name)
-            .ok_or_else(|| ConsoleError::NoSuchCvar(name.to_owned().into()))?;
+            .ok_or_else(|| ConsoleError::NoSuchCvar {
+                name: name.to_owned().into(),
+            })?;
         serde_lexpr::from_value::<V>(cvar.value()).map_err(|_| ConsoleError::CvarParseFailed {
             name: name.to_owned().into(),
             value: cvar.value().clone(),
@@ -989,7 +1020,7 @@ impl Registry {
     }
 
     /// Deserialize a struct or similar from cvars
-    pub fn read_cvars<'a, V: serde::Deserialize<'a>>(&'a self) -> Option<V> {
+    pub fn read_cvars<'a, V: serde::Deserialize<'a>>(&'a self) -> Result<V, ConsoleError> {
         struct CvarDeserializer<'a> {
             inner: &'a Registry,
         }
@@ -1057,10 +1088,14 @@ impl Registry {
                 V: serde::de::DeserializeSeed<'a>,
             {
                 match mem::replace(&mut self.cur, self.values.next()) {
-                    Some((_, mut v)) => Ok(seed
-                        .deserialize(&mut v)
-                        .map_err(|_| ConsoleError::CvarParseInvalid)?),
-                    None => Err(ConsoleError::CvarParseInvalid),
+                    Some((_, mut v)) => Ok(seed.deserialize(&mut v).map_err(|_| {
+                        ConsoleError::CvarParseInvalid {
+                            backtrace: Backtrace::capture(),
+                        }
+                    })?),
+                    None => Err(ConsoleError::CvarParseInvalid {
+                        backtrace: Backtrace::capture(),
+                    }),
                 }
             }
         }
@@ -1093,133 +1128,133 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("any") , &"struct") )
             }
 
             fn deserialize_bool<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("bool"), &"struct") )
             }
 
             fn deserialize_i8<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("i8"), &"struct") )
             }
 
             fn deserialize_i16<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("i16"), &"struct") )
             }
 
             fn deserialize_i32<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("i32"), &"struct") )
             }
 
             fn deserialize_i64<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("i64"), &"struct") )
             }
 
             fn deserialize_u8<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("u8"), &"struct") )
             }
 
             fn deserialize_u16<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("u16"), &"struct") )
             }
 
             fn deserialize_u32<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("u32"), &"struct") )
             }
 
             fn deserialize_u64<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("u64"), &"struct") )
             }
 
             fn deserialize_f32<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("f32"), &"struct") )
             }
 
             fn deserialize_f64<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("f64"), &"struct") )
             }
 
             fn deserialize_char<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("char"), &"struct") )
             }
 
             fn deserialize_str<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("str"), &"struct") )
             }
 
             fn deserialize_string<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("string"), &"struct") )
             }
 
             fn deserialize_bytes<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("bytes"), &"struct") )
             }
 
             fn deserialize_byte_buf<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("byte_buf"), &"struct") )
             }
 
             fn deserialize_option<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("option"), &"struct") )
             }
 
             fn deserialize_unit<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("unit"), &"struct") )
             }
 
             fn deserialize_unit_struct<V>(
@@ -1230,7 +1265,7 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("unit_struct"), &"struct") )
             }
 
             fn deserialize_newtype_struct<V>(
@@ -1241,21 +1276,21 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("newtype_struct"), &"struct") )
             }
 
             fn deserialize_seq<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("seq"), &"struct") )
             }
 
             fn deserialize_tuple<V>(self, _: usize, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("tuple"), &"struct") )
             }
 
             fn deserialize_tuple_struct<V>(
@@ -1267,14 +1302,14 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("tuple_struct"), &"struct") )
             }
 
             fn deserialize_map<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("map"), &"struct") )
             }
 
             fn deserialize_enum<V>(
@@ -1286,25 +1321,25 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("enum"), &"struct") )
             }
 
             fn deserialize_identifier<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("identifier"), &"struct") )
             }
 
             fn deserialize_ignored_any<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::CvarParseInvalid)
+                Err(ConsoleError::invalid_type(Unexpected::Other("ignored_any"), &"struct") )
             }
         }
 
-        V::deserialize(CvarDeserializer { inner: self }).ok()
+        V::deserialize(CvarDeserializer { inner: self })
     }
 
     pub fn cmd_names(&self) -> impl Iterator<Item = &str> + Clone + '_ {
