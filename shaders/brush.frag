@@ -9,6 +9,8 @@ const float WARP_AMPLITUDE = 0.15;
 const float WARP_FREQUENCY = 0.25;
 const float WARP_SCALE = 1.0;
 
+const float SCROLL_SPEED_SKY = 32.;
+
 layout(location = 0) in vec3 f_normal;
 layout(location = 1) in vec2 f_diffuse; // also used for fullbright
 layout(location = 2) in vec2 f_lightmap;
@@ -101,7 +103,8 @@ void main() {
             break;
 
         case TEXTURE_KIND_SKY:
-            vec2 base = mod(f_diffuse + frame_uniforms.time, 1.0);
+            ivec2 size = textureSize(sampler2D(u_diffuse_texture, u_diffuse_sampler), 0);
+            vec2 base = mod(f_diffuse + (SCROLL_SPEED_SKY * frame_uniforms.time) / float(size.x), 1.0);
             vec2 cloud_texcoord = vec2(base.s * 0.5, base.t);
             vec2 sky_texcoord = vec2(base.s * 0.5 + 0.5, base.t);
 
