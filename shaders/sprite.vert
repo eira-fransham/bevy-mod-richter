@@ -7,10 +7,11 @@ layout(location = 2) in vec2 a_diffuse;
 layout(location = 0) out vec3 f_normal;
 layout(location = 1) out vec2 f_diffuse;
 
+// set 0: per-frame
 layout(set = 0, binding = 0) uniform FrameUniforms {
-  float light_anim_frames[64];
-  vec4 camera_pos;
-  float time;
+    vec4 light_anim_frames[16];
+    vec4 camera_pos;
+    float time;
 } frame_uniforms;
 
 layout(set = 1, binding = 0) uniform EntityUniforms {

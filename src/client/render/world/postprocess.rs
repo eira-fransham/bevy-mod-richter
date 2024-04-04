@@ -159,11 +159,11 @@ impl Pipeline for PostProcessPipeline {
     }
 
     fn vertex_shader() -> &'static str {
-        ""
+        unreachable!()
     }
 
     fn fragment_shader() -> &'static str {
-        ""
+        unreachable!()
     }
 
     fn primitive_state() -> wgpu::PrimitiveState {
