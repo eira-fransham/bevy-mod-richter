@@ -67,10 +67,10 @@ Networking is untested since beginning the rewrite, and I've been only using dem
 working again once the client update code is ported to use the ECS. I haven't touched most of the networking code, so in
 theory it should still work or only require minor changes.
 
-I've implemented mod support outside of the original `id1` directory, although it is unlikely to work with Quake mods that
-are not primarily based on Quake 1. The only non-Quake games that are confirmed to function are Rogue and Hipnotic.
-I have run the entirety of the "Quake Done Quickest" demos (`qdqst`) so can confirm that the whole game can be loaded and
-rendered.
+I've implemented mod support outside of the original `id1` directory, and so far all the mods that are designed to work with the
+original Quake release work. I have tried Hipnotic, Rogue, Soul of Evil, and Xmen: Ravages of Apocalypse, and playing demos from
+all of these games works. I have run the entirety of the "Quake Done Quickest" demos (`qdqst`) so can confirm that all maps from
+the original game can be loaded and rendered correctly.
 
 A host of bugs and limitations from the original Richter were fixed. Inputs are no longer handled by an enum and you can
 define your own arbitrary `+action`/`-action` commands which can be bound, and arbitrary cvars which can have a system
