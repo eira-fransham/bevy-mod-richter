@@ -1023,6 +1023,7 @@ impl Registry {
     pub fn read_cvars<'a, V: serde::Deserialize<'a>>(&'a self) -> Result<V, ConsoleError> {
         struct CvarDeserializer<'a> {
             inner: &'a Registry,
+            get_value: fn(&Cvar) -> &Value,
         }
 
         struct LexprArrayDeserializer<T, V> {
@@ -1128,133 +1129,190 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("any") , &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("any"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_bool<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("bool"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("bool"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_i8<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("i8"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("i8"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_i16<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("i16"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("i16"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_i32<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("i32"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("i32"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_i64<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("i64"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("i64"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_u8<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("u8"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("u8"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_u16<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("u16"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("u16"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_u32<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("u32"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("u32"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_u64<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("u64"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("u64"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_f32<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("f32"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("f32"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_f64<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("f64"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("f64"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_char<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("char"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("char"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_str<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("str"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("str"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_string<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("string"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("string"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_bytes<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("bytes"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("bytes"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_byte_buf<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("byte_buf"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("byte_buf"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_option<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("option"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("option"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_unit<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("unit"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("unit"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_unit_struct<V>(
@@ -1265,7 +1323,10 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("unit_struct"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("unit_struct"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_newtype_struct<V>(
@@ -1276,21 +1337,30 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("newtype_struct"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("newtype_struct"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_seq<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("seq"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("seq"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_tuple<V>(self, _: usize, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("tuple"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("tuple"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_tuple_struct<V>(
@@ -1302,14 +1372,20 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("tuple_struct"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("tuple_struct"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_map<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("map"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("map"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_enum<V>(
@@ -1321,25 +1397,43 @@ impl Registry {
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("enum"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("enum"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_identifier<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("identifier"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("identifier"),
+                    &"struct",
+                ))
             }
 
             fn deserialize_ignored_any<V>(self, _: V) -> Result<V::Value, Self::Error>
             where
                 V: serde::de::Visitor<'a>,
             {
-                Err(ConsoleError::invalid_type(Unexpected::Other("ignored_any"), &"struct") )
+                Err(ConsoleError::invalid_type(
+                    Unexpected::Other("ignored_any"),
+                    &"struct",
+                ))
             }
         }
 
-        V::deserialize(CvarDeserializer { inner: self })
+        V::deserialize(CvarDeserializer {
+            inner: self,
+            get_value: |c| c.value(),
+        })
+        .or_else(|_| {
+            V::deserialize(CvarDeserializer {
+                inner: self,
+                get_value: |c| &c.default,
+            })
+        })
     }
 
     pub fn cmd_names(&self) -> impl Iterator<Item = &str> + Clone + '_ {
