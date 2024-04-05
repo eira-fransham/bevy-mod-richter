@@ -63,6 +63,15 @@ vec4 calc_light() {
     return light;
 }
 
+// Compute line-plane intersection
+vec3 intersection(vec3 norm, vec3 plane_pos, vec3 plane_norm) {
+    float plane_dot = dot(norm, plane_norm);
+    vec3 w = f_diffuse - plane_pos;
+    float factor = -dot(w, plane_norm) / plane_dot;
+
+    return w + norm * factor + plane_pos;
+}
+
 // TODO: Convert this push constant to be separated shaders instead
 void main() {
     switch (push_constants.texture_kind) {
@@ -103,38 +112,46 @@ void main() {
             break;
 
         case TEXTURE_KIND_SKY:
+            // TODO: Convert these into cvars?
+            float sky_height = 1000.;
+            float cloud_height = 700.;
+            float sky_size = 6.;
+
+            vec3 sky_plane_pos = vec3(0., 0., sky_height);
+            vec3 cloud_plane_pos = vec3(0., 0., cloud_height);
+            vec3 plane_norm = vec3(0., 0., -1);
+
             // We calculate the diffuse coords here instead of in the vertex shader to prevent incorrect
             // interpolation when the skybox is not parallel to the sky plane (e.g. for sky-textured walls)
             // TODO: Is there a more-efficient way to do this?
             vec3 dir = f_diffuse - frame_uniforms.camera_pos.xyz / frame_uniforms.camera_pos.w;
-            dir.z *= 3.0;
 
-            // the coefficients here are magic taken from the Quake source
-            float len = 6.0 * 63.0 / length(dir);
-            vec2 diffuse = dir.xy * len / 128.0;
+            vec2 size = vec2(textureSize(sampler2D(u_diffuse_texture, u_diffuse_sampler), 0));
 
-            ivec2 size = textureSize(sampler2D(u_diffuse_texture, u_diffuse_sampler), 0);
-            vec2 base = mod(diffuse + frame_uniforms.sky_time / float(size.x), 1.0);
-            vec2 cloud_texcoord = vec2(base.s * 0.5, base.t);
-            vec2 sky_texcoord = vec2(base.s * 0.5 + 0.5, base.t);
+            vec2 scroll = vec2(frame_uniforms.sky_time) / vec2(size.y);
+
+            vec2 sky_coord = intersection(dir, sky_plane_pos, plane_norm).xy / sky_size / size ;
+            vec2 cloud_coord = intersection(dir, cloud_plane_pos, plane_norm).xy / sky_size / size;
+
+            sky_coord = mod(sky_coord + scroll, 1.) * vec2(0.5, 1.) + vec2(0.5, 0.);
+            cloud_coord = mod(cloud_coord + scroll, 1.) * vec2(0.5, 1.);
 
             vec4 sky_color = texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
-                sky_texcoord
+                sky_coord
             );
             vec4 cloud_color = texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
-                cloud_texcoord
+                cloud_coord
             );
 
             // 0.0 if black, 1.0 otherwise
             float cloud_factor;
             if (cloud_color.r + cloud_color.g + cloud_color.b == 0.0) {
-                cloud_factor = 0.0;
+                diffuse_attachment = vec4(sky_color.rgb, 0.25);
             } else {
-                cloud_factor = 1.0;
+                diffuse_attachment = vec4(cloud_color.rgb, 0.25);
             }
-            diffuse_attachment = vec4(mix(sky_color, cloud_color, cloud_factor).rgb, 0.25);
             break;
 
         // not possible
