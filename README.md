@@ -2,7 +2,9 @@
 
 ### An extensible, modern Quake engine
 
-[![Preview video](https://img.youtube.com/vi/cM6fAyCbUlI/0.jpg)](https://www.youtube.com/watch?v=cM6fAyCbUlI)
+#### Click here for a preview video:
+
+[![Preview video](https://img.youtube.com/vi/Hy5QStHHv8A/0.jpg)](https://www.youtube.com/watch?v=Hy5QStHHv8A)
 
 Seismon is a Quake engine written in Rust, based on the [Bevy](https://bevyengine.org/) framework. It is extensible,
 written in a modern ECS style, has a modern deferred and pipelined rendering system, and includes a modern audio
