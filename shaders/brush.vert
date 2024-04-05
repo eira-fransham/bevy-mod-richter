@@ -17,7 +17,7 @@ layout(push_constant) uniform PushConstants {
 } push_constants;
 
 layout(location = 0) out vec3 f_normal;
-layout(location = 1) out vec2 f_diffuse;
+layout(location = 1) out vec3 f_diffuse;
 layout(location = 2) out vec2 f_lightmap;
 layout(location = 3) out uvec4 f_lightmap_anim;
 
@@ -66,15 +66,9 @@ mat3 inv(mat3 matrix) {
 
 void main() {
     if (push_constants.texture_kind == TEXTURE_KIND_SKY) {
-        vec3 dir = a_position - frame_uniforms.camera_pos.xyz;
-        dir.z *= 3.0;
-
-        // the coefficients here are magic taken from the Quake source
-        float len = 6.0 * 63.0 / length(dir);
-        dir = vec3(dir.xy * len, dir.z);
-        f_diffuse = (mod(8.0 * frame_uniforms.time, 128.0) + dir.xy) / 128.0;
+        f_diffuse = a_position;
     } else {
-        f_diffuse = a_diffuse;
+        f_diffuse = vec3(a_diffuse, 0.);
     }
 
     f_normal = transpose(inv(mat3(push_constants.model_view))) * convert(a_normal);

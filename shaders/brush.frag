@@ -10,7 +10,7 @@ const float WARP_FREQUENCY = 0.25;
 const float WARP_SCALE = 1.0;
 
 layout(location = 0) in vec3 f_normal;
-layout(location = 1) in vec2 f_diffuse; // also used for fullbright
+layout(location = 1) in vec3 f_diffuse; // also used for fullbright, for sky textures this is the position instead
 layout(location = 2) in vec2 f_lightmap;
 flat layout(location = 3) in uvec4 f_lightmap_anim;
 
@@ -63,12 +63,13 @@ vec4 calc_light() {
     return light;
 }
 
+// TODO: Convert this push constant to be separated shaders instead
 void main() {
     switch (push_constants.texture_kind) {
         case TEXTURE_KIND_REGULAR:
             float fullbright = texture(
                 sampler2D(u_fullbright_texture, u_diffuse_sampler),
-                f_diffuse
+                f_diffuse.xy
             ).r;
 
 
@@ -81,7 +82,7 @@ void main() {
 
             diffuse_attachment = vec4(texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
-                f_diffuse
+                f_diffuse.xy
             ).rgb, light);
 
             break;
@@ -102,8 +103,18 @@ void main() {
             break;
 
         case TEXTURE_KIND_SKY:
+            // We calculate the diffuse coords here instead of in the vertex shader to prevent incorrect
+            // interpolation when the skybox is not parallel to the sky plane (e.g. for sky-textured walls)
+            // TODO: Is there a more-efficient way to do this?
+            vec3 dir = f_diffuse - frame_uniforms.camera_pos.xyz / frame_uniforms.camera_pos.w;
+            dir.z *= 3.0;
+
+            // the coefficients here are magic taken from the Quake source
+            float len = 6.0 * 63.0 / length(dir);
+            vec2 diffuse = dir.xy * len / 128.0;
+
             ivec2 size = textureSize(sampler2D(u_diffuse_texture, u_diffuse_sampler), 0);
-            vec2 base = mod(f_diffuse + (frame_uniforms.sky_time) / float(size.x), 1.0);
+            vec2 base = mod(diffuse + frame_uniforms.sky_time / float(size.x), 1.0);
             vec2 cloud_texcoord = vec2(base.s * 0.5, base.t);
             vec2 sky_texcoord = vec2(base.s * 0.5 + 0.5, base.t);
 
