@@ -82,12 +82,7 @@ void main() {
             ).r;
 
 
-            float light;
-            if (fullbright != 0.0) {
-                light = 0.25;
-            } else {
-                light = dot(calc_light(), vec4(1.));
-            }
+            float light = fullbright == 0. ? dot(calc_light(), vec4(1.)) : 0.25;
 
             diffuse_attachment = vec4(texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
@@ -115,7 +110,7 @@ void main() {
             // TODO: Convert these into cvars?
             float sky_height = 1000.;
             float cloud_height = 700.;
-            float sky_size = 6.;
+            float sky_size = 12.;
 
             vec3 sky_plane_pos = vec3(0., 0., sky_height);
             vec3 cloud_plane_pos = vec3(0., 0., cloud_height);
@@ -128,13 +123,13 @@ void main() {
 
             vec2 size = vec2(textureSize(sampler2D(u_diffuse_texture, u_diffuse_sampler), 0));
 
-            vec2 scroll = vec2(frame_uniforms.sky_time) / vec2(size.y);
+            vec2 scroll = vec2(frame_uniforms.sky_time);
 
-            vec2 sky_coord = intersection(dir, sky_plane_pos, plane_norm).xy / sky_size / size ;
-            vec2 cloud_coord = intersection(dir, cloud_plane_pos, plane_norm).xy / sky_size / size;
+            vec2 sky_coord = intersection(dir, sky_plane_pos, plane_norm).xy;
+            vec2 cloud_coord = intersection(dir, cloud_plane_pos, plane_norm).xy;
 
-            sky_coord = mod(sky_coord + scroll, 1.) * vec2(0.5, 1.) + vec2(0.5, 0.);
-            cloud_coord = mod(cloud_coord + scroll, 1.) * vec2(0.5, 1.);
+            sky_coord = mod((sky_coord + scroll) / size.y / sky_size, 1.) * vec2(0.5, 1.) + vec2(0.5, 0.);
+            cloud_coord = mod((cloud_coord + scroll) / size.y / sky_size, 1.) * vec2(0.5, 1.);
 
             vec4 sky_color = texture(
                 sampler2D(u_diffuse_texture, u_diffuse_sampler),
@@ -145,13 +140,7 @@ void main() {
                 cloud_coord
             );
 
-            // 0.0 if black, 1.0 otherwise
-            float cloud_factor;
-            if (cloud_color.r + cloud_color.g + cloud_color.b == 0.0) {
-                diffuse_attachment = vec4(sky_color.rgb, 0.25);
-            } else {
-                diffuse_attachment = vec4(cloud_color.rgb, 0.25);
-            }
+            diffuse_attachment = vec4(dot(cloud_color.rgb, vec3(1)) == 0 ? sky_color.rgb : cloud_color.rgb, 0.25);
             break;
 
         // not possible

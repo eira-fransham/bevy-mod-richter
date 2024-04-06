@@ -14,7 +14,7 @@ fn blendAverage_opacity(base: vec3<f32>, blend: vec3<f32>, opacity: f32) -> vec3
     return (blendAverage(base, blend) * opacity + base * (1.0 - opacity));
 }
 fn blendColorBurn_comp(base: f32, blend: f32) -> f32 {
-    return select( blend,max((1.0-((1.0-base)/blend)),0.0), (blend==0.0));
+    return select(blend,max((1.0-((1.0-base)/blend)),0.0), (blend==0.0));
 }
 fn blendColorBurn(base: vec3<f32>, blend: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(blendColorBurn_comp(base.r,blend.r),blendColorBurn_comp(base.g,blend.g),blendColorBurn_comp(base.b,blend.b));
@@ -23,7 +23,7 @@ fn blendColorBurn_opacity(base: vec3<f32>, blend: vec3<f32>, opacity: f32) -> ve
     return (blendColorBurn(base, blend) * opacity + base * (1.0 - opacity));
 }
 fn blendColorDodge_comp(base: f32, blend: f32) -> f32 {
-    return select( blend,min(base/(1.0-blend),1.0), (blend==1.0));
+    return select(blend,min(base/(1.0-blend),1.0), (blend==1.0));
 }
 fn blendColorDodge(base: vec3<f32>, blend: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(blendColorDodge_comp(base.r,blend.r),blendColorDodge_comp(base.g,blend.g),blendColorDodge_comp(base.b,blend.b));
@@ -132,7 +132,7 @@ fn blendNormal_opacity(base: vec3<f32>, blend: vec3<f32>, opacity: f32) -> vec3<
     return (blendNormal(base, blend) * opacity + base * (1.0 - opacity));
 }
 fn blendOverlay_comp(base: f32, blend: f32) -> f32 {
-    return select( (2.0*base*blend),(1.0-2.0*(1.0-base)*(1.0-blend)), base<0.5);
+    return select((2.0*base*blend),(1.0-2.0*(1.0-base)*(1.0-blend)), base<0.5);
 }
 fn blendOverlay(base: vec3<f32>, blend: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(blendOverlay_comp(base.r,blend.r),blendOverlay_comp(base.g,blend.g),blendOverlay_comp(base.b,blend.b));
@@ -156,7 +156,7 @@ fn blendPinLight_opacity(base: vec3<f32>, blend: vec3<f32>, opacity: f32) -> vec
     return (blendPinLight(base, blend) * opacity + base * (1.0 - opacity));
 }
 fn blendReflect_comp(base: f32, blend: f32) -> f32 {
-    return select( blend,min(base*base/(1.0-blend),1.0), (blend==1.0));
+    return select(blend,min(base*base/(1.0-blend),1.0), (blend==1.0));
 }
 fn blendReflect(base: vec3<f32>, blend: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(blendReflect_comp(base.r,blend.r),blendReflect_comp(base.g,blend.g),blendReflect_comp(base.b,blend.b));
@@ -174,7 +174,7 @@ fn blendScreen_opacity(base: vec3<f32>, blend: vec3<f32>, opacity: f32) -> vec3<
     return (blendScreen(base, blend) * opacity + base * (1.0 - opacity));
 }
 fn blendSoftLight_comp(base: f32, blend: f32) -> f32 {
-    return select( (2.0*base*blend+base*base*(1.0-2.0*blend)),(sqrt(base)*(2.0*blend-1.0)+2.0*base*(1.0-blend)), (blend<0.5));
+    return select((2.0*base*blend+base*base*(1.0-2.0*blend)),(sqrt(base)*(2.0*blend-1.0)+2.0*base*(1.0-blend)), (blend<0.5));
 }
 fn blendSoftLight(base: vec3<f32>, blend: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(blendSoftLight_comp(base.r,blend.r),blendSoftLight_comp(base.g,blend.g),blendSoftLight_comp(base.b,blend.b));
