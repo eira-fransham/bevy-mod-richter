@@ -72,6 +72,12 @@ vec3 intersection(vec3 norm, vec3 plane_pos, vec3 plane_norm) {
     return w + norm * factor + plane_pos;
 }
 
+const mat3 RGB_2_XYZ = mat3(
+    0.4124564, 0.2126729, 0.0193339,
+    0.3575761, 0.7151522, 0.1191920,
+    0.1804375, 0.0721750, 0.9503041
+);
+
 // TODO: Convert this push constant to be separated shaders instead
 void main() {
     switch (push_constants.texture_kind) {
@@ -108,22 +114,23 @@ void main() {
 
         case TEXTURE_KIND_SKY:
             // TODO: Convert these into cvars?
-            float sky_height = 1000.;
-            float cloud_height = 700.;
-            float sky_size = 12.;
+            const float sky_height = 13000.;
+            const float cloud_height = 3000.;
+            const float sky_size = 60.;
 
-            vec3 sky_plane_pos = vec3(0., 0., sky_height);
-            vec3 cloud_plane_pos = vec3(0., 0., cloud_height);
-            vec3 plane_norm = vec3(0., 0., -1);
+            const vec3 sky_plane_pos = vec3(0., 0., sky_height);
+            const vec3 cloud_plane_pos = vec3(0., 0., cloud_height);
+            const vec3 plane_norm = vec3(0., 0., -1);
 
             // We calculate the diffuse coords here instead of in the vertex shader to prevent incorrect
             // interpolation when the skybox is not parallel to the sky plane (e.g. for sky-textured walls)
             // TODO: Is there a more-efficient way to do this?
-            vec3 dir = f_diffuse - frame_uniforms.camera_pos.xyz / frame_uniforms.camera_pos.w;
+            // TODO: We want to make the horizon for the sky be at the bottom of the screen - what is the best way to do this?
+            vec3 dir = normalize(f_diffuse - frame_uniforms.camera_pos.xyz / frame_uniforms.camera_pos.w);
 
             vec2 size = vec2(textureSize(sampler2D(u_diffuse_texture, u_diffuse_sampler), 0));
 
-            vec2 scroll = vec2(frame_uniforms.sky_time);
+            vec2 scroll = vec2(frame_uniforms.sky_time * 10.);
 
             vec2 sky_coord = intersection(dir, sky_plane_pos, plane_norm).xy;
             vec2 cloud_coord = intersection(dir, cloud_plane_pos, plane_norm).xy;
@@ -140,7 +147,10 @@ void main() {
                 cloud_coord
             );
 
-            diffuse_attachment = vec4(dot(cloud_color.rgb, vec3(1)) == 0 ? sky_color.rgb : cloud_color.rgb, 0.25);
+            float lum = (RGB_2_XYZ * cloud_color.rgb).y;
+            float max_blend = 0.1;
+            float blend = clamp(lum, 0., max_blend) / max_blend;
+            diffuse_attachment = vec4(mix(sky_color.rgb, cloud_color.rgb, blend), 0.25);
             break;
 
         // not possible
